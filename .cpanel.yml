@@ -16,7 +16,7 @@ deployment:
     - /bin/ls -la "/home/ludog319/public_html/webofinfluence" || true
 
     # 1) Build the frontend with the correct base path so assets resolve under /webofinfluence/
-    - cd demo-cand && if command -v npm >/dev/null 2>&1; then (npm ci || npm install) && VITE_BASE=/webofinfluence/ npm run build; else echo "npm not found, skipping frontend build"; fi
+    - (cd demo-cand && if command -v npm >/dev/null 2>&1; then (npm ci || npm install) && VITE_BASE=/webofinfluence/ npm run build; else echo "npm not found, skipping frontend build"; fi)
 
     # 2) Sync server (Flask API) and config files
     - /bin/rsync -a --delete deploy/ "/home/ludog319/public_html/webofinfluence"/
