@@ -10,9 +10,11 @@ Options -MultiViews
   RewriteEngine On
 
   # IMPORTANT: This .htaccess lives in /home/ludog319/public_html/webofinfluence
-  # Keep /api requests for the backend (handled by Passenger via passenger_wsgi.py)
+  # Keep /api and /admin requests for the backend (handled by Passenger via passenger_wsgi.py)
   RewriteCond %{REQUEST_URI} ^/webofinfluence/api [OR]
-  RewriteCond %{REQUEST_URI} ^/api
+  RewriteCond %{REQUEST_URI} ^/api [OR]
+  RewriteCond %{REQUEST_URI} ^/webofinfluence/admin [OR]
+  RewriteCond %{REQUEST_URI} ^/admin
   RewriteRule ^ - [L]
 
   # If the request is for an actual file or directory, serve it as-is

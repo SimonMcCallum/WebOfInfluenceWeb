@@ -1,87 +1,122 @@
-Web Of Influence — cPanel Deployment Guide
+Web Of Influence — API-Only cPanel Deployment (with Admin UI and Token Auth)
 
 Overview
-- Frontend: Vite + React app in demo-cand
-- Backend API: Flask app in deploy/api/app.py (mounted at /api by Passenger)
+- What’s deployed:
+  - Flask API mounted at /api
+  - Admin web UI mounted at /admin (read-only SQL query + CSV upload)
+  - Static files (index.html placeholder + app-config.js) at /webofinfluence
 - Hosting: cPanel (Phusion Passenger for Python WSGI)
-- Deployed URL: https://ludogology.co.nz/webofinfluence
+- Deployed URL base: https://ludogology.co.nz/webofinfluence
 
 Key Files
 - .cpanel.yml — automated deployment tasks for cPanel “Deploy HEAD”
-- deploy/.htaccess — Passenger + SPA rewrite rules
-- deploy/passenger_wsgi.py — WSGI entry that mounts the API at /api
-- deploy/api/app.py — Flask API (uses MySQL)
-- deploy/requirements.txt — Python dependencies installed on deploy
-- demo-cand/vite.config.js — honors VITE_BASE env for subpath builds
-- demo-cand/public/app-config.js — runtime frontend config (API_BASE)
-- demo-cand/src/apiConfig.js — reads window.__APP_CONFIG__.API_BASE if present
+- deploy/.htaccess — Passenger + rewrite rules (routes /api and /admin to backend)
+- deploy/passenger_wsgi.py — WSGI entry; adds vendor/ to sys.path; mounts /api and /admin
+- deploy/api/app.py — Flask API with:
+  - Public data endpoints (candidates, party, electorate)
+  - Admin UI at /admin with:
+    - Token-protected read-only SQL query tool (SELECT only; LIMIT enforced)
+    - Token-protected CSV upload into a given table using prepared statements
+  - Token enforcement via API_TOKEN and API_PROTECT_ALL
+- deploy/requirements.txt — Python dependencies (versions compatible with server)
+- deploy/index.html — Placeholder page (frontend SPA is intentionally not built/served)
+- deploy/.env.example — Template for environment variables
+- demo-cand/* — React SPA (not built or deployed in API-only mode)
 
-Database (simon deploy)
+Database (Simon deploy)
 - DB name: ludog319_webofinfluence
 - DB user: ludog319_kng
 - DB password: WFoSE!
-- Host: localhost (default; changeable via env)
+- Host: localhost
+- Ensure MySQL user privileges are correctly set for the database.
 
-How Deployment Works (via cPanel “Deploy HEAD”)
-.cpanel.yml performs these steps:
-1) Build frontend with correct base path
-   - cd demo-cand && npm ci (or npm install) && VITE_BASE=/webofinfluence/ npm run build
-2) Sync server and config
+Environment Variables (configure via deploy/.env)
+Copy deploy/.env.example to deploy/.env and set:
+- FLASK_ENV=production
+- DB_HOST=localhost
+- DB_USER=ludog319_kng
+- DB_PASSWORD=WFoSE!
+- DB_NAME=ludog319_webofinfluence
+- API_TOKEN=changeme-strong-secret
+  - A strong shared secret used to authorize admin actions (and optionally all API routes).
+  - Clients pass it via Authorization: Bearer <token> header, or in form fields for admin UI.
+- API_PROTECT_ALL=0
+  - When set to 1: ALL endpoints require the token (except GET / health check).
+  - When 0: only the /admin endpoints require the token.
+
+Token Usage and Examples
+- Authorization header form:
+  - Authorization: Bearer YOUR_TOKEN_HERE
+
+- cURL examples:
+  1) Health (no token required):
+     curl -i https://ludogology.co.nz/webofinfluence/api/
+  2) Get candidates (requires token only if API_PROTECT_ALL=1):
+     curl -H "Authorization: Bearer YOUR_TOKEN" \
+       https://ludogology.co.nz/webofinfluence/api/candidates
+  3) Admin UI (browser; requires token in form inputs for actions):
+     https://ludogology.co.nz/webofinfluence/admin
+
+Admin UI Details (/admin)
+- Read-only Query:
+  - Accepts only SELECT statements.
+  - Disallows semicolons to prevent chaining.
+  - Automatically adds LIMIT 200 if not present.
+  - Requires API token in the form.
+- CSV Upload:
+  - Requires API token in the form.
+  - Field “Target Table”:
+    - Accepts “Schema_Table” form (e.g., Entities_People) and maps to “Entities.People”.
+    - The server validates identifiers.
+  - CSV must include a header row with column names matching the target table.
+  - Uses prepared statements and bulk insert.
+
+How the Deployment Works (via cPanel “Deploy HEAD”)
+.cpanel.yml performs:
+1) Ensure target directory exists: /home/ludog319/public_html/webofinfluence
+2) Sync server files:
    - rsync deploy/ → /home/ludog319/public_html/webofinfluence
-3) Sync built frontend
-   - rsync demo-cand/dist/ → /home/ludog319/public_html/webofinfluence
-   - copy runtime app-config.js into the deployed folder
-4) Python setup and restart Passenger
-   - create venv, pip install -r requirements.txt, touch tmp/restart.txt
+3) Vendor Python packages (no virtualenv):
+   - pip install -r /home/ludog319/public_html/webofinfluence/requirements.txt \
+     --target /home/ludog319/public_html/webofinfluence/vendor
+4) Restart Passenger:
+   - touch /home/ludog319/public_html/webofinfluence/tmp/restart.txt
 
-After success, the site is available at:
-- Frontend: https://ludogology.co.nz/webofinfluence
-- API health: https://ludogology.co.nz/webofinfluence/api/
+Notes:
+- Node/npm are not required now; the frontend build is skipped intentionally.
+- If deploy/.env exists in the repo, .cpanel.yml will copy it to the deployed directory.
 
-Runtime Configuration (no rebuilds needed)
-A. Frontend API base URL
-- Default: computed to /webofinfluence/api by demo-cand/public/app-config.js
-- Override at deploy time by providing deploy/app-config.override.js (copied to web root as app-config.js):
-  Example deploy/app-config.override.js:
-    window.__APP_CONFIG__ = {
-      API_BASE: '/webofinfluence/api'
-      // Or: 'https://some-other-host/api'
-    };
+After Deployment — Verification
+- Check files in /home/ludog319/public_html/webofinfluence:
+  - .htaccess, passenger_wsgi.py, requirements.txt, api/, vendor/, app-config.js, index.html
+- API health:
+  - https://ludogology.co.nz/webofinfluence/api/
+  - Expected: “API is running!”
+- Admin UI:
+  - https://ludogology.co.nz/webofinfluence/admin
+  - Enter the API token to run queries or upload CSVs.
 
-B. Backend (Flask) environment variables
-- The WSGI entry sets defaults in deploy/api/passenger_wsgi.py or deploy/passenger_wsgi.py:
-  - FLASK_ENV = production
-  - DB_HOST = localhost
-  - DB_USER = ludog319_kng
-  - DB_PASSWORD = WFoSE!
-  - DB_NAME = ludog319_webofinfluence
-- To change these on the server, either:
-  1) Edit the passenger_wsgi.py file in the repo with your desired defaults and redeploy, or
-  2) Use cPanel’s Application/Passenger environment variable UI (if available), or
-  3) Add SetEnv directives to .htaccess (advanced; requires appropriate Apache configs)
-
-Notes for Subpath Hosting (/webofinfluence)
-- Vite base is set at build-time via VITE_BASE=/webofinfluence/ to produce correct asset URLs.
-- Router basename is derived from import.meta.env.BASE_URL in demo-cand/src/main.jsx.
-- SPA rewrites in deploy/.htaccess ensure deep-links work:
-  - Requests to /webofinfluence/api/... go to the Flask API
-  - Other paths serve index.html unless an actual file/dir exists
-
-MySQL Permissions
-Ensure user ludog319_kng has privileges on database ludog319_webofinfluence.
-
-Manual Verification Checklist
-- Frontend loads at https://ludogology.co.nz/webofinfluence without 404s on assets.
-- GET https://ludogology.co.nz/webofinfluence/api/ returns “API is running!”.
-- Example API calls:
-  - /webofinfluence/api/candidates
-  - /webofinfluence/api/party
-  - /webofinfluence/api/electorate
-  - etc. (same routes as in deploy/api/app.py)
-- Frontend fetches use window.__APP_CONFIG__.API_BASE, so they should target /webofinfluence/api.
+Dependencies (Pinned for server compatibility)
+deploy/requirements.txt:
+- Flask==2.0.3
+- flask-cors==3.0.10
+- PyMySQL==1.0.2
+- python-dotenv==0.21.0
 
 Troubleshooting
-- 500 or DB errors: verify DB credentials and host in passenger_wsgi.py or server env vars.
-- Missing Python packages: .cpanel.yml installs from deploy/requirements.txt on each deploy.
-- Asset 404s: rebuild with correct VITE_BASE (/webofinfluence/), ensure dist/ was synced.
-- Logs: cPanel Errors and Passenger app logs (depending on host configuration).
+- Pip install failure:
+  - The pipeline vendors dependencies into vendor/. If server pip cannot fetch, consider manually vendoring libs locally and committing vendor/ (no-network deploy).
+- 500 errors:
+  - Check cPanel Metrics → Errors.
+  - Ensure environment variables are set (deploy/.env) and DB credentials are valid.
+- Authorization failures:
+  - Make sure API_TOKEN is set in deploy/.env and the Authorization header is present:
+    Authorization: Bearer YOUR_TOKEN
+  - For admin forms, the token is entered in the “API Token” field.
+- Route missing/404:
+  - Ensure .htaccess rewrite rules are deployed; they pass /api and /admin to Passenger.
+
+Security Notes
+- Keep API_TOKEN secret. Do not commit deploy/.env to the repository.
+- Set API_PROTECT_ALL=1 if you want to restrict all routes to authorized users.
+- The admin query tool is read-only; the upload tool validates identifiers and uses prepared statements.

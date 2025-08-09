@@ -26,7 +26,8 @@ def not_found_app(environ, start_response):
     start_response("404 Not Found", [("Content-Type", "text/plain; charset=utf-8")])
     return [b"Not Found"]
 
-# Mount Flask API under /api, leaving everything else to static/SPA handling
+# Mount Flask API under /api and admin UI under /admin, leaving everything else to static handling
 application = DispatcherMiddleware(not_found_app, {
-    "/api": flask_app
+    "/api": flask_app,
+    "/admin": flask_app
 })

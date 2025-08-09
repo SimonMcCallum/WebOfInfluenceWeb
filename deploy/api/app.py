@@ -1,8 +1,13 @@
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-import mysql.connector
-from mysql.connector import Error
 import os
+import re
+import csv
+import io
+from typing import Optional, Tuple, List
+
+from flask import Flask, jsonify, request, Response, render_template_string, redirect, url_for
+from flask_cors import CORS
+import pymysql
+from pymysql import MySQLError
 from dotenv import load_dotenv
 
 # Load environment from .env if present (optional)
@@ -12,35 +17,83 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
+# --- Configuration ---
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_USER = os.environ.get("DB_USER")
+DB_PASSWORD = os.environ.get("DB_PASSWORD")
+DB_NAME = os.environ.get("DB_NAME")
+API_TOKEN = os.environ.get("API_TOKEN")  # REQUIRED to access admin and (optionally) all endpoints
+API_PROTECT_ALL = os.environ.get("API_PROTECT_ALL", "0") == "1"  # When "1", protect all endpoints with token
+
+# --- Database Connection ---
 def get_db_connection():
     try:
-        connection = mysql.connector.connect(
-            host=os.environ.get("DB_HOST", "localhost"),
-            user=os.environ.get("DB_USER"),
-            password=os.environ.get("DB_PASSWORD"),
-            database=os.environ.get("DB_NAME")
+        connection = pymysql.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            cursorclass=pymysql.cursors.DictCursor,
+            autocommit=True
         )
         return connection
-    except Error as e:
+    except MySQLError as e:
         print(f"Error connecting to database: {e}")
         return None
 
+# --- Token Utilities ---
+def extract_token_from_request(req) -> Optional[str]:
+    # Header: Authorization: Bearer <token>
+    auth = req.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth.split(" ", 1)[1].strip()
+    # Form or query fallback (useful for HTML admin forms)
+    token = req.form.get("token") or req.args.get("token")
+    return token.strip() if token else None
+
+def require_token(req) -> Optional[Response]:
+    if not API_TOKEN:
+        return jsonify({"error": "API_TOKEN not configured on server"}), 500
+    token = extract_token_from_request(req)
+    if not token or token != API_TOKEN:
+        return jsonify({"error": "Unauthorized"}), 401
+    return None
+
+@app.before_request
+def maybe_protect_all():
+    # Always allow health and admin HTML GET to render login form, but enforce on POST actions or protected mode
+    open_paths = {"/", "/admin"}
+    if request.path in open_paths and request.method == "GET":
+        return None
+    if API_PROTECT_ALL:
+        # Protect everything (except health)
+        if request.path != "/":
+            unauthorized = require_token(request)
+            if unauthorized:
+                return unauthorized
+    return None
+
+# --- Health ---
+@app.route('/')
+def health():
+    return "API is running!"
+
+# --- Existing public data endpoints (leave unprotected by default, protectable via API_PROTECT_ALL) ---
 @app.route('/candidates', methods=['GET'])
 def get_candidates():
     connection = get_db_connection()
     if connection is None:
         return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
     try:
-        cursor.execute("SELECT * FROM Entities.People")
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM Entities.People")
+            rows = cursor.fetchall()
+            if not rows:
+                return jsonify({"error": "not found"}), 404
+            return jsonify(rows)
+    except MySQLError as e:
         return jsonify({"error": str(e)}), 500
     finally:
-        cursor.close()
         connection.close()
 
 @app.route('/party', methods=['GET'])
@@ -48,17 +101,16 @@ def get_parties():
     connection = get_db_connection()
     if connection is None:
         return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
     try:
-        cursor.execute("SELECT * FROM Entities.Parties")
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM Entities.Parties")
+            rows = cursor.fetchall()
+            if not rows:
+                return jsonify({"error": "not found"}), 404
+            return jsonify(rows)
+    except MySQLError as e:
         return jsonify({"error": str(e)}), 500
     finally:
-        cursor.close()
         connection.close()
 
 @app.route('/electorate', methods=['GET'])
@@ -66,468 +118,231 @@ def get_electorates():
     connection = get_db_connection()
     if connection is None:
         return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
     try:
-        cursor.execute("SELECT * FROM Entities.Electorates")
-        rows = cursor.fetchall()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM Entities.Electorates")
+            rows = cursor.fetchall()
+            if not rows:
+                return jsonify({"error": "not found"}), 404
+            return jsonify(rows)
+    except MySQLError as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        connection.close()
+
+# --- Simple Admin: Web-based DB view and CSV upload (token-protected) ---
+
+ADMIN_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Web Of Influence — Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 1.25rem; }
+    h1,h2 { margin: .5rem 0; }
+    form { margin: 1rem 0; padding: .75rem; border: 1px solid #e0e0e0; border-radius: 6px; }
+    input, textarea, select { width: 100%; padding: .5rem; margin: .25rem 0 .75rem; box-sizing: border-box; }
+    button { padding: .5rem 1rem; }
+    table { border-collapse: collapse; margin-top: .75rem; width: 100%; }
+    th, td { border: 1px solid #dadada; padding: .4rem .5rem; text-align: left; }
+    .ok { color: #1e7e34; }
+    .err { color: #b00020; white-space: pre-wrap; }
+    .note { color: #444; font-size: .9rem; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Web Of Influence — Admin</h1>
+  <p class="note">All admin actions require a valid API token. Configure API_TOKEN on the server (.env).</p>
+
+  <div class="row">
+    <div>
+      <h2>Read-only Query</h2>
+      <form action="{{ url_for('admin_query') }}" method="post">
+        <label>API Token
+          <input type="password" name="token" placeholder="Enter API token" required>
+        </label>
+        <label>SELECT Query (LIMIT enforced if missing)
+          <textarea name="query" rows="5" placeholder="SELECT * FROM Entities.People LIMIT 50" required></textarea>
+        </label>
+        <button type="submit">Run Query</button>
+      </form>
+      {% if query_result is defined %}
+        {% if error %}
+          <div class="err">{{ error }}</div>
+        {% else %}
+          <div class="ok">Returned {{ rows_count }} rows.</div>
+          <table>
+            <thead>
+              <tr>
+                {% for col in columns %}<th>{{ col }}</th>{% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in query_result %}
+              <tr>
+                {% for col in columns %}<td>{{ row[col] }}</td>{% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    <div>
+      <h2>CSV Upload → Table</h2>
+      <form action="{{ url_for('admin_upload') }}" method="post" enctype="multipart/form-data">
+        <label>API Token
+          <input type="password" name="token" placeholder="Enter API token" required>
+        </label>
+        <label>Target Table (letters, digits, underscore only)
+          <input type="text" name="table" placeholder="e.g., Entities.People (use Entities_People)" required>
+        </label>
+        <p class="note">Note: Use schema_table form (e.g., Entities_People) if table is namespaced; the server will convert underscore to dot for the first underscore to form Entities.People.</p>
+        <label>CSV File (header row must match table column names)
+          <input type="file" name="file" accept=".csv" required>
+        </label>
+        <button type="submit">Upload & Insert</button>
+      </form>
+      {% if upload_result is defined %}
+        {% if error %}
+          <div class="err">{{ error }}</div>
+        {% else %}
+          <div class="ok">Inserted {{ inserted }} rows into {{ table_shown }}.</div>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <p class="note">Security: Query tool only permits SELECT and blocks semicolons. Upload validates identifiers and uses prepared statements.</p>
+</body>
+</html>
+"""
+
+def is_safe_identifier(name: str) -> bool:
+    # Allow letters, digits, underscore only
+    return bool(re.match(r'^[A-Za-z0-9_]+$', name))
+
+def normalize_schema_table(raw_table: str) -> Optional[str]:
+    """
+    Accepts either "TableName" or "Schema_Table" and converts first underscore to dot:
+      Entities_People -> Entities.People
+    If no underscore, returns name as-is.
+    """
+    if not is_safe_identifier(raw_table):
+        return None
+    if "_" in raw_table:
+        parts = raw_table.split("_", 1)
+        schema = parts[0]
+        table = parts[1]
+        if not (is_safe_identifier(schema) and is_safe_identifier(table)):
+            return None
+        return f"{schema}.{table}"
+    return raw_table
+
+def ensure_select_query_is_safe(q: str) -> Tuple[bool, str]:
+    # Basic hardening: must start with SELECT, disallow semicolons to prevent chaining
+    if ";" in q:
+        return False, "Semicolons are not allowed."
+    if not re.match(r'^\s*SELECT\b', q, re.IGNORECASE):
+        return False, "Only SELECT queries are permitted."
+    return True, ""
+
+def maybe_append_limit(q: str, default_limit: int = 200) -> str:
+    # Append LIMIT if not present (naive check)
+    if re.search(r'\blimit\b', q, re.IGNORECASE):
+        return q
+    return f"{q} LIMIT {default_limit}"
+
+@app.route('/admin', methods=['GET'])
+def admin_home():
+    # Render empty admin page (forms)
+    return render_template_string(ADMIN_HTML)
+
+@app.route('/admin/query', methods=['POST'])
+def admin_query():
+    unauthorized = require_token(request)
+    if unauthorized:
+        return unauthorized
+
+    q = request.form.get("query", "") or ""
+    ok, msg = ensure_select_query_is_safe(q)
+    if not ok:
+        return render_template_string(ADMIN_HTML, error=msg, query_result=[], columns=[], rows_count=0)
+
+    q_exec = maybe_append_limit(q)
+
+    connection = get_db_connection()
+    if connection is None:
+        return render_template_string(ADMIN_HTML, error="Failed to connect to DB", query_result=[], columns=[], rows_count=0)
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(q_exec)
+            rows = cursor.fetchall()
+            columns = list(rows[0].keys()) if rows else []
+            return render_template_string(
+                ADMIN_HTML,
+                query_result=rows,
+                columns=columns,
+                rows_count=len(rows)
+            )
+    except MySQLError as e:
+        return render_template_string(ADMIN_HTML, error=str(e), query_result=[], columns=[], rows_count=0)
+    finally:
+        connection.close()
+
+@app.route('/admin/upload', methods=['POST'])
+def admin_upload():
+    unauthorized = require_token(request)
+    if unauthorized:
+        return unauthorized
+
+    raw_table = request.form.get("table", "")
+    table = normalize_schema_table(raw_table)
+    if not table:
+        return render_template_string(ADMIN_HTML, error="Invalid table name", upload_result=True, inserted=0, table_shown=raw_table)
+
+    file = request.files.get("file")
+    if not file:
+        return render_template_string(ADMIN_HTML, error="CSV file is required", upload_result=True, inserted=0, table_shown=table)
+
+    try:
+        content = file.read().decode("utf-8", errors="replace")
+        reader = csv.DictReader(io.StringIO(content))
+        if not reader.fieldnames:
+            return render_template_string(ADMIN_HTML, error="CSV must include a header row", upload_result=True, inserted=0, table_shown=table)
+
+        # Validate column identifiers
+        columns: List[str] = reader.fieldnames
+        for col in columns:
+            if not is_safe_identifier(col):
+                return render_template_string(ADMIN_HTML, error=f"Invalid column name: {col}", upload_result=True, inserted=0, table_shown=table)
+
+        placeholders = ", ".join(["%s"] * len(columns))
+        col_list = ", ".join(f"`{c}`" for c in columns)
+        sql = f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})"
+
+        rows = [tuple((row.get(c) if row.get(c) != "" else None) for c in columns) for row in reader]
         if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
+            return render_template_string(ADMIN_HTML, error="CSV contains no data rows", upload_result=True, inserted=0, table_shown=table)
 
-@app.route('/donor/search-id', methods=['GET'])
-def get_donor_by_id():
-    donor_id = request.args.get('donor_id')
-    if not donor_id:
-        return jsonify({"error": "donor_id is required"}), 400
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query = "SELECT * FROM Entities.Donors WHERE id = %s"
-        cursor.execute(query, (donor_id,))
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
+        connection = get_db_connection()
+        if connection is None:
+            return render_template_string(ADMIN_HTML, error="Failed to connect to DB", upload_result=True, inserted=0, table_shown=table)
 
-@app.route('/party/search-id', methods=['GET'])
-def get_parties_by_id():
-    party_id = request.args.get('party_id')
-    if not party_id:
-        return jsonify({"error": "party_id is required"}), 400
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query = "SELECT * FROM Entities.Parties WHERE id = %s"
-        cursor.execute(query, (party_id,))
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/electorate/search-id', methods=['GET'])
-def get_electorates_by_id():
-    electorate_id = request.args.get('electorate_id')
-    if not electorate_id:
-        return jsonify({"error": "electorate_id is required"}), 400
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query = "SELECT * FROM Entities.Electorates WHERE id = %s"
-        cursor.execute(query, (electorate_id,))
-        row = cursor.fetchone()
-        if not row:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(row)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/candidates/search-id', methods=['GET'])
-def get_candidate_by_id():
-    people_id = request.args.get('people_id')
-    if not people_id:
-        return jsonify({"error": "people_id is required"}), 400
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query = "SELECT * FROM Entities.People WHERE id = %s"
-        cursor.execute(query, (people_id,))
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/party/search', methods=['GET'])
-def get_parties_by_name():
-    party_name = request.args.get('party_name')
-    if not party_name:
-        return jsonify({"error": "party_name is required"}), 400
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query = "SELECT * FROM Entities.Parties WHERE party_name = %s"
-        cursor.execute(query, (party_name,))
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/electorate/search', methods=['GET'])
-def get_electorates_by_name():
-    electorate_name = request.args.get('electorate_name')
-    if not electorate_name:
-        return jsonify({"error": "electorate_name is required"}), 400
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query = "SELECT * FROM Entities.Electorates WHERE electorate_name = %s"
-        cursor.execute(query, (electorate_name,))
-        row = cursor.fetchone()
-        if not row:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(row)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/candidates/search', methods=['GET'])
-def get_candidate_by_name():
-    first_name = request.args.get('first_name')
-    last_name = request.args.get('last_name')
-    if not first_name and not last_name:
-        return jsonify({"error": "At least one parameter (first_name or last_name) is required"}), 400
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query = "SELECT * FROM Entities.People WHERE"
-        values = []
-        if first_name and last_name:
-            query += " first_name = %s AND last_name = %s"
-            values.extend([first_name, last_name])
-        elif last_name:
-            query += " last_name = %s"
-            values.append(last_name)
-        elif first_name:
-            query += " first_name = %s"
-            values.append(first_name)
-        cursor.execute(query, values)
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/candidates/election-overview/<year>', methods=['GET'])
-def get_candidates_by_election_23(year):
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query = f"SELECT * FROM Overviews_Candidate_Donations_By_Year.{year}_Candidate_Donation_Overview"
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/candidates/election-overview/<year>/search/electorate', methods=['GET'])
-def get_candidates_by_electorate(year):
-    electorate = request.args.get('electorate_name')
-    if not electorate:
-        return jsonify({"error": "electorate_name is required"}), 400
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT id FROM Entities.Electorates WHERE electorate_name = %s", (electorate,))
-        result = cursor.fetchone()
-        if not result:
-            return jsonify({"error": "Electorate not found"}), 404
-        electorate_id = result['id']
-        query = f"SELECT * FROM Overviews_Candidate_Donations_By_Year.{year}_Candidate_Donation_Overview WHERE electorate_id = %s"
-        cursor.execute(query, (electorate_id,))
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/candidates/election-overview/<year>/search/party', methods=['GET'])
-def get_candidates_by_party(year):
-    party = request.args.get('party_name')
-    if not party:
-        return jsonify({"error": "party_name is required"}), 400
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT id FROM Entities.Parties WHERE party_name = %s", (party,))
-        result = cursor.fetchone()
-        if not result:
-            return jsonify({"error": "party not found"}), 404
-        party_id = result['id']
-        query = f"SELECT * FROM Overviews_Candidate_Donations_By_Year.{year}_Candidate_Donation_Overview WHERE party_id = %s"
-        cursor.execute(query, (party_id,))
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/candidates/election-overview/<year>/search/name', methods=['GET'])
-def get_candidates_by_name(year):
-    first_name = request.args.get('first_name')
-    last_name = request.args.get('last_name')
-    if not first_name or not last_name:
-        return jsonify({"error": "Both first_name and last_name are required"}), 400
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT id FROM Entities.People WHERE first_name = %s AND last_name = %s", (first_name, last_name,))
-        result = cursor.fetchone()
-        if not result:
-            return jsonify({"error": "Name not found "}), 404
-        people_id = result['id']
-        query = f"SELECT * FROM Overviews_Candidate_Donations_By_Year.{year}_Candidate_Donation_Overview WHERE people_id = %s"
-        cursor.execute(query, (people_id,))
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "not found"}), 404
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/candidates/election-overview/<year>/search/combined', methods=['GET'])
-def get_candidates_combined_search(year):
-    first_name = request.args.get('first_name')
-    last_name = request.args.get('last_name')
-    party_name = request.args.get('party_name')
-    electorate_name = request.args.get('electorate_name')
-
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query = f"""
-            SELECT * FROM Overviews_Candidate_Donations_By_Year.{year}_Candidate_Donation_Overview overview
-        """
-
-        conditions = []
-        params = []
-
-        if first_name or last_name:
-            name_conditions = []
-            if first_name:
-                name_conditions.append("first_name = %s")
-                params.append(first_name)
-            if last_name:
-                name_conditions.append("last_name = %s")
-                params.append(last_name)
-
-            conditions.append(f"""
-                overview.people_id IN (
-                    SELECT id FROM Entities.People 
-                    WHERE {' AND '.join(name_conditions)}
-                )
-            """)
-
-        if party_name:
-            conditions.append("""
-                overview.party_id IN (
-                    SELECT id FROM Entities.Parties 
-                    WHERE party_name = %s
-                )
-            """)
-            params.append(party_name)
-
-        if electorate_name:
-            conditions.append("""
-                overview.electorate_id IN (
-                    SELECT id FROM Entities.Electorates 
-                    WHERE electorate_name = %s
-                )
-            """)
-            params.append(electorate_name)
-
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-
-        cursor.execute(query, tuple(params))
-        rows = cursor.fetchall()
-        if not rows:
-            return jsonify({"error": "No results found"}), 404
-        return jsonify(rows)
-    except mysql.connector.Error as err:
-        return jsonify({"error": str(err)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-from datetime import timedelta
-def convert_timedelta(obj):
-    if isinstance(obj, timedelta):
-        return str(obj)
-    return obj
-
-@app.route('/donations/<year>', methods=['GET'])
-def get_candidate_donations_list_by_year(year):
-    first_name = request.args.get('first_name')
-    last_name = request.args.get('last_name')
-    if not first_name or not last_name:
-        return jsonify({"error": "Both first_name and last_name are required"}), 400
-
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query1 = "SELECT * FROM Entities.People where first_name = %s AND last_name = %s"
-        cursor.execute(query1, (first_name, last_name))
-        result = cursor.fetchone()
-        if not result:
-            return jsonify({"error": "Candidate not found"}), 404
-        people_id = result['id']
-        query2 = f"SELECT * FROM Donations_Individual.Donations_Log_{year} WHERE minister_donated = %s"
-        cursor.execute(query2, (people_id,))
-        rows = cursor.fetchall()
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/ministerial_diaries/search-cand', methods=['GET'])
-def get_candidate_meetings():
-    first_name = request.args.get('first_name')
-    last_name = request.args.get('last_name')
-    if not first_name or not last_name:
-        return jsonify({"error": "Both first_name and last_name are required"}), 400
-
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-    try:
-        query1 = "SELECT * FROM Entities.People where first_name = %s AND last_name = %s"
-        cursor.execute(query1, (first_name, last_name))
-        result = cursor.fetchone()
-        if not result:
-            return jsonify({"error": "Candidate not found"}), 404
-        people_id = result['id']
-        query2 = "SELECT * FROM Ministerial_Meetings.Meetings_Log WHERE minister_logged_id = %s"
-        cursor.execute(query2, (people_id,))
-        rows = cursor.fetchall()
-        for row in rows:
-            for key, value in row.items():
-                row[key] = convert_timedelta(value)
-        return jsonify(rows)
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/ministerial_diaries/search-cand-filter', methods=['GET'])
-def search_ministerial_diaries():
-    first_name = request.args.get('first_name')
-    last_name = request.args.get('last_name')
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-
-    if not first_name or not last_name:
-        return jsonify({"error": "Both first name and last name are required"}), 400
-
-    connection = get_db_connection()
-    if connection is None:
-        return jsonify({"error": "Failed to connect to the database"}), 500
-    cursor = connection.cursor(dictionary=True)
-
-    try:
-        query1 = "SELECT * FROM Entities.People WHERE first_name = %s AND last_name = %s"
-        cursor.execute(query1, (first_name, last_name))
-        result = cursor.fetchone()
-
-        if not result:
-            return jsonify({"error": "Candidate not found"}), 404
-
-        people_id = result['id']
-
-        query2 = "SELECT * FROM Ministerial_Meetings.Meetings_Log WHERE minister_logged_id = %s"
-        params = [people_id]
-
-        if start_date and end_date:
-            query2 += " AND (date BETWEEN %s AND %s)"
-            params.extend([start_date, end_date])
-
-        cursor.execute(query2, params)
-        rows = cursor.fetchall()
-
-        for row in rows:
-            for key, value in row.items():
-                row[key] = convert_timedelta(value)
-
-        if rows:
-            return jsonify(rows), 200
-        else:
-            return jsonify({"error": "No meetings found"}), 404
-    except Error as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        cursor.close()
-        connection.close()
-
-@app.route('/')
-def health():
-    return "API is running!"
+        try:
+            with connection.cursor() as cursor:
+                cursor.executemany(sql, rows)
+            inserted = len(rows)
+            return render_template_string(ADMIN_HTML, upload_result=True, inserted=inserted, table_shown=table)
+        finally:
+            connection.close()
+    except Exception as e:
+        return render_template_string(ADMIN_HTML, error=str(e), upload_result=True, inserted=0, table_shown=table)
 
 # Note: No __main__ section needed when running under Passenger.
