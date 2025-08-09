@@ -6,26 +6,30 @@
 deployment:
   tasks:
     # Destination on cPanel (https://ludogology.co.nz/webofinfluence)
-    - export DEPLOYPATH=/home/ludog319/public_html/webofinfluence
+    - echo "Deploying to /home/ludog319/public_html/webofinfluence"
 
     # Ensure target exists
-    - /bin/mkdir -p "$DEPLOYPATH"
+    - set -xe
+    - echo "PWD=$(pwd)"; echo "WHOAMI=$(whoami)"; echo "PATH=$PATH"
+    - /bin/ls -la "/home/ludog319/public_html" || true
+    - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence"
+    - /bin/ls -la "/home/ludog319/public_html/webofinfluence" || true
 
     # 1) Build the frontend with the correct base path so assets resolve under /webofinfluence/
     - cd demo-cand && if command -v npm >/dev/null 2>&1; then (npm ci || npm install) && VITE_BASE=/webofinfluence/ npm run build; else echo "npm not found, skipping frontend build"; fi
 
     # 2) Sync server (Flask API) and config files
-    - /bin/rsync -a --delete deploy/ "$DEPLOYPATH"/
+    - /bin/rsync -a --delete deploy/ "/home/ludog319/public_html/webofinfluence"/
 
     # 3) Sync built frontend to the same directory so Apache serves it
-    - if [ -d demo-cand/dist ]; then /bin/rsync -a --delete demo-cand/dist/ "$DEPLOYPATH"/; else echo "dist not found, skipping frontend sync"; fi
+    - if [ -d demo-cand/dist ]; then /bin/rsync -a --delete demo-cand/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi
     # 3b) Write runtime app-config (prefer override if provided)
-    - if [ -f deploy/app-config.override.js ]; then /bin/cp deploy/app-config.override.js "$DEPLOYPATH"/app-config.js; else /bin/cp demo-cand/public/app-config.js "$DEPLOYPATH"/app-config.js; fi
+    - if [ -f deploy/app-config.override.js ]; then /bin/cp deploy/app-config.override.js "/home/ludog319/public_html/webofinfluence"/app-config.js; else /bin/cp demo-cand/public/app-config.js "/home/ludog319/public_html/webofinfluence"/app-config.js; fi
     # 3c) Copy environment file if present (for DB credentials and other secrets)
-    - if [ -f deploy/.env ]; then /bin/cp deploy/.env "$DEPLOYPATH"/.env; fi
+    - if [ -f deploy/.env ]; then /bin/cp deploy/.env "/home/ludog319/public_html/webofinfluence"/.env; fi
 
     # 4) Ensure Passenger picks up Python deps and restart the app
-    - /bin/mkdir -p "$DEPLOYPATH/tmp"
-    - /usr/bin/python3 -m venv "$DEPLOYPATH/venv"
-    - "$DEPLOYPATH/venv/bin/pip" install --upgrade pip && "$DEPLOYPATH/venv/bin/pip" install -r "$DEPLOYPATH/requirements.txt"
-    - /usr/bin/touch "$DEPLOYPATH/tmp/restart.txt"
+    - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/tmp"
+    - /usr/bin/python3 -m venv "/home/ludog319/public_html/webofinfluence/venv"
+    - /home/ludog319/public_html/webofinfluence/venv/bin/pip install --upgrade pip && /home/ludog319/public_html/webofinfluence/venv/bin/pip install -r /home/ludog319/public_html/webofinfluence/requirements.txt
+    - /usr/bin/touch "/home/ludog319/public_html/webofinfluence/tmp/restart.txt"
