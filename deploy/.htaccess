@@ -1,27 +1,8 @@
 # Enable Phusion Passenger for Python WSGI
 PassengerEnabled on
 PassengerAppEnv production
-# Use system Python since we vendor deps into ./vendor (no venv)
+# Use system Python; Python deps are vendored into ./vendor by the deploy pipeline
 PassengerPython /usr/bin/python3
 
-# Let Apache serve existing files directly
+# Keep it minimal; passenger_wsgi.py serves static and routes /api and /admin internally
 Options -MultiViews
-<IfModule mod_rewrite.c>
-  RewriteEngine On
-
-  # IMPORTANT: This .htaccess lives in /home/ludog319/public_html/webofinfluence
-  # Keep /api and /admin requests for the backend (handled by Passenger via passenger_wsgi.py)
-  RewriteCond %{REQUEST_URI} ^/webofinfluence/api [OR]
-  RewriteCond %{REQUEST_URI} ^/api [OR]
-  RewriteCond %{REQUEST_URI} ^/webofinfluence/admin [OR]
-  RewriteCond %{REQUEST_URI} ^/admin
-  RewriteRule ^ - [L]
-
-  # If the request is for an actual file or directory, serve it as-is
-  RewriteCond %{REQUEST_FILENAME} -f [OR]
-  RewriteCond %{REQUEST_FILENAME} -d
-  RewriteRule ^ - [L]
-
-  # Otherwise, fall back to SPA index.html (so deep-links work)
-  RewriteRule ^ index.html [L]
-</IfModule>

@@ -18,6 +18,9 @@ os.environ.setdefault("DB_HOST", "localhost")
 os.environ.setdefault("DB_USER", "ludog319_kng")
 os.environ.setdefault("DB_PASSWORD", "WFoSE!")
 os.environ.setdefault("DB_NAME", "ludog319_webofinfluence")
+# Provide defaults so admin works out-of-the-box (can be overridden via .env or cPanel env)
+os.environ.setdefault("API_TOKEN", "changeme-strong-secret")
+os.environ.setdefault("API_PROTECT_ALL", "0")
 
 # Lazy import of Flask app (avoid breaking static if backend deps missing)
 flask_app = None

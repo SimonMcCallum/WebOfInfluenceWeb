@@ -5,6 +5,7 @@
   <title>Web Of Influence - Deployed</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="app-config.js"></script>
+  <script src="auth-config.js"></script>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 2rem; line-height: 1.5; }
     code { background: #f2f4f8; padding: 0 .25rem; border-radius: 4px; }
@@ -36,7 +37,34 @@
   <pre><code id="cfg"></code></pre>
 
   <script>
-    document.getElementById('cfg').textContent = JSON.stringify(window.__APP_CONFIG__ || {}, null, 2);
+    var cfgEl = document.getElementById('cfg');
+    cfgEl.textContent = JSON.stringify(window.__APP_CONFIG__ || {}, null, 2);
+
+    // Quick API health test using the demo token header from auth-config.js
+    (function () {
+      try {
+        var base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
+        fetch(base + '/', { cache: 'no-store' })
+          .then(function (r) { return r.text(); })
+          .then(function (t) {
+            var d = document.createElement('div');
+            d.className = 'ok';
+            d.textContent = 'API health: ' + t;
+            document.body.appendChild(d);
+          })
+          .catch(function (e) {
+            var d = document.createElement('div');
+            d.className = 'warn';
+            d.textContent = 'API health fetch failed: ' + e;
+            document.body.appendChild(d);
+          });
+      } catch (e) {
+        var d = document.createElement('div');
+        d.className = 'warn';
+        d.textContent = 'API health test error: ' + e;
+        document.body.appendChild(d);
+      }
+    })();
   </script>
 </body>
 </html>
