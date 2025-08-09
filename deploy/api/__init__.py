@@ -1,0 +1,1 @@
+# Marks this directory as a Python package so 'from api.app import app' works reliably under Passenger.

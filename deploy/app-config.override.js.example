@@ -1,0 +1,13 @@
+/*
+Copy this file to deploy/app-config.override.js to override the frontend's runtime config at deploy time.
+.cpanel.yml will copy deploy/app-config.override.js to the deployed web root as app-config.js.
+
+Use this if you need the frontend to call a different API base than the default computed one.
+*/
+window.__APP_CONFIG__ = {
+  // Example: keep API on same host under /webofinfluence/api
+  API_BASE: '/webofinfluence/api'
+
+  // Or point to a different host:
+  // API_BASE: 'https://api.example.com'
+};

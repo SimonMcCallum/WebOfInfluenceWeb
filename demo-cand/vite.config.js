@@ -14,6 +14,6 @@ import react from '@vitejs/plugin-react'
 /* using github pages */
 export default defineConfig({
   plugins: [react()],
-  //base: '/', // working
-  base: '/WebOfInfluenceResearch/'
+  // Allow overriding the base path at build time (e.g., /webofinfluence/ for cPanel)
+  base: process.env.VITE_BASE || '/'
 })
