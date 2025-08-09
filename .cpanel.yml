@@ -30,6 +30,6 @@ deployment:
 
     # 4) Ensure Passenger picks up Python deps and restart the app
     - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/tmp"
-    - /usr/bin/python3 -m venv "/home/ludog319/public_html/webofinfluence/venv"
-    - /home/ludog319/public_html/webofinfluence/venv/bin/pip install --upgrade pip && /home/ludog319/public_html/webofinfluence/venv/bin/pip install -r /home/ludog319/public_html/webofinfluence/requirements.txt
+    - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/vendor"
+    - /usr/bin/python3 -m pip install -r "/home/ludog319/public_html/webofinfluence/requirements.txt" --target "/home/ludog319/public_html/webofinfluence/vendor"
     - /usr/bin/touch "/home/ludog319/public_html/webofinfluence/tmp/restart.txt"

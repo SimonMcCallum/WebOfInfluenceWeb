@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Web Of Influence - Deployed</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="app-config.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 2rem; line-height: 1.5; }
+    code { background: #f2f4f8; padding: 0 .25rem; border-radius: 4px; }
+    a { color: #0b5fff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .ok { color: #1e7e34; font-weight: 600; }
+    .warn { color: #b07900; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Web Of Influence</h1>
+  <p class="ok">Server deployment is installed. This is a placeholder index.html served from the deployed folder.</p>
+
+  <h2>API</h2>
+  <ul>
+    <li>Health: <a href="./api/">/webofinfluence/api/</a></li>
+    <li>Example: <a href="./api/candidates">/webofinfluence/api/candidates</a></li>
+  </ul>
+
+  <h2>Frontend</h2>
+  <p class="warn">The React app has not been built on this server because Node/npm is not available. You have two options:</p>
+  <ol>
+    <li>Install Node/npm on the cPanel build environment; the pipeline will run <code>npm run build</code> automatically.</li>
+    <li>Build locally and commit the built assets in <code>demo-cand/dist</code> to this repository. The pipeline will sync them.</li>
+  </ol>
+
+  <h2>Runtime Config</h2>
+  <p>This page includes <code>app-config.js</code>. Current API_BASE computed in the browser:</p>
+  <pre><code id="cfg"></code></pre>
+
+  <script>
+    document.getElementById('cfg').textContent = JSON.stringify(window.__APP_CONFIG__ || {}, null, 2);
+  </script>
+</body>
+</html>

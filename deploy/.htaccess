@@ -1,8 +1,8 @@
 # Enable Phusion Passenger for Python WSGI
 PassengerEnabled on
 PassengerAppEnv production
-# Use the virtualenv created by the deploy script
-PassengerPython /home/ludog319/public_html/webofinfluence/venv/bin/python3
+# Use system Python since we vendor deps into ./vendor (no venv)
+PassengerPython /usr/bin/python3
 
 # Let Apache serve existing files directly
 Options -MultiViews
