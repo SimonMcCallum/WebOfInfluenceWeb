@@ -70,6 +70,11 @@ def application(environ, start_response):
     """
     path = environ.get("PATH_INFO", "/") or "/"
     if path.startswith("/api") or path.startswith("/admin"):
+        # Serve static files if they exist under this directory (e.g., /api/index.html)
+        rel = path.lstrip("/")
+        abs_path = os.path.join(BASE_DIR, rel)
+        if os.path.isfile(abs_path) or os.path.isdir(abs_path):
+            return _serve_static(environ, start_response)
         # Lazy-load the Flask app on first API/Admin request
         global flask_app
         if flask_app is None:

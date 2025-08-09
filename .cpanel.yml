@@ -20,13 +20,19 @@ deployment:
 
     # 2) Sync server (Flask API) and config files
     - /bin/rsync -a --delete deploy/ "/home/ludog319/public_html/webofinfluence"/
+    # Remove .htaccess entirely (per request)
+    - /bin/rm -f "/home/ludog319/public_html/webofinfluence/.htaccess"
 
     # 3) Sync built frontend to the same directory so Apache serves it
     - if [ -d demo-cand/dist ]; then /bin/rsync -a --delete demo-cand/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi
     # 3b) Write runtime app-config (prefer override if provided)
     - if [ -f deploy/app-config.override.js ]; then /bin/cp deploy/app-config.override.js "/home/ludog319/public_html/webofinfluence"/app-config.js; else /bin/cp demo-cand/public/app-config.js "/home/ludog319/public_html/webofinfluence"/app-config.js; fi
+    # 3b-2) Copy demo auth-config.js (temporary token header for API testing)
+    - if [ -f demo-cand/public/auth-config.js ]; then /bin/cp demo-cand/public/auth-config.js "/home/ludog319/public_html/webofinfluence"/auth-config.js; fi
     # 3c) Copy environment file if present (for DB credentials and other secrets)
     - if [ -f deploy/.env ]; then /bin/cp deploy/.env "/home/ludog319/public_html/webofinfluence"/.env; fi
+    # 3d) Also sync demo-cand source for reference (not required to run)
+    - /bin/rsync -a --delete --exclude 'node_modules' demo-cand/ "/home/ludog319/public_html/webofinfluence"/demo-cand-src/
 
     # 4) Ensure Passenger picks up Python deps and restart the app
     - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/tmp"
