@@ -6,7 +6,7 @@ Overview
   - Admin web UI mounted at /admin (read-only SQL query + CSV upload)
   - Static files (index.html placeholder + app-config.js) at /webofinfluence
 - Hosting: cPanel (Phusion Passenger for Python WSGI)
-- Deployed URL base: https://ludogology.co.nz/webofinfluence
+- Deployed URL base: https://ludogogy.co.nz/webofinfluence
 
 Key Files
 - .cpanel.yml — automated deployment tasks for cPanel “Deploy HEAD”
@@ -50,12 +50,12 @@ Token Usage and Examples
 
 - cURL examples:
   1) Health (no token required):
-     curl -i https://ludogology.co.nz/webofinfluence/api/
+     curl -i https://ludogogy.co.nz/webofinfluence/api/
   2) Get candidates (requires token only if API_PROTECT_ALL=1):
      curl -H "Authorization: Bearer YOUR_TOKEN" \
-       https://ludogology.co.nz/webofinfluence/api/candidates
+       https://ludogogy.co.nz/webofinfluence/api/candidates
   3) Admin UI (browser; requires token in form inputs for actions):
-     https://ludogology.co.nz/webofinfluence/admin
+     https://ludogogy.co.nz/webofinfluence/admin
 
 Admin UI Details (/admin)
 - Read-only Query:
@@ -90,10 +90,10 @@ After Deployment — Verification
 - Check files in /home/ludog319/public_html/webofinfluence:
   - .htaccess, passenger_wsgi.py, requirements.txt, api/, vendor/, app-config.js, index.html
 - API health:
-  - https://ludogology.co.nz/webofinfluence/api/
+  - https://ludogogy.co.nz/webofinfluence/api/
   - Expected: “API is running!”
 - Admin UI:
-  - https://ludogology.co.nz/webofinfluence/admin
+  - https://ludogogy.co.nz/webofinfluence/admin
   - Enter the API token to run queries or upload CSVs.
 
 Dependencies (Pinned for server compatibility)

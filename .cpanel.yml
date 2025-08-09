@@ -2,10 +2,10 @@
 # cPanel deployment configuration
 # This deploys the repository's deploy/ folder to:
 #   /home/ludog319/public_html/webofinfluence
-# which corresponds to https://ludogology.co.nz/webofinfluence
+# which corresponds to https://ludogogy.co.nz/webofinfluence
 deployment:
   tasks:
-    # Destination on cPanel (https://ludogology.co.nz/webofinfluence)
+    # Destination on cPanel (https://ludogogy.co.nz/webofinfluence)
     - echo "Deploying to /home/ludog319/public_html/webofinfluence"
 
     # Ensure target exists
