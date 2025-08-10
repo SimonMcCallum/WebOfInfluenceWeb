@@ -20,7 +20,7 @@ $CONFIG = [
   'DB_HOST' => getenv('DB_HOST') ?: 'localhost',
   'DB_USER' => getenv('DB_USER') ?: null,
   'DB_PASS' => getenv('DB_PASSWORD') ?: null,
-  'DB_NAME' => getenv('DB_NAME') ?: null,
+  'DB_NAME' => getenv('DB_NAME') ?: 'ludog319_webofinfluence',
   'API_TOKEN' => getenv('API_TOKEN') ?: null,
   'API_PROTECT_ALL' => (getenv('API_PROTECT_ALL') === '1'),
 ];
@@ -143,6 +143,13 @@ if ($path === '/' && isset($_GET['route'])) {
 }
 
 $ROUTE = rtrim($path, '/') === '' ? '/' : rtrim($path, '/');
+// Fallback: accept /index.php and /index.php/* by rewriting to canonical routes
+if ($ROUTE === '/index.php') {
+  $ROUTE = '/';
+} elseif (strpos($ROUTE, '/index.php/') === 0) {
+  $ROUTE = substr($ROUTE, strlen('/index.php'));
+  if ($ROUTE === '' || $ROUTE === false) $ROUTE = '/';
+}
 
 // Protect if needed
 require_token_if_protected();
@@ -184,6 +191,17 @@ function ensure_select_query_is_safe(string $q): array {
 
 function maybe_append_limit(string $q, int $default = 200): string {
   return preg_match('/\blimit\b/i', $q) ? $q : ($q . ' LIMIT ' . $default);
+}
+
+/** Temporary directory for admin uploads/mapping (../tmp relative to /api) */
+function tmp_dir(): string {
+  $dir = realpath(__DIR__ . '/../tmp');
+  if ($dir === false) {
+    $candidate = __DIR__ . '/../tmp';
+    @mkdir($candidate, 0775, true);
+    return $candidate;
+  }
+  return $dir;
 }
 
 /** Data directory for server-side CSVs (../data relative to /api) */
@@ -431,15 +449,23 @@ function render_admin(array $ctx = []): void {
 
       <div>
         <h2>CSV Upload → Table</h2>
-        <form action="index.php?route=/admin/upload" method="post" enctype="multipart/form-data">
-          <label>Target Table (letters, digits, underscore only)
-            <input type="text" name="table" placeholder="e.g., woi_people or woi_People" required>
+        <form action="index.php?route=/admin/upload-start" method="post" enctype="multipart/form-data">
+          <label>Destination Table (pick existing)
+            <select name="dest_table_select">
+              <option value="">-- choose an existing table --</option>
+              <?php foreach (($ctx['tables'] ?? []) as $t): ?>
+                <option value="<?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"><?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> (<?= (int)($t['rows'] ?? 0) ?>)</option>
+              <?php endforeach; ?>
+            </select>
           </label>
-          <p class="note">Use schema_table form (e.g., woi_people) if table is namespaced; underscore converts to dot (woi.people).</p>
-          <label>CSV File (header row must match table column names)
+          <label>Or custom table name (letters, digits, underscore only)
+            <input type="text" name="table" placeholder="e.g., people_import_2023">
+          </label>
+          <p class="note">If both are provided, the custom name takes precedence. Use schema_table form (e.g., woi_people) if namespaced; underscore converts to dot.</p>
+          <label>CSV File (header row recommended for mapping)
             <input type="file" name="file" accept=".csv" required>
           </label>
-          <button type="submit">Upload & Insert</button>
+          <button type="submit">Continue to Mapping</button>
         </form>
         <?php if ($upload_result): ?>
           <?php if (!empty($error)) : ?>
@@ -450,6 +476,46 @@ function render_admin(array $ctx = []): void {
         <?php endif; ?>
       </div>
     </div>
+
+    <?php if (!empty($ctx['upload_mapping'])): ?>
+    <section class="panel">
+      <h2>CSV Column Mapping</h2>
+      <p class="note">CSV: <?= htmlspecialchars((string)($ctx['tmp_label'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> → Table: <?= htmlspecialchars((string)($ctx['map_table'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p>
+      <form action="index.php?route=/admin/upload-commit" method="post">
+        <input type="hidden" name="tmp_file" value="<?= htmlspecialchars((string)($ctx['tmp_file'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+        <input type="hidden" name="table" value="<?= htmlspecialchars((string)($ctx['map_table'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+        <div class="row">
+          <div class="col-12">
+            <table>
+              <thead><tr><th>CSV Column</th><th>Map to DB Column</th></tr></thead>
+              <tbody>
+              <?php foreach (($ctx['csv_columns'] ?? []) as $c): ?>
+                <tr>
+                  <td><?= htmlspecialchars($c, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
+                  <td>
+                    <select name="map[<?= htmlspecialchars($c, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>]">
+                      <option value="">Ignore</option>
+                      <?php foreach (($ctx['db_columns'] ?? []) as $dbc): ?>
+                        <option value="<?= htmlspecialchars($dbc, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"><?= htmlspecialchars($dbc, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></option>
+                      <?php endforeach; ?>
+                      <option value="__CREATE__:<?= htmlspecialchars($c, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">Create column '<?= htmlspecialchars($c, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>' (TEXT)</option>
+                    </select>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
+              </tbody>
+            </table>
+          </div>
+          <div class="col-3">
+            <label><input type="checkbox" name="truncate" value="1"> Truncate table before insert</label>
+          </div>
+          <div class="col-3">
+            <button type="submit" class="btn primary">Import with Mapping</button>
+          </div>
+        </div>
+      </form>
+    </section>
+    <?php endif; ?>
 
     <div class="row">
       <div>
@@ -791,6 +857,240 @@ function handle_admin_upload(): void {
   render_admin(['upload_result' => true, 'inserted' => $inserted, 'table_shown' => $table]);
 }
 
+/** Admin: POST /admin/upload-start (prepare mapping UI) */
+function handle_admin_upload_start(): void {
+  // Open access
+  $rawTable = $_POST['table'] ?? '';
+  $selTable = $_POST['dest_table_select'] ?? '';
+  $table = $rawTable ?: $selTable;
+  if (!$table) {
+    render_admin([
+      'error' => 'Destination table is required (select existing or provide custom).',
+      'upload_result' => false,
+      'inserted' => 0,
+      'table_shown' => '',
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+  if (!is_safe_identifier(str_replace('.', '_', $table))) {
+    render_admin([
+      'error' => 'Invalid table name',
+      'upload_result' => false,
+      'inserted' => 0,
+      'table_shown' => $table,
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+
+  if (!isset($_FILES['file']) || !is_uploaded_file($_FILES['file']['tmp_name'])) {
+    render_admin([
+      'error' => 'CSV file is required',
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+
+  $tmpBase = tmp_dir();
+  $tmpName = 'upload_' . uniqid('', true) . '.csv';
+  $dest = rtrim($tmpBase, '/\\') . DIRECTORY_SEPARATOR . $tmpName;
+  if (!@move_uploaded_file($_FILES['file']['tmp_name'], $dest)) {
+    // fallback: read and write
+    $content = @file_get_contents($_FILES['file']['tmp_name']);
+    if ($content === false || @file_put_contents($dest, $content) === false) {
+      render_admin([
+        'error' => 'Failed to save uploaded file to tmp',
+        'tables' => list_tables_with_counts(),
+        'server_csvs' => find_server_csvs(),
+      ]);
+      return;
+    }
+  }
+
+  // Read header
+  $fh = @fopen($dest, 'r');
+  if ($fh === false) {
+    render_admin([
+      'error' => 'Failed to open tmp CSV',
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+  $header = fgetcsv($fh) ?: [];
+  fclose($fh);
+  $csvColumns = array_values(array_filter(array_map(static fn($c) => sanitize_table_name((string)$c), $header), static fn($c) => $c !== ''));
+
+  // Existing DB columns for mapping
+  $dbCols = existing_columns($table);
+
+  $ctx = [
+    'tables' => list_tables_with_counts(),
+    'server_csvs' => find_server_csvs(),
+    'upload_mapping' => 1,
+    'tmp_file' => $tmpName,
+    'tmp_label' => $tmpName,
+    'map_table' => $table,
+    'csv_columns' => $csvColumns,
+    'db_columns' => array_values(array_filter($dbCols, static fn($c) => strtolower($c) !== 'id')),
+  ];
+  render_admin($ctx);
+}
+
+/** Admin: POST /admin/upload-commit (execute mapping import) */
+function handle_admin_upload_commit(): void {
+  $tmpName = $_POST['tmp_file'] ?? '';
+  $table = $_POST['table'] ?? '';
+  $truncate = isset($_POST['truncate']) && $_POST['truncate'] === '1';
+  $map = $_POST['map'] ?? [];
+
+  if (!$tmpName || !$table || !is_array($map)) {
+    render_admin([
+      'error' => 'Missing mapping inputs',
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+
+  $base = rtrim(tmp_dir(), '/\\') . DIRECTORY_SEPARATOR;
+  $abs = realpath($base . $tmpName);
+  if ($abs === false || strpos($abs, $base) !== 0 || !is_file($abs)) {
+    render_admin([
+      'error' => 'Invalid tmp file reference',
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+
+  // Sanitize table and mapping
+  if (!is_safe_identifier(str_replace('.', '_', $table))) {
+    render_admin([
+      'error' => 'Invalid destination table',
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+
+  // Build final column mapping: csv_col -> db_col (skip empty)
+  $finalMap = [];
+  $createCols = [];
+  foreach ($map as $csvCol => $dbSel) {
+    $csvCol = sanitize_table_name((string)$csvCol);
+    if (!$dbSel) continue; // ignore
+    if (strpos($dbSel, '__CREATE__:') === 0) {
+      $toCreate = substr($dbSel, strlen('__CREATE__:'));
+      $toCreate = sanitize_table_name($toCreate);
+      if ($toCreate) {
+        $createCols[$toCreate] = true;
+        $finalMap[$csvCol] = $toCreate;
+      }
+    } else {
+      $finalMap[$csvCol] = sanitize_table_name((string)$dbSel);
+    }
+  }
+  if (empty($finalMap)) {
+    render_admin([
+      'error' => 'No columns selected for import',
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+
+  // Create missing columns if needed
+  if (!empty($createCols)) {
+    foreach (array_keys($createCols) as $col) {
+      try {
+        $sql = "ALTER TABLE `" . str_replace('`', '``', $table) . "` ADD COLUMN `" . str_replace('`', '``', $col) . "` TEXT NULL";
+        pdo()->exec($sql);
+      } catch (Throwable $e) {
+        // if already exists, ignore
+      }
+    }
+  }
+
+  // Re-open CSV
+  $fh = @fopen($abs, 'r');
+  if ($fh === false) {
+    render_admin([
+      'error' => 'Failed to re-open tmp CSV',
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+  $header = fgetcsv($fh) ?: [];
+  // Map header index
+  $idx = [];
+  foreach ($header as $i => $name) {
+    $name = sanitize_table_name((string)$name);
+    $idx[$name] = $i;
+  }
+
+  if ($truncate) {
+    pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $table) . "`");
+  }
+
+  $dbCols = array_values(array_unique(array_values($finalMap)));
+  if (empty($dbCols)) {
+    fclose($fh);
+    render_admin([
+      'error' => 'No destination columns after mapping',
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+  $placeholders = implode(', ', array_fill(0, count($dbCols), '?'));
+  $colList = implode(', ', array_map(fn($c) => '`' . $c . '`', $dbCols));
+  $sql = "INSERT INTO `" . str_replace('`', '``', $table) . "` ($colList) VALUES ($placeholders)";
+  $stmt = pdo()->prepare($sql);
+
+  $inserted = 0;
+  while (($row = fgetcsv($fh)) !== false) {
+    $vals = [];
+    foreach ($dbCols as $dbCol) {
+      // find csv col that maps to this dbCol
+      $csvCol = array_search($dbCol, $finalMap, true);
+      if ($csvCol === false) { $vals[] = null; continue; }
+      $i = $idx[$csvCol] ?? null;
+      $val = ($i !== null && array_key_exists($i, $row)) ? $row[$i] : null;
+      $vals[] = ($val === '') ? null : $val;
+    }
+    try {
+      $stmt->execute($vals);
+      $inserted++;
+    } catch (Throwable $e) {
+      fclose($fh);
+      render_admin([
+        'error' => 'Insert failed at row ' . ($inserted + 1) . ': ' . $e->getMessage(),
+        'tables' => list_tables_with_counts(),
+        'server_csvs' => find_server_csvs(),
+      ]);
+      return;
+    }
+  }
+  fclose($fh);
+
+  // Cleanup tmp file
+  @unlink($abs);
+
+  render_admin([
+    'upload_result' => true,
+    'inserted' => $inserted,
+    'table_shown' => $table,
+    'tables' => list_tables_with_counts(),
+    'server_csvs' => find_server_csvs(),
+  ]);
+}
+
 /** Admin: POST /admin/table-action */
 function handle_admin_table_action(): void {
   require_token_admin();
@@ -922,6 +1222,8 @@ try {
   if ($METHOD === 'GET' && $ROUTE === '/admin') handle_admin_get();
   if ($METHOD === 'POST' && $ROUTE === '/admin/query') handle_admin_query();
   if ($METHOD === 'POST' && $ROUTE === '/admin/upload') handle_admin_upload();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/upload-start') handle_admin_upload_start();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/upload-commit') handle_admin_upload_commit();
   if ($METHOD === 'POST' && $ROUTE === '/admin/table-action') handle_admin_table_action();
   if ($METHOD === 'POST' && $ROUTE === '/admin/import-server') handle_admin_import_server();
   if ($METHOD === 'POST' && $ROUTE === '/admin/import-server-batch') handle_admin_import_server_batch();
