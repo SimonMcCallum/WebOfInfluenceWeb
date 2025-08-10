@@ -318,7 +318,7 @@ def admin_upload():
             return render_template_string(ADMIN_HTML, error="CSV must include a header row", upload_result=True, inserted=0, table_shown=table)
 
         # Validate column identifiers
-        columns: List[str] = reader.fieldnames
+        columns = list(reader.fieldnames or [])
         for col in columns:
             if not is_safe_identifier(col):
                 return render_template_string(ADMIN_HTML, error=f"Invalid column name: {col}", upload_result=True, inserted=0, table_shown=table)
@@ -345,4 +345,248 @@ def admin_upload():
     except Exception as e:
         return render_template_string(ADMIN_HTML, error=str(e), upload_result=True, inserted=0, table_shown=table)
 
+# --- Extended endpoints for compatibility and search (migrating from TestDbLoader/database_api.py) ---
+
+def _valid_year(year: str) -> bool:
+    # Allowlisted years present in data; extend if needed
+    return bool(re.match(r'^(2011|2014|2017|2020|2023)$', year))
+
+@app.route('/candidates/search-id', methods=['GET'])
+def api_get_candidate_by_id():
+    connection = get_db_connection()
+    if connection is None:
+        return jsonify({"error": "Failed to connect to the database"}), 500
+    try:
+        people_id = request.args.get('people_id')
+        if not people_id:
+            return jsonify({"error": "people_id is required"}), 400
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM Entities.People WHERE id = %s", (people_id,))
+            rows = cursor.fetchall()
+            if not rows:
+                return jsonify({"error": "not found"}), 404
+            return jsonify(rows)
+    except MySQLError as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        connection.close()
+
+@app.route('/party/search-id', methods=['GET'])
+def api_get_party_by_id():
+    connection = get_db_connection()
+    if connection is None:
+        return jsonify({"error": "Failed to connect to the database"}), 500
+    try:
+        party_id = request.args.get('party_id')
+        if not party_id:
+            return jsonify({"error": "party_id is required"}), 400
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM Entities.Parties WHERE id = %s", (party_id,))
+            rows = cursor.fetchall()
+            if not rows:
+                return jsonify({"error": "not found"}), 404
+            return jsonify(rows)
+    except MySQLError as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        connection.close()
+
+@app.route('/electorate/search-id', methods=['GET'])
+def api_get_electorate_by_id():
+    connection = get_db_connection()
+    if connection is None:
+        return jsonify({"error": "Failed to connect to the database"}), 500
+    try:
+        electorate_id = request.args.get('electorate_id')
+        if not electorate_id:
+            return jsonify({"error": "electorate_id is required"}), 400
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM Entities.Electorates WHERE id = %s", (electorate_id,))
+            row = cursor.fetchone()
+            if not row:
+                return jsonify({"error": "not found"}), 404
+            return jsonify(row)  # single object (Output.jsx expects object)
+    except MySQLError as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        connection.close()
+
+@app.route('/candidates/search', methods=['GET'])
+def api_search_candidates():
+    connection = get_db_connection()
+    if connection is None:
+        return jsonify({"error": "Failed to connect to the database"}), 500
+    try:
+        first_name = request.args.get('first_name')
+        last_name = request.args.get('last_name')
+        if not first_name and not last_name:
+            return jsonify({"error": "At least one parameter (first_name or last_name) is required"}), 400
+
+        sql = "SELECT * FROM Entities.People WHERE "
+        params = []
+        conds = []
+        if first_name:
+            conds.append("first_name = %s")
+            params.append(first_name)
+        if last_name:
+            conds.append("last_name = %s")
+            params.append(last_name)
+        sql += " AND ".join(conds)
+
+        with connection.cursor() as cursor:
+            cursor.execute(sql, tuple(params))
+            rows = cursor.fetchall()
+            if not rows:
+                return jsonify({"error": "not found"}), 404
+            return jsonify(rows)
+    except MySQLError as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        connection.close()
+
+@app.route('/candidates/election-overview/<year>/search/combined', methods=['GET'])
+def api_candidates_combined_search(year):
+    # Validate path parameter to prevent injection in schema.table identifier
+    if not _valid_year(year):
+        return jsonify({"error": "Invalid year"}), 400
+
+    connection = get_db_connection()
+    if connection is None:
+        return jsonify({"error": "Failed to connect to the database"}), 500
+
+    try:
+        first_name = request.args.get('first_name')
+        last_name = request.args.get('last_name')
+        party_name = request.args.get('party_name')
+        electorate_name = request.args.get('electorate_name')
+
+        base = f"SELECT * FROM Overviews_Candidate_Donations_By_Year.{year}_Candidate_Donation_Overview overview"
+        conditions = []
+        params = []
+
+        if first_name or last_name:
+            name_conds = []
+            if first_name:
+                name_conds.append("first_name = %s")
+                params.append(first_name)
+            if last_name:
+                name_conds.append("last_name = %s")
+                params.append(last_name)
+            conditions.append(f"""
+                overview.people_id IN (
+                    SELECT id FROM Entities.People
+                    WHERE {' AND '.join(name_conds)}
+                )
+            """)
+
+        if party_name:
+            conditions.append("""
+                overview.party_id IN (
+                    SELECT id FROM Entities.Parties
+                    WHERE party_name = %s
+                )
+            """)
+            params.append(party_name)
+
+        if electorate_name:
+            conditions.append("""
+                overview.electorate_id IN (
+                    SELECT id FROM Entities.Electorates
+                    WHERE electorate_name = %s
+                )
+            """)
+            params.append(electorate_name)
+
+        sql = base
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+
+        with connection.cursor() as cursor:
+            cursor.execute(sql, tuple(params))
+            rows = cursor.fetchall()
+            if not rows:
+                return jsonify({"error": "No results found"}), 404
+            return jsonify(rows)
+    except MySQLError as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        connection.close()
+
+# Utilities
+def convert_timedelta(obj):
+    try:
+        from datetime import timedelta
+        if isinstance(obj, timedelta):
+            return str(obj)
+    except Exception:
+        pass
+    return obj
+
+# Meetings search (case-insensitive name match, optional date range and portfolio)
+@app.route('/ministerial_diaries/search-cand-filter', methods=['GET'])
+def api_ministerial_diaries_search():
+    first_name = request.args.get('first_name')
+    last_name = request.args.get('last_name')
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    portfolio = request.args.get('portfolio')
+
+    if not first_name or not last_name:
+        return jsonify({"error": "Both first name and last name are required"}), 400
+
+    connection = get_db_connection()
+    if connection is None:
+        return jsonify({"error": "Failed to connect to the database"}), 500
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM Entities.People WHERE UPPER(first_name) = UPPER(%s) AND UPPER(last_name) = UPPER(%s)",
+                (first_name, last_name),
+            )
+            person = cursor.fetchone()
+            if not person:
+                return jsonify({"error": "Candidate not found"}), 404
+            people_id = person["id"]
+
+            sql = "SELECT * FROM Ministerial_Meetings.Meetings_Log WHERE minister_logged_id = %s"
+            params = [people_id]
+
+            if start_date and end_date:
+                sql += " AND (date BETWEEN %s AND %s)"
+                params.extend([start_date, end_date])
+            elif start_date:
+                sql += " AND date >= %s"
+                params.append(start_date)
+            elif end_date:
+                sql += " AND date <= %s"
+                params.append(end_date)
+
+            if portfolio:
+                sql += " AND portfolio LIKE %s"
+                params.append(f"%{portfolio}%")
+
+            cursor.execute(sql, tuple(params))
+            rows = cursor.fetchall()
+            if not rows:
+                return jsonify({"error": "No meetings found"}), 404
+
+            cleaned = []
+            for row in rows:
+                cleaned_row = {}
+                for k, v in row.items():
+                    cleaned_row[k] = convert_timedelta(v)
+                cleaned.append(cleaned_row)
+            return jsonify(cleaned)
+    except MySQLError as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        connection.close()
+
 # Note: No __main__ section needed when running under Passenger.
+
+# Local development entrypoint (not used by Passenger)
+if __name__ == "__main__":
+    host = "127.0.0.1"
+    port = int(os.environ.get("PORT", "5050"))
+    app.run(host=host, port=port, debug=True)

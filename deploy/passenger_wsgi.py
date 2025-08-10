@@ -86,5 +86,14 @@ def application(environ, start_response):
                 start_response("500 Internal Server Error", [("Content-Type", "text/plain; charset=utf-8"),
                                                              ("Content-Length", str(len(msg)))])
                 return [msg]
+        # If under /api, strip the "/api" prefix so Flask routes like "/" and "/candidates" match.
+        if path.startswith("/api"):
+            env = environ.copy()
+            new_path = path[4:] or "/"
+            if not new_path.startswith("/"):
+                new_path = "/" + new_path
+            env["PATH_INFO"] = new_path
+            env["SCRIPT_NAME"] = "/api"
+            return flask_app(env, start_response)
         return flask_app(environ, start_response)
     return _serve_static(environ, start_response)

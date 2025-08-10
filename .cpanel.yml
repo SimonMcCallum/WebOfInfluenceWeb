@@ -20,8 +20,6 @@ deployment:
 
     # 2) Sync server (Flask API) and config files
     - /bin/rsync -a --delete deploy/ "/home/ludog319/public_html/webofinfluence"/
-    # Remove .htaccess entirely (per request)
-    - /bin/rm -f "/home/ludog319/public_html/webofinfluence/.htaccess"
 
     # 3) Sync built frontend to the same directory so Apache serves it
     - if [ -d demo-cand/dist ]; then /bin/rsync -a --delete demo-cand/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi
