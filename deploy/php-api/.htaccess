@@ -1,0 +1,18 @@
+# PHP API router for /webofinfluence/api
+# Routes all non-file requests in this directory to index.php
+
+PassengerEnabled off
+Options -Indexes
+DirectoryIndex index.php
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Skip existing files/directories
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Everything else to index.php
+  RewriteRule ^ index.php [QSA,L]
+</IfModule>
