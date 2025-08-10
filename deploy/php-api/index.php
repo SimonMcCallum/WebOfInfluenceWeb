@@ -100,29 +100,13 @@ function extract_token(): ?string {
 }
 
 function require_token_if_protected(): void {
-  global $CONFIG, $ROUTE, $METHOD;
-  // Always allow health and admin GET page to render login form
-  $open = ($ROUTE === '/' && $METHOD === 'GET') || ($ROUTE === '/admin' && $METHOD === 'GET');
-  if ($open) return;
-  if ($CONFIG['API_PROTECT_ALL']) {
-    $token = extract_token();
-    if (!$CONFIG['API_TOKEN']) json_response(['error' => 'API_TOKEN not configured on server'], 500);
-    if (!$token || $token !== $CONFIG['API_TOKEN']) json_response(['error' => 'Unauthorized'], 401);
-  }
+  // Open access: no token enforcement
+  return;
 }
 
 function require_token_admin(): void {
-  global $CONFIG;
-  if (!$CONFIG['API_TOKEN']) json_response(['error' => 'API_TOKEN not configured on server'], 500);
-  $token = extract_token();
-  if (!$token || $token !== $CONFIG['API_TOKEN']) {
-    // Render admin HTML with error if accept text/html, else JSON
-    if (accepts_html()) {
-      render_admin(['error' => 'Unauthorized']);
-      exit;
-    }
-    json_response(['error' => 'Unauthorized'], 401);
-  }
+  // Open access: no token required
+  return;
 }
 
 function accepts_html(): bool {
@@ -409,15 +393,12 @@ function render_admin(array $ctx = []): void {
   </head>
   <body>
     <h1>Web Of Influence — Admin</h1>
-    <p class="note">All admin actions require a valid API token. Configure API_TOKEN in config.php or environment.</p>
+    <p class="note">Admin is currently OPEN (no authentication). Use with caution. We will add Firebase auth later.</p>
 
     <div class="row">
       <div>
         <h2>Read-only Query</h2>
         <form action="index.php?route=/admin/query" method="post">
-          <label>API Token
-            <input type="password" name="token" placeholder="Enter API token" required>
-          </label>
           <label>SELECT Query (LIMIT enforced if missing)
             <textarea name="query" rows="5" placeholder="SELECT * FROM woi.people LIMIT 50" required></textarea>
           </label>
@@ -451,9 +432,6 @@ function render_admin(array $ctx = []): void {
       <div>
         <h2>CSV Upload → Table</h2>
         <form action="index.php?route=/admin/upload" method="post" enctype="multipart/form-data">
-          <label>API Token
-            <input type="password" name="token" placeholder="Enter API token" required>
-          </label>
           <label>Target Table (letters, digits, underscore only)
             <input type="text" name="table" placeholder="e.g., woi_people or woi_People" required>
           </label>
@@ -490,13 +468,11 @@ function render_admin(array $ctx = []): void {
                   <form action="index.php?route=/admin/table-action" method="post" style="display:inline;margin-right:.5rem">
                     <input type="hidden" name="table" value="<?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
                     <input type="hidden" name="action" value="truncate">
-                    <input type="password" name="token" placeholder="API token" required>
                     <button type="submit" onclick="return confirm('Truncate table <?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>?')">Truncate</button>
                   </form>
                   <form action="index.php?route=/admin/table-action" method="post" style="display:inline">
                     <input type="hidden" name="table" value="<?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
                     <input type="hidden" name="action" value="drop">
-                    <input type="password" name="token" placeholder="API token" required>
                     <button type="submit" onclick="return confirm('DROP table <?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>? This cannot be undone!')">Drop</button>
                   </form>
                 </td>
@@ -514,9 +490,6 @@ function render_admin(array $ctx = []): void {
         <p class="note">CSV files discovered under: <?= htmlspecialchars(data_dir(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p>
 
         <form action="index.php?route=/admin/import-server" method="post">
-          <label>API Token
-            <input type="password" name="token" placeholder="Enter API token" required>
-          </label>
           <label>Select CSV file found on server
             <select name="csv_rel" required>
               <option value="">-- choose a CSV --</option>
@@ -533,9 +506,6 @@ function render_admin(array $ctx = []): void {
         </form>
 
         <form action="index.php?route=/admin/import-server-batch" method="post" style="margin-top:1rem">
-          <label>API Token
-            <input type="password" name="token" placeholder="Enter API token" required>
-          </label>
           <label>Optional Subdirectory (relative to data/)
             <input type="text" name="subdir" placeholder="e.g., candidate_csv">
           </label>
