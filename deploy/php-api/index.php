@@ -224,12 +224,11 @@ function list_tables_with_counts(): array {
   if ($row && isset($row['db'])) $dbName = $row['db'];
   if (!$dbName) return $tables;
 
-  $q = "SELECT table_name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name";
+  $q = "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = ? ORDER BY TABLE_NAME";
   $stmt = pdo()->prepare($q);
   $stmt->execute([$dbName]);
-  $names = $stmt->fetchAll();
-  foreach ($names as $n) {
-    $t = $n['table_name'] ?? null;
+  $names = $stmt->fetchAll(PDO::FETCH_COLUMN, 0);
+  foreach ($names as $t) {
     if (!$t) continue;
     try {
       $c = pdo()->query("SELECT COUNT(*) AS c FROM `" . str_replace('`', '``', $t) . "`")->fetch();
@@ -629,7 +628,7 @@ function handle_debug(): void {
   try {
     $pdo = pdo();
     $dbName = $pdo->query('SELECT DATABASE() AS db')->fetch()['db'] ?? '';
-    $stmt = $pdo->prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name LIMIT 20");
+    $stmt = $pdo->prepare("SELECT TABLE_NAME AS table_name FROM information_schema.tables WHERE table_schema = ? ORDER BY TABLE_NAME LIMIT 20");
     $stmt->execute([$dbName]);
     $rows = $stmt->fetchAll();
     foreach ($rows as $r) $tables[] = $r['table_name'] ?? '';
