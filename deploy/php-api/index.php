@@ -202,6 +202,179 @@ function maybe_append_limit(string $q, int $default = 200): string {
   return preg_match('/\blimit\b/i', $q) ? $q : ($q . ' LIMIT ' . $default);
 }
 
+/** Data directory for server-side CSVs (../data relative to /api) */
+function data_dir(): string {
+  // /home/USER/public_html/webofinfluence/api -> ../data
+  $dir = realpath(__DIR__ . '/../data');
+  if ($dir === false) {
+    // Fallback to a safe non-existing path; UI will show none found
+    return __DIR__ . '/../data';
+  }
+  return $dir;
+}
+
+/** List tables in the current DB with row counts */
+function list_tables_with_counts(): array {
+  $tables = [];
+  $dbName = null;
+  $stmt = pdo()->query('SELECT DATABASE() AS db');
+  $row = $stmt->fetch();
+  if ($row && isset($row['db'])) $dbName = $row['db'];
+  if (!$dbName) return $tables;
+
+  $q = "SELECT table_name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name";
+  $stmt = pdo()->prepare($q);
+  $stmt->execute([$dbName]);
+  $names = $stmt->fetchAll();
+  foreach ($names as $n) {
+    $t = $n['table_name'] ?? null;
+    if (!$t) continue;
+    try {
+      $c = pdo()->query("SELECT COUNT(*) AS c FROM `" . str_replace('`', '``', $t) . "`")->fetch();
+      $tables[] = ['name' => $t, 'rows' => (int)($c['c'] ?? 0)];
+    } catch (Throwable $e) {
+      $tables[] = ['name' => $t, 'rows' => 0];
+    }
+  }
+  return $tables;
+}
+
+/** Recursively find CSV files under data_dir, return relative paths */
+function find_server_csvs(): array {
+  $base = data_dir();
+  $files = [];
+  if (!is_dir($base)) return $files;
+
+  $it = new RecursiveIteratorIterator(
+    new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS),
+    RecursiveIteratorIterator::SELF_FIRST
+  );
+  foreach ($it as $item) {
+    if ($item->isFile()) {
+      $name = $item->getFilename();
+      if (preg_match('/\.csv$/i', $name)) {
+        $abs = $item->getPathname();
+        $rel = ltrim(str_replace('\\', '/', substr($abs, strlen($base))), '/');
+        $files[] = $rel;
+      }
+    }
+  }
+  sort($files);
+  return $files;
+}
+
+/** Identifier sanitization */
+function sanitize_table_name(string $raw): string {
+  $s = preg_replace('/[^A-Za-z0-9_]/', '_', $raw);
+  $s = preg_replace('/_+/', '_', $s);
+  $s = trim($s, '_');
+  if ($s === '') $s = 'imported';
+  return $s;
+}
+
+/** Derive a table name from CSV relative path */
+function table_name_from_csv_rel(string $rel): string {
+  // Use path with slashes converted to underscores (without extension)
+  $rel = preg_replace('/\.csv$/i', '', $rel);
+  $rel = str_replace('/', '_', $rel);
+  return sanitize_table_name($rel);
+}
+
+/** Ensure table exists with given columns (TEXT columns); if exists, only insert matching cols */
+function ensure_table_exists_with_columns(string $table, array $columns): void {
+  // Create if not exists
+  $colsDef = [];
+  foreach ($columns as $c) {
+    $safe = sanitize_table_name($c);
+    $colsDef[] = "`$safe` TEXT NULL";
+  }
+  $sql = "CREATE TABLE IF NOT EXISTS `" . str_replace('`', '``', $table) . "` (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    " . implode(",\n    ", $colsDef) . "
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+  pdo()->exec($sql);
+}
+
+/** Return existing column names for a table */
+function existing_columns(string $table): array {
+  try {
+    $stmt = pdo()->query("SHOW COLUMNS FROM `" . str_replace('`', '``', $table) . "`");
+    $cols = [];
+    foreach ($stmt->fetchAll() as $r) {
+      $cols[] = $r['Field'];
+    }
+    return $cols;
+  } catch (Throwable $e) {
+    return [];
+  }
+}
+
+/** Import a CSV file on server into a table. Returns ['inserted' => n, 'table' => t, 'error' => ''] */
+function import_server_csv_to_table(string $relPath, ?string $targetTable, bool $truncateFirst): array {
+  $base = data_dir();
+  $abs = realpath($base . '/' . $relPath);
+  if ($abs === false || strpos($abs, $base) !== 0 || !is_file($abs)) {
+    return ['inserted' => 0, 'table' => (string)$targetTable, 'error' => 'CSV not found or invalid path'];
+  }
+
+  // Open and read header
+  $fh = fopen($abs, 'r');
+  if ($fh === false) return ['inserted' => 0, 'table' => (string)$targetTable, 'error' => 'Failed to open CSV'];
+  $header = fgetcsv($fh);
+  if (!$header) {
+    fclose($fh);
+    return ['inserted' => 0, 'table' => (string)$targetTable, 'error' => 'CSV must include a header row'];
+  }
+  $columns = array_map(fn($c) => sanitize_table_name((string)$c), $header);
+
+  // Determine table name
+  $table = $targetTable ?: table_name_from_csv_rel($relPath);
+
+  // Ensure table exists
+  ensure_table_exists_with_columns($table, $columns);
+
+  // Determine insertable columns = intersection of header columns and existing table columns (excluding id)
+  $existing = array_filter(existing_columns($table), fn($c) => strtolower($c) !== 'id');
+  $insertCols = array_values(array_intersect($existing, $columns));
+  if (empty($insertCols)) {
+    fclose($fh);
+    return ['inserted' => 0, 'table' => $table, 'error' => 'No matching columns to insert'];
+  }
+
+  if ($truncateFirst) {
+    pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $table) . "`");
+  }
+
+  $placeholders = implode(', ', array_fill(0, count($insertCols), '?'));
+  $colList = implode(', ', array_map(fn($c) => '`' . $c . '`', $insertCols));
+  $sql = "INSERT INTO `" . str_replace('`', '``', $table) . "` ($colList) VALUES ($placeholders)";
+  $stmt = pdo()->prepare($sql);
+
+  $inserted = 0;
+  // Map header name -> index
+  $index = [];
+  foreach ($columns as $i => $name) $index[$name] = $i;
+
+  while (($row = fgetcsv($fh)) !== false) {
+    $vals = [];
+    foreach ($insertCols as $c) {
+      $i = $index[$c] ?? null;
+      $val = ($i !== null && array_key_exists($i, $row)) ? $row[$i] : null;
+      $vals[] = ($val === '') ? null : $val;
+    }
+    try {
+      $stmt->execute($vals);
+      $inserted++;
+    } catch (Throwable $e) {
+      fclose($fh);
+      return ['inserted' => $inserted, 'table' => $table, 'error' => 'Insert failed: ' . $e->getMessage()];
+    }
+  }
+  fclose($fh);
+
+  return ['inserted' => $inserted, 'table' => $table, 'error' => ''];
+}
+
 /** Rendering for Admin HTML */
 function render_admin(array $ctx = []): void {
   header('Content-Type: text/html; charset=utf-8');
@@ -300,6 +473,82 @@ function render_admin(array $ctx = []): void {
       </div>
     </div>
 
+    <div class="row">
+      <div>
+        <h2>Database Tables</h2>
+        <p class="note">Current DB tables and row counts. Truncate removes all rows but keeps the table.</p>
+        <table>
+          <thead>
+            <tr><th>Table</th><th>Rows</th><th>Action</th></tr>
+          </thead>
+          <tbody>
+            <?php foreach (($ctx['tables'] ?? []) as $t): ?>
+              <tr>
+                <td><?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
+                <td><?= (int)($t['rows'] ?? 0) ?></td>
+                <td>
+                  <form action="index.php?route=/admin/table-action" method="post" style="display:inline;margin-right:.5rem">
+                    <input type="hidden" name="table" value="<?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+                    <input type="hidden" name="action" value="truncate">
+                    <input type="password" name="token" placeholder="API token" required>
+                    <button type="submit" onclick="return confirm('Truncate table <?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>?')">Truncate</button>
+                  </form>
+                  <form action="index.php?route=/admin/table-action" method="post" style="display:inline">
+                    <input type="hidden" name="table" value="<?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+                    <input type="hidden" name="action" value="drop">
+                    <input type="password" name="token" placeholder="API token" required>
+                    <button type="submit" onclick="return confirm('DROP table <?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>? This cannot be undone!')">Drop</button>
+                  </form>
+                </td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+        <?php if (!empty($ctx['table_action_msg'])): ?>
+          <div class="<?= !empty($ctx['table_action_err']) ? 'err' : 'ok' ?>"><?= htmlspecialchars($ctx['table_action_msg'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
+        <?php endif; ?>
+      </div>
+
+      <div>
+        <h2>Import CSVs from Server</h2>
+        <p class="note">CSV files discovered under: <?= htmlspecialchars(data_dir(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p>
+
+        <form action="index.php?route=/admin/import-server" method="post">
+          <label>API Token
+            <input type="password" name="token" placeholder="Enter API token" required>
+          </label>
+          <label>Select CSV file found on server
+            <select name="csv_rel" required>
+              <option value="">-- choose a CSV --</option>
+              <?php foreach (($ctx['server_csvs'] ?? []) as $rel): ?>
+                <option value="<?= htmlspecialchars($rel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"><?= htmlspecialchars($rel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></option>
+              <?php endforeach; ?>
+            </select>
+          </label>
+          <label>Target Table (optional; default is derived from path)
+            <input type="text" name="table" placeholder="leave empty to auto-derive">
+          </label>
+          <label><input type="checkbox" name="truncate" value="1"> Truncate table before import</label>
+          <button type="submit">Import Selected CSV</button>
+        </form>
+
+        <form action="index.php?route=/admin/import-server-batch" method="post" style="margin-top:1rem">
+          <label>API Token
+            <input type="password" name="token" placeholder="Enter API token" required>
+          </label>
+          <label>Optional Subdirectory (relative to data/)
+            <input type="text" name="subdir" placeholder="e.g., candidate_csv">
+          </label>
+          <label><input type="checkbox" name="truncate_each" value="1"> Truncate tables before each import</label>
+          <button type="submit">Import ALL CSVs (recursive)</button>
+        </form>
+
+        <?php if (!empty($ctx['import_server_msg'])): ?>
+          <div class="<?= !empty($ctx['import_server_err']) ? 'err' : 'ok' ?>"><?= htmlspecialchars($ctx['import_server_msg'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
+        <?php endif; ?>
+      </div>
+    </div>
+
     <p class="note">Security: Query tool only permits SELECT and blocks semicolons. Upload validates identifiers and uses prepared statements.</p>
   </body>
   </html>
@@ -316,7 +565,7 @@ function handle_health(): void {
 function handle_get_candidates(): void {
   $stmt = pdo()->query('SELECT id, first_name, last_name FROM people');
   $rows = $stmt->fetchAll();
-  if (!$rows) json_response(['error' => 'not found'], 404);
+  if (!$rows) json_response([]); // return empty for no data
   json_response($rows);
 }
 
@@ -324,7 +573,7 @@ function handle_get_parties(): void {
   // Include both "name" and legacy alias "party_name"
   $stmt = pdo()->query('SELECT id, name, name AS party_name FROM parties');
   $rows = $stmt->fetchAll();
-  if (!$rows) json_response(['error' => 'not found'], 404);
+  if (!$rows) json_response([]); // return empty for no data
   json_response($rows);
 }
 
@@ -332,7 +581,7 @@ function handle_get_electorates(): void {
   // Include both "name" and legacy alias "electorate_name"
   $stmt = pdo()->query('SELECT id, name, name AS electorate_name FROM electorates');
   $rows = $stmt->fetchAll();
-  if (!$rows) json_response(['error' => 'not found'], 404);
+  if (!$rows) json_response([]); // return empty for no data
   json_response($rows);
 }
 
@@ -342,7 +591,7 @@ function handle_candidate_by_id(): void {
   $stmt = pdo()->prepare('SELECT id, first_name, last_name FROM people WHERE id = ?');
   $stmt->execute([$people_id]);
   $rows = $stmt->fetchAll();
-  if (!$rows) json_response(['error' => 'not found'], 404);
+  if (!$rows) json_response([]); // empty list when not found
   json_response($rows);
 }
 
@@ -352,7 +601,7 @@ function handle_party_by_id(): void {
   $stmt = pdo()->prepare('SELECT id, name, name AS party_name FROM parties WHERE id = ?');
   $stmt->execute([$party_id]);
   $rows = $stmt->fetchAll();
-  if (!$rows) json_response(['error' => 'not found'], 404);
+  if (!$rows) json_response([]); // empty list when not found
   json_response($rows);
 }
 
@@ -362,7 +611,7 @@ function handle_electorate_by_id(): void {
   $stmt = pdo()->prepare('SELECT id, name, name AS electorate_name FROM electorates WHERE id = ?');
   $stmt->execute([$electorate_id]);
   $row = $stmt->fetch();
-  if (!$row) json_response(['error' => 'not found'], 404);
+  if (!$row) json_response((object)[]); // empty object when not found
   json_response($row);
 }
 
@@ -379,7 +628,7 @@ function handle_search_candidates(): void {
   $stmt = pdo()->prepare($sql);
   $stmt->execute($params);
   $rows = $stmt->fetchAll();
-  if (!$rows) json_response(['error' => 'not found'], 404);
+  if (!$rows) json_response([]); // return empty for no data
   json_response($rows);
 }
 
@@ -396,7 +645,7 @@ function handle_candidates_combined_search(string $year): void {
   $elect = $_GET['electorate_name'] ?? null;
 
   $sql = "SELECT co.id, co.total_donations, co.total_expenses, co.people_id, co.party_id, co.electorate_id,
-                 co.part_a, co.part_b, co.part_c, co.part_d, co.part_f, co.part_g, co.part_h, co.year, co.original_id
+                 co.part_a, co.part_b, co.part_c, co.part_d, co.part_f, co.part_g, co.part_h, co.year, co.year AS election_year, co.original_id
           FROM candidate_overview co
           WHERE co.year = ?";
   $params = [$year];
@@ -423,7 +672,7 @@ function handle_candidates_combined_search(string $year): void {
   $stmt = pdo()->prepare($sql);
   $stmt->execute($params);
   $rows = $stmt->fetchAll();
-  if (!$rows) json_response(['error' => 'No results found'], 404);
+  if (!$rows) json_response([]); // return empty for no data
   json_response($rows);
 }
 
@@ -466,7 +715,7 @@ function handle_ministerial_diaries_search(): void {
   $stmt = pdo()->prepare($sql);
   $stmt->execute($params);
   $rows = $stmt->fetchAll();
-  if (!$rows) json_response(['error' => 'No meetings found'], 404);
+  if (!$rows) json_response([]); // return empty for no data
 
   // Times are strings under PDO; return as-is
   json_response($rows);
@@ -474,7 +723,12 @@ function handle_ministerial_diaries_search(): void {
 
 /** Admin: GET /admin */
 function handle_admin_get(): void {
-  render_admin();
+  // Populate tables and server CSV list
+  $ctx = [
+    'tables' => list_tables_with_counts(),
+    'server_csvs' => find_server_csvs(),
+  ];
+  render_admin($ctx);
 }
 
 /** Admin: POST /admin/query (SELECT only) */
@@ -567,6 +821,113 @@ function handle_admin_upload(): void {
   render_admin(['upload_result' => true, 'inserted' => $inserted, 'table_shown' => $table]);
 }
 
+/** Admin: POST /admin/table-action */
+function handle_admin_table_action(): void {
+  require_token_admin();
+  $table = $_POST['table'] ?? '';
+  $action = $_POST['action'] ?? '';
+  $err = '';
+  $msg = '';
+  if (!is_safe_identifier($table)) {
+    $err = 'Invalid table name';
+  } elseif ($action === 'truncate') {
+    try {
+      pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $table) . "`");
+      $msg = "Truncated table {$table}.";
+    } catch (Throwable $e) {
+      $err = $e->getMessage();
+    }
+  } elseif ($action === 'drop') {
+    try {
+      pdo()->exec("DROP TABLE `" . str_replace('`', '``', $table) . "`");
+      $msg = "Dropped table {$table}.";
+    } catch (Throwable $e) {
+      $err = $e->getMessage();
+    }
+  } else {
+    $err = 'Unsupported action';
+  }
+  $ctx = [
+    'tables' => list_tables_with_counts(),
+    'server_csvs' => find_server_csvs(),
+    'table_action_msg' => $msg ?: ($err ?: ''),
+    'table_action_err' => $err ? 1 : 0,
+  ];
+  render_admin($ctx);
+}
+
+/** Admin: POST /admin/import-server (single CSV) */
+function handle_admin_import_server(): void {
+  require_token_admin();
+  $rel = $_POST['csv_rel'] ?? '';
+  $table = $_POST['table'] ?? null;
+  $truncate = isset($_POST['truncate']) && $_POST['truncate'] === '1';
+
+  $res = import_server_csv_to_table((string)$rel, $table ? sanitize_table_name($table) : null, $truncate);
+  $err = $res['error'] ?? '';
+  $msg = $err ? '' : ("Imported {$res['inserted']} rows into {$res['table']} from {$rel}.");
+
+  $ctx = [
+    'tables' => list_tables_with_counts(),
+    'server_csvs' => find_server_csvs(),
+    'import_server_msg' => $msg ?: ($err ?: ''),
+    'import_server_err' => $err ? 1 : 0,
+  ];
+  render_admin($ctx);
+}
+
+/** Admin: POST /admin/import-server-batch (all CSVs under optional subdir) */
+function handle_admin_import_server_batch(): void {
+  require_token_admin();
+  $subdir = trim((string)($_POST['subdir'] ?? ''));
+  $truncateEach = isset($_POST['truncate_each']) && $_POST['truncate_each'] === '1';
+
+  $base = data_dir();
+  $dir = $base;
+  if ($subdir !== '') {
+    $dir = realpath($base . '/' . $subdir) ?: $dir;
+  }
+  $csvs = [];
+  if (is_dir($dir)) {
+    $it = new RecursiveIteratorIterator(
+      new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+      RecursiveIteratorIterator::SELF_FIRST
+    );
+    foreach ($it as $item) {
+      if ($item->isFile() && preg_match('/\.csv$/i', $item->getFilename())) {
+        $abs = $item->getPathname();
+        $rel = ltrim(str_replace('\\', '/', substr($abs, strlen($base))), '/');
+        $csvs[] = $rel;
+      }
+    }
+  }
+  sort($csvs);
+
+  $totalInserted = 0;
+  $errors = [];
+  foreach ($csvs as $rel) {
+    $res = import_server_csv_to_table($rel, null, $truncateEach);
+    if (!empty($res['error'])) {
+      $errors[] = $rel . ': ' . $res['error'];
+    } else {
+      $totalInserted += (int)$res['inserted'];
+    }
+  }
+
+  $msg = "Imported " . count($csvs) . " CSV file(s), total rows inserted: {$totalInserted}.";
+  if (!empty($errors)) {
+    $msg .= " Errors:\n" . implode("\n", $errors);
+  }
+
+  $ctx = [
+    'tables' => list_tables_with_counts(),
+    'server_csvs' => find_server_csvs(),
+    'import_server_msg' => $msg,
+    'import_server_err' => empty($errors) ? 0 : 1,
+  ];
+  render_admin($ctx);
+}
+
 /** Dispatch */
 try {
   if ($METHOD === 'GET' && $ROUTE === '/') handle_health();
@@ -591,6 +952,9 @@ try {
   if ($METHOD === 'GET' && $ROUTE === '/admin') handle_admin_get();
   if ($METHOD === 'POST' && $ROUTE === '/admin/query') handle_admin_query();
   if ($METHOD === 'POST' && $ROUTE === '/admin/upload') handle_admin_upload();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/table-action') handle_admin_table_action();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/import-server') handle_admin_import_server();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/import-server-batch') handle_admin_import_server_batch();
 
   // Not found
   json_response(['error' => 'Not Found', 'route' => $ROUTE], 404);

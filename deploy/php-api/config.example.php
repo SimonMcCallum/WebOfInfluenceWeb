@@ -11,7 +11,7 @@ return [
   'DB_HOST' => 'localhost',
   'DB_USER' => 'ludog319_kng',
   'DB_PASS' => 'WFoSE!',
-  'DB_NAME' => 'woi',
+  'DB_NAME' => 'ludog319_webofinfluence',
 
   // Security
   // Shared secret for admin actions (and optionally all endpoints)
