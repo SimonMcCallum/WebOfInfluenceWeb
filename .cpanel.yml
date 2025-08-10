@@ -14,15 +14,18 @@ deployment:
     - /bin/ls -la "/home/ludog319/public_html" || true
     - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence"
     - /bin/ls -la "/home/ludog319/public_html/webofinfluence" || true
+    # Remove any previously deployed .htaccess files that may cause 500 errors
+    - /bin/rm -f "/home/ludog319/public_html/webofinfluence/.htaccess" || true
+    - /bin/rm -f "/home/ludog319/public_html/webofinfluence/api/.htaccess" || true
 
     # 1) Build the frontend with the correct base path so assets resolve under /webofinfluence/
     - (cd demo-cand && if command -v npm >/dev/null 2>&1; then (npm ci || npm install) && VITE_BASE=/webofinfluence/ npm run build; else echo "npm not found, skipping frontend build"; fi)
 
     # 2) Sync server (Flask API) and config files
-    - /bin/rsync -a --delete deploy/ "/home/ludog319/public_html/webofinfluence"/
+    - /bin/rsync -a --delete --exclude '.htaccess' --exclude 'passenger_wsgi.py' --exclude 'requirements.txt' --exclude 'api/' deploy/ "/home/ludog319/public_html/webofinfluence"/
     # 2b) Deploy PHP API into /webofinfluence/api (disables Passenger in that subdir via its own .htaccess)
     - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/api"
-    - /bin/rsync -a --delete deploy/php-api/ "/home/ludog319/public_html/webofinfluence/api"/
+    - /bin/rsync -a --delete --exclude '.htaccess' deploy/php-api/ "/home/ludog319/public_html/webofinfluence/api"/
 
     # 3) Sync built frontend to the same directory so Apache serves it
     - if [ -d demo-cand/dist ]; then /bin/rsync -a --delete demo-cand/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi
@@ -36,7 +39,7 @@ deployment:
     - /bin/rsync -a --delete --exclude 'node_modules' demo-cand/ "/home/ludog319/public_html/webofinfluence"/demo-cand-src/
 
     # 4) Ensure Passenger picks up Python deps and restart the app
-    - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/tmp"
-    - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/vendor"
-    - /usr/bin/python3 -m pip install -r "/home/ludog319/public_html/webofinfluence/requirements.txt" --target "/home/ludog319/public_html/webofinfluence/vendor"
-    - /usr/bin/touch "/home/ludog319/public_html/webofinfluence/tmp/restart.txt"
+    - echo "Skipping Passenger tmp/vendor setup (PHP-only API)"
+    - true
+    - echo "Skipping vendoring Python deps (no Passenger/Flask in use)"
+    - echo "Skipping Passenger restart (no .htaccess or WSGI needed)"

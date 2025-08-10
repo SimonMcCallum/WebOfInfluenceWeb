@@ -138,8 +138,26 @@ $path = substr($uriPath, strlen($scriptDir));
 $path = $path === false ? '/' : $path;
 $path = $path === '' ? '/' : $path;
 
-// Normalize /index.php to /
-if ($path === '/index.php') $path = '/';
+/**
+ * Normalize request path to avoid needing .htaccess:
+ * - Allow calling /api/index.php or /api/index.php/route
+ * - Also support query-style routing: /api/index.php?route=/path
+ */
+// Normalize /index.php to /, and strip /index.php prefix if present
+if ($path === '/index.php') {
+  $path = '/';
+} elseif (strpos($path, '/index.php') === 0) {
+  $path = substr($path, strlen('/index.php'));
+  if ($path === '' || $path === false) $path = '/';
+}
+
+if ($path === '/' && isset($_GET['route'])) {
+  $gp = $_GET['route'];
+  if (!is_string($gp)) $gp = '';
+  if ($gp === '' || $gp[0] !== '/') $gp = '/' . $gp;
+  $path = $gp;
+}
+
 $ROUTE = rtrim($path, '/') === '' ? '/' : rtrim($path, '/');
 
 // Protect if needed
@@ -223,7 +241,7 @@ function render_admin(array $ctx = []): void {
     <div class="row">
       <div>
         <h2>Read-only Query</h2>
-        <form action="admin/query" method="post">
+        <form action="index.php?route=/admin/query" method="post">
           <label>API Token
             <input type="password" name="token" placeholder="Enter API token" required>
           </label>
@@ -259,7 +277,7 @@ function render_admin(array $ctx = []): void {
 
       <div>
         <h2>CSV Upload → Table</h2>
-        <form action="admin/upload" method="post" enctype="multipart/form-data">
+        <form action="index.php?route=/admin/upload" method="post" enctype="multipart/form-data">
           <label>API Token
             <input type="password" name="token" placeholder="Enter API token" required>
           </label>
