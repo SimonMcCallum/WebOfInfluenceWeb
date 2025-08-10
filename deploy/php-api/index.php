@@ -135,7 +135,8 @@ if ($path === '/index.php') {
   if ($path === '' || $path === false) $path = '/';
 }
 
-if ($path === '/' && isset($_GET['route'])) {
+// Check for query-style routing first, before path processing
+if (isset($_GET['route'])) {
   $gp = $_GET['route'];
   if (!is_string($gp)) $gp = '';
   if ($gp === '' || $gp[0] !== '/') $gp = '/' . $gp;
