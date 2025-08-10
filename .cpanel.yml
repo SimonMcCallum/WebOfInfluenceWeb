@@ -28,7 +28,7 @@ deployment:
     - /bin/rsync -a --delete csv_data/ "/home/ludog319/public_html/webofinfluence/data"/ || true
     # 2b) Deploy PHP API into /webofinfluence/api (PHP-only; no .htaccess needed)
     - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/api"
-    - /bin/rsync -a --delete --exclude '.htaccess' deploy/php-api/ "/home/ludog319/public_html/webofinfluence/api"/
+    - /bin/rsync -a --delete --exclude '.htaccess' --exclude 'config.php' deploy/php-api/ "/home/ludog319/public_html/webofinfluence/api"/
 
     # 3) Sync built frontend to the same directory so Apache serves it
     - if [ -d demo-cand/dist ]; then /bin/rsync -a --delete demo-cand/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi

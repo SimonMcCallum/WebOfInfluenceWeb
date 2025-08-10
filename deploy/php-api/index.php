@@ -18,8 +18,8 @@ header('Content-Type: application/json; charset=utf-8');
 
 $CONFIG = [
   'DB_HOST' => getenv('DB_HOST') ?: 'localhost',
-  'DB_USER' => getenv('DB_USER') ?: null,
-  'DB_PASS' => getenv('DB_PASSWORD') ?: null,
+  'DB_USER' => getenv('DB_USER') ?: 'ludog319_kng',
+  'DB_PASS' => getenv('DB_PASSWORD') ?: 'WFoSE!',
   'DB_NAME' => getenv('DB_NAME') ?: 'ludog319_webofinfluence',
   'API_TOKEN' => getenv('API_TOKEN') ?: null,
   'API_PROTECT_ALL' => (getenv('API_PROTECT_ALL') === '1'),
@@ -595,6 +595,105 @@ function render_admin(array $ctx = []): void {
 function handle_health(): void {
   header('Content-Type: text/plain; charset=utf-8');
   echo 'API is running!';
+  exit;
+}
+
+/** Debug route: GET /__debug — show routing + config (masked) + DB check */
+function handle_debug(): void {
+  header('Content-Type: text/html; charset=utf-8');
+
+  // Gather routing info
+  $method   = $_SERVER['REQUEST_METHOD'] ?? '';
+  $uriPath  = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+  $script   = $_SERVER['SCRIPT_NAME'] ?? '';
+  $scriptDir= rtrim(str_replace('\\', '/', dirname($script)), '/');
+  $server   = $_SERVER['SERVER_NAME'] ?? '';
+  $addr     = $_SERVER['REMOTE_ADDR'] ?? '';
+
+  // Config snapshot (masked)
+  $cfg = $GLOBALS['CONFIG'] ?? [];
+  $cfgMasked = $cfg;
+  if (isset($cfgMasked['DB_PASS'])) $cfgMasked['DB_PASS'] = str_repeat('*', max(4, strlen((string)$cfgMasked['DB_PASS'])));
+
+  // Config file presence
+  $configPath = __DIR__ . '/config.php';
+  $configExists = is_file($configPath) ? 'yes' : 'no';
+  $configReal   = is_file($configPath) ? (realpath($configPath) ?: $configPath) : '(missing)';
+  $configMd5    = is_file($configPath) ? md5_file($configPath) : '(n/a)';
+
+  // DB check
+  $dbOk = false;
+  $dbErr = '';
+  $dbName = '';
+  $tables = [];
+  try {
+    $pdo = pdo();
+    $dbName = $pdo->query('SELECT DATABASE() AS db')->fetch()['db'] ?? '';
+    $stmt = $pdo->prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name LIMIT 20");
+    $stmt->execute([$dbName]);
+    $rows = $stmt->fetchAll();
+    foreach ($rows as $r) $tables[] = $r['table_name'] ?? '';
+    $dbOk = true;
+  } catch (Throwable $e) {
+    $dbErr = $e->getMessage();
+  }
+
+  ?><!doctype html>
+  <html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>API Debug</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; margin: 1rem; }
+      h1, h2 { margin: .25rem 0; }
+      pre { background: #0b1220; color: #e5e7eb; padding: .75rem; border-radius: 8px; overflow:auto; }
+      .ok { color: #16a34a; }
+      .err { color: #dc2626; white-space: pre-wrap; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #e5e7eb; padding: .4rem .5rem; text-align: left; }
+    </style>
+  </head>
+  <body>
+    <h1>Web Of Influence — API Debug</h1>
+
+    <h2>Routing</h2>
+    <pre><?php echo htmlspecialchars(json_encode([
+      'METHOD' => $method,
+      'SERVER_NAME' => $server,
+      'REMOTE_ADDR' => $addr,
+      'SCRIPT_NAME' => $script,
+      'scriptDir' => $scriptDir,
+      'REQUEST_URI' => $_SERVER['REQUEST_URI'] ?? '',
+      'uriPath' => $uriPath,
+      'ROUTE' => $GLOBALS['ROUTE'] ?? '(unset)',
+    ], JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></pre>
+
+    <h2>Config</h2>
+    <pre><?php echo htmlspecialchars(json_encode([
+      'config_exists' => $configExists,
+      'config_realpath' => $configReal,
+      'config_md5' => $configMd5,
+      'CONFIG' => $cfgMasked,
+    ], JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></pre>
+
+    <h2>Database</h2>
+    <?php if ($dbOk): ?>
+      <div class="ok">Connected. DATABASE() = <?php echo htmlspecialchars($dbName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></div>
+      <p>First 20 tables:</p>
+      <pre><?php echo htmlspecialchars(json_encode($tables, JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></pre>
+    <?php else: ?>
+      <div class="err">DB error: <?php echo htmlspecialchars($dbErr, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></div>
+    <?php endif; ?>
+
+    <h2>Useful Links</h2>
+    <ul>
+      <li><a href="./index.php">/api/index.php (health)</a></li>
+      <li><a href="./index.php/admin">/api/index.php/admin (admin)</a></li>
+      <li><a href="./index.php?route=/admin">/api/index.php?route=/admin (admin ?route form)</a></li>
+    </ul>
+  </body>
+  </html><?php
   exit;
 }
 
@@ -1201,6 +1300,7 @@ function handle_admin_import_server_batch(): void {
 /** Dispatch */
 try {
   if ($METHOD === 'GET' && $ROUTE === '/') handle_health();
+  if ($METHOD === 'GET' && $ROUTE === '/__debug') handle_debug();
 
   if ($METHOD === 'GET' && $ROUTE === '/candidates') handle_get_candidates();
   if ($METHOD === 'GET' && $ROUTE === '/party') handle_get_parties();
