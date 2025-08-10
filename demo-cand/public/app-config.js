@@ -3,15 +3,6 @@
    You can overwrite this file during deploy to point the frontend at the correct API.
 */
 window.__APP_CONFIG__ = {
-  // Compute API base from the first URL segment so it works under subpaths like /webofinfluence
-  API_BASE: (function() {
-    try {
-      var segments = (window.location.pathname || '/').split('/').filter(Boolean);
-      var base = segments.length > 0 ? '/' + segments[0] + '/' : '/';
-      var baseNoSlash = base.replace(/\/$/, '');
-      return baseNoSlash + '/api';
-    } catch (e) {
-      return '/api';
-    }
-  })()
+  // Point to PHP API instead of the old Flask API
+  API_BASE: '/php-api'
 };

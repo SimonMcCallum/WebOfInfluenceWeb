@@ -3,5 +3,5 @@
    It exists so a simple placeholder index.html can link to the API easily.
 */
 window.__APP_CONFIG__ = {
-  API_BASE: '/webofinfluence/api'
+  API_BASE: '/php-api'
 };
