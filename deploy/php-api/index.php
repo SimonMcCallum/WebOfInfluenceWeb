@@ -1296,6 +1296,174 @@ function handle_admin_import_server_batch(): void {
   render_admin($ctx);
 }
 
+/** CSV Import API Functions (for frontend) */
+function handle_csv_upload_api(): void {
+  if (!isset($_FILES['file']) || !is_uploaded_file($_FILES['file']['tmp_name'])) {
+    json_response(['error' => 'No file uploaded'], 400);
+  }
+
+  $uploadDir = __DIR__ . '/../uploads/';
+  if (!is_dir($uploadDir)) {
+    @mkdir($uploadDir, 0755, true);
+  }
+
+  $filename = uniqid() . '_' . basename($_FILES['file']['name']);
+  $filepath = $uploadDir . $filename;
+
+  if (!move_uploaded_file($_FILES['file']['tmp_name'], $filepath)) {
+    json_response(['error' => 'Failed to upload file'], 500);
+  }
+
+  json_response([
+    'success' => true,
+    'filename' => $filename,
+    'filepath' => $filepath,
+    'size' => filesize($filepath)
+  ]);
+}
+
+function handle_csv_preview_api(): void {
+  $input = json_decode(file_get_contents('php://input'), true);
+  $filename = $input['filename'] ?? '';
+
+  if (empty($filename)) {
+    json_response(['error' => 'Filename required'], 400);
+  }
+
+  $filepath = __DIR__ . '/../uploads/' . $filename;
+  if (!file_exists($filepath)) {
+    json_response(['error' => 'File not found'], 404);
+  }
+
+  $handle = fopen($filepath, 'r');
+  $headers = fgetcsv($handle);
+  $preview = [];
+
+  // Get first 10 rows for preview
+  for ($i = 0; $i < 10; $i++) {
+    $row = fgetcsv($handle);
+    if ($row === false) break;
+    $preview[] = $row;
+  }
+
+  fclose($handle);
+
+  json_response([
+    'success' => true,
+    'headers' => $headers,
+    'preview' => $preview,
+    'filename' => $filename
+  ]);
+}
+
+function handle_csv_mapping_api(): void {
+  // Return available database tables and their columns for mapping
+  $tables = [
+    'people' => ['id', 'first_name', 'last_name', 'created_at', 'updated_at'],
+    'parties' => ['id', 'name', 'created_at', 'updated_at'],
+    'electorates' => ['id', 'name', 'created_at', 'updated_at'],
+    'donors' => ['id', 'first_name', 'last_name', 'org_name', 'normalized_name', 'created_at', 'updated_at'],
+    'candidate_overview' => [
+      'id', 'original_id', 'year', 'people_id', 'party_id', 'electorate_id',
+      'total_donations', 'total_expenses', 'part_a', 'part_b', 'part_c', 'part_d',
+      'part_f', 'part_g', 'part_h', 'created_at', 'updated_at'
+    ],
+    'donations' => [
+      'id', 'year', 'date', 'amount', 'money_or_goods_services', 'notes',
+      'donor_id', 'candidate_person_id', 'candidate_overview_id', 'created_at', 'updated_at'
+    ],
+    'meetings' => [
+      'id', 'date', 'start_time', 'end_time', 'location', 'title', 'notes',
+      'type', 'portfolio', 'with_text', 'minister_person_id', 'created_at', 'updated_at'
+    ]
+  ];
+
+  $input = json_decode(file_get_contents('php://input'), true);
+
+  json_response([
+    'success' => true,
+    'tables' => $tables,
+    'filename' => $input['filename'] ?? ''
+  ]);
+}
+
+function handle_csv_execute_api(): void {
+  $input = json_decode(file_get_contents('php://input'), true);
+  $filename = $input['filename'] ?? '';
+  $table = $input['table'] ?? '';
+  $mapping = $input['mapping'] ?? [];
+
+  if (empty($filename) || empty($table) || empty($mapping)) {
+    json_response(['error' => 'Missing required parameters'], 400);
+  }
+
+  $filepath = __DIR__ . '/../uploads/' . $filename;
+  if (!file_exists($filepath)) {
+    json_response(['error' => 'File not found'], 404);
+  }
+
+  try {
+    $pdo = pdo();
+    $pdo->beginTransaction();
+
+    $handle = fopen($filepath, 'r');
+    $headers = fgetcsv($handle); // Skip header row
+
+    $insertedCount = 0;
+    $errorCount = 0;
+    $errors = [];
+
+    // Prepare columns and placeholders for the insert statement
+    $columns = array_values($mapping);
+    $placeholders = array_fill(0, count($columns), '?');
+
+    $sql = "INSERT INTO `{$table}` (`" . implode('`, `', $columns) . "`) VALUES (" . implode(', ', $placeholders) . ")";
+    $stmt = $pdo->prepare($sql);
+
+    while (($row = fgetcsv($handle)) !== false) {
+      try {
+        // Map CSV columns to database columns
+        $values = [];
+        foreach ($mapping as $csvColumn => $dbColumn) {
+          $columnIndex = array_search($csvColumn, $headers);
+          $values[] = $columnIndex !== false ? $row[$columnIndex] : null;
+        }
+
+        $stmt->execute($values);
+        $insertedCount++;
+
+      } catch (Exception $rowError) {
+        $errorCount++;
+        $errors[] = "Row " . ($insertedCount + $errorCount) . ": " . $rowError->getMessage();
+
+        // Limit error reporting to first 10 errors
+        if (count($errors) >= 10) {
+          break;
+        }
+      }
+    }
+
+    fclose($handle);
+    $pdo->commit();
+
+    // Clean up uploaded file
+    unlink($filepath);
+
+    json_response([
+      'success' => true,
+      'inserted' => $insertedCount,
+      'errors' => $errorCount,
+      'error_details' => $errors
+    ]);
+
+  } catch (Exception $e) {
+    if (isset($pdo)) {
+      $pdo->rollback();
+    }
+    json_response(['error' => 'Import failed', 'message' => $e->getMessage()], 500);
+  }
+}
+
 /** Dispatch */
 try {
   if ($METHOD === 'GET' && $ROUTE === '/') handle_health();
@@ -1326,6 +1494,12 @@ try {
   if ($METHOD === 'POST' && $ROUTE === '/admin/table-action') handle_admin_table_action();
   if ($METHOD === 'POST' && $ROUTE === '/admin/import-server') handle_admin_import_server();
   if ($METHOD === 'POST' && $ROUTE === '/admin/import-server-batch') handle_admin_import_server_batch();
+
+  // CSV Import API endpoints (for frontend integration)
+  if ($METHOD === 'POST' && $ROUTE === '/api/import/csv/upload') handle_csv_upload_api();
+  if ($METHOD === 'POST' && $ROUTE === '/api/import/csv/preview') handle_csv_preview_api();
+  if ($METHOD === 'POST' && $ROUTE === '/api/import/csv/mapping') handle_csv_mapping_api();
+  if ($METHOD === 'POST' && $ROUTE === '/api/import/csv/execute') handle_csv_execute_api();
 
   // Not found
   json_response(['error' => 'Not Found', 'route' => $ROUTE], 404);

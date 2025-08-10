@@ -1,0 +1,9 @@
+# Ignore all uploaded files
+*.csv
+*.txt
+*.json
+*.xml
+
+# But keep the directory
+!.gitignore
+!.htaccess
