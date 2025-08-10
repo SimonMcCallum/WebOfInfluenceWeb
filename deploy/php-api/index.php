@@ -1501,8 +1501,21 @@ try {
   if ($METHOD === 'POST' && $ROUTE === '/api/import/csv/mapping') handle_csv_mapping_api();
   if ($METHOD === 'POST' && $ROUTE === '/api/import/csv/execute') handle_csv_execute_api();
 
-  // Not found
-  json_response(['error' => 'Not Found', 'route' => $ROUTE], 404);
+  // Not found - add debug info
+  json_response([
+    'error' => 'Not Found', 
+    'route' => $ROUTE,
+    'debug' => [
+      'REQUEST_URI' => $_SERVER['REQUEST_URI'] ?? '',
+      'SCRIPT_NAME' => $_SERVER['SCRIPT_NAME'] ?? '',
+      'PATH_INFO' => $_SERVER['PATH_INFO'] ?? '',
+      'uriPath' => $uriPath,
+      'scriptDir' => $scriptDir,
+      'path' => $path,
+      'METHOD' => $METHOD,
+      'GET_route' => $_GET['route'] ?? null
+    ]
+  ], 404);
 } catch (Throwable $e) {
   json_response(['error' => 'Server error', 'detail' => $e->getMessage()], 500);
 }
