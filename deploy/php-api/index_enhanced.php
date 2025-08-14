@@ -359,11 +359,58 @@ function handle_csv_mapping_api(): void {
   ];
 
   $input = json_decode(file_get_contents('php://input'), true);
+  $filename = $input['filename'] ?? '';
+
+  // Get CSV sample data
+  $csvSampleData = [];
+  if ($filename) {
+    $filepath = __DIR__ . '/../uploads/' . $filename;
+    if (file_exists($filepath)) {
+      $handle = fopen($filepath, 'r');
+      $headers = fgetcsv($handle);
+      $firstDataRow = fgetcsv($handle);
+      fclose($handle);
+      
+      if ($headers && $firstDataRow) {
+        foreach ($headers as $index => $header) {
+          $csvSampleData[$header] = $firstDataRow[$index] ?? '';
+        }
+      }
+    }
+  }
+
+  // Get database sample data for each table
+  $databaseSamples = [];
+  try {
+    $pdo = pdo();
+    foreach ($tables as $tableName => $columns) {
+      try {
+        // Get the most recent record from each table
+        $stmt = $pdo->query("SELECT * FROM `{$tableName}` ORDER BY created_at DESC LIMIT 1");
+        $sample = $stmt->fetch();
+        if ($sample) {
+          // Remove sensitive or irrelevant fields
+          unset($sample['id'], $sample['created_at'], $sample['updated_at']);
+          $databaseSamples[$tableName] = $sample;
+        } else {
+          $databaseSamples[$tableName] = [];
+        }
+      } catch (Exception $e) {
+        // Table might not exist or have data, skip
+        $databaseSamples[$tableName] = [];
+      }
+    }
+  } catch (Exception $e) {
+    // Database connection issue, skip samples
+    $databaseSamples = [];
+  }
 
   json_response([
     'success' => true,
     'tables' => $tables,
-    'filename' => $input['filename'] ?? ''
+    'filename' => $filename,
+    'csv_sample' => $csvSampleData,
+    'database_samples' => $databaseSamples
   ]);
 }
 
@@ -411,12 +458,27 @@ function handle_csv_execute_api(): void {
         // Map CSV columns to database columns
         $values = [];
         $rowData = [];
+        $hasRequiredData = true;
         foreach ($mapping as $csvColumn => $dbColumn) {
           $columnIndex = array_search($csvColumn, $headers);
           $value = $columnIndex !== false ? trim($row[$columnIndex] ?? '') : null;
           $value = ($value === '') ? null : $value;
+          
+          // Check if this is a critical field that shouldn't be null
+          if ($value === null && in_array($dbColumn, ['first_name', 'last_name', 'name'])) {
+            $hasRequiredData = false;
+          }
+          
           $values[] = $value;
           $rowData[$dbColumn] = $value;
+        }
+
+        // Skip rows with missing critical data before attempting insert
+        if (!$hasRequiredData) {
+          $duplicateCount++;
+          log_import_error($importLogId, $rowNumber, 'validation', 'Required fields (first_name, last_name, or name) are missing or empty', $rowData, 'Row skipped due to missing required data');
+          $duplicates[] = "Row {$rowNumber}: Skipped due to missing required data (first_name, last_name, or name)";
+          continue;
         }
 
         // Special handling for people table with duplicate checking
@@ -490,8 +552,10 @@ function handle_csv_execute_api(): void {
         
         // Categorize other error types
         if (strpos($rowError->getMessage(), 'cannot be null') !== false) {
-          $errorType = 'validation';
-          $suggestedAction = 'Provide required field values';
+          $duplicateCount++; // Treat null required fields as skipped entries
+          log_import_error($importLogId, $rowNumber, 'validation', $rowError->getMessage(), $rowData, 'Required field is null - record skipped');
+          $duplicates[] = "Row {$rowNumber}: Required field is null, record skipped - {$rowError->getMessage()}";
+          continue;
         } elseif (strpos($rowError->getMessage(), 'foreign key') !== false) {
           $errorType = 'constraint';
           $suggestedAction = 'Ensure referenced records exist';
