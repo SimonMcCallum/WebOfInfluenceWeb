@@ -475,16 +475,21 @@ function handle_csv_execute_api(): void {
         $insertedCount++;
 
       } catch (Exception $rowError) {
+        // Handle duplicate entries specially - just log them and continue
+        if (strpos($rowError->getMessage(), 'Duplicate entry') !== false) {
+          $duplicateCount++;
+          log_import_error($importLogId, $rowNumber, 'duplicate', $rowError->getMessage(), $rowData, 'Duplicate record skipped');
+          $duplicates[] = "Row {$rowNumber}: Duplicate entry skipped - {$rowError->getMessage()}";
+          continue;
+        }
+        
         $errorCount++;
         
         $errorType = 'other';
         $suggestedAction = null;
         
-        // Categorize error types
-        if (strpos($rowError->getMessage(), 'Duplicate entry') !== false) {
-          $errorType = 'duplicate';
-          $suggestedAction = 'Check for existing records or use UPDATE instead of INSERT';
-        } elseif (strpos($rowError->getMessage(), 'cannot be null') !== false) {
+        // Categorize other error types
+        if (strpos($rowError->getMessage(), 'cannot be null') !== false) {
           $errorType = 'validation';
           $suggestedAction = 'Provide required field values';
         } elseif (strpos($rowError->getMessage(), 'foreign key') !== false) {
