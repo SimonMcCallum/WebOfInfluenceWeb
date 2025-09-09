@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import HomePage from './Homepage'; 
-import App from './App.jsx'; 
+//import App from './App.jsx'; 
 import CandidateOverview from './CandidateOverview.jsx';
 import MeetingsSearch from './MeetingsSearch.jsx';
 import PersonProfile from './PersonProfile.jsx';
