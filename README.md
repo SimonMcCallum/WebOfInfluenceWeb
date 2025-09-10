@@ -13,3 +13,12 @@
 3. python3 TestDbLoader/run.py
 4. In a new terminal, change into the directory demo-cand
 5. Use the command **npm run dev**
+
+#### Video Demonstrations
+- Video Demonstration - admin page (Database management & CSV upload): https://youtu.be/TxrLOjVliGc
+- Video Demonstration- UI Interface: https://youtu.be/bwzxnWECbzc
+
+#### Application - Web:
+- Web link and showed a video walkthrough of its current functionality.
+    -  Web Link: https://ludogogy.co.nz/webofinfluence/ 
+    - Quick Link to the current admin page: https://ludogogy.co.nz/webofinfluence/api/index.php/admin
