@@ -23,11 +23,83 @@ body {
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--border);
-    position: sticky; top: 0; background: rgba(15,23,42,.95); backdrop-filter: blur(8px);
-    z-index: 10;
+.title-header {
+    background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    margin: 2rem auto;
+    text-align: center;
+    box-shadow: 0 4px 20px rgba(0,0,0,.15);
+    max-width: 1200px;
+}
+
+.title-header h1 {
+    margin: 0 0 0.5rem 0;
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.title-header .subtitle {
+    color: var(--accent-2);
+    font-size: 1.1rem;
+    margin: 0;
+    font-weight: 500;
+}
+
+.action-nav {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    align-items: center;
+    margin: 1rem auto 2rem;
+    max-width: 1200px;
+    padding: 0 1rem;
+}
+
+.action-nav .btn.link {
+    padding: 0.75rem 1.5rem;
+    font-size: 0.9rem;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    background: rgba(11, 18, 32, 0.6);
+    display: inline-block;
+    white-space: nowrap;
+    min-width: 120px;
+    text-align: center;
+}
+
+.action-nav .btn.link:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+    text-decoration: none;
+    background: rgba(59, 130, 246, 0.1);
+    transform: translateY(-1px);
+}
+
+@media (max-width: 768px) {
+    .title-header {
+        margin: 1rem;
+        padding: 1.5rem;
+    }
+    
+    .title-header h1 {
+        font-size: 2rem;
+    }
+    
+    .action-nav {
+        margin: 1rem;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    .action-nav .btn.link {
+        width: 100%;
+    }
 }
 .brand { font-size: 1rem; font-weight: 600; letter-spacing: .1px }
 nav { 
