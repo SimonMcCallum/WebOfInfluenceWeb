@@ -8,7 +8,7 @@ import HomePage from './Homepage.jsx';
 //import MeetingsSearch from './MeetingsSearch.jsx';
 //import PersonProfile from './PersonProfile.jsx';
 import LoginPage from './LoginPage.jsx'; 
-//import Settings from './Settings.jsx';
+import Settings from './Settings.jsx';
 
 // auth
 import AuthProvider from './auth/AuthProvider';
