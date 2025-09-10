@@ -7,6 +7,18 @@ export default defineConfig({
   base: '/webofinfluence/',
   build: {
     outDir: 'dist',
-    assetsDir: 'assets'
+    assetsDir: 'assets',
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        analytics: 'analytics/analytics.html'
+      }
+    }
+  },
+  server: {
+    // Configure dev server to serve static files
+    fs: {
+      allow: ['..']
+    }
   }
 })
