@@ -18,8 +18,8 @@ deployment:
     - /bin/rm -f "/home/ludog319/public_html/webofinfluence/.htaccess" || true
     - /bin/rm -f "/home/ludog319/public_html/webofinfluence/api/.htaccess" || true
 
-    # 1) Skip server-side build - use pre-built files from local build
-    - echo "Using pre-built files from local build (deploy/dist/)"
+    # 1) Build the frontend with the correct base path so assets resolve under /webofinfluence/
+    - (cd deploy && if command -v npm >/dev/null 2>&1; then (npm ci || npm install) && npm run build; else echo "npm not found, skipping frontend build"; fi)
 
     # 2) Sync server (Flask API) and config files
     - /bin/rsync -a --delete --exclude '.htaccess' --exclude 'passenger_wsgi.py' --exclude 'requirements.txt' --exclude 'api/' deploy/ "/home/ludog319/public_html/webofinfluence"/
