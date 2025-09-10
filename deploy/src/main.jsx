@@ -8,7 +8,7 @@ import HomePage from './Homepage.jsx';
 //import MeetingsSearch from './MeetingsSearch.jsx';
 //import PersonProfile from './PersonProfile.jsx';
 import LoginPage from './LoginPage.jsx'; 
-import Settings from './Settings.jsx';
+//import Settings from './Settings.jsx';
 
 // auth
 import AuthProvider from './auth/AuthProvider';
@@ -25,10 +25,10 @@ createRoot(document.getElementById('root')).render(
         {/* Protected routes - all pages require authentication */}
         <Route element={<ProtectedRoute />}>
           <Route path="/home" element={<HomePage />} />
-          {/* <Route path="/candidate-overview" element={<CandidateOverview />} />
+          {/* <Route path="/settings" element={<Settings />} />
+           <Route path="/candidate-overview" element={<CandidateOverview />} />
           <Route path="/meetings" element={<MeetingsSearch />} />
           <Route path="/person/:firstName/:lastName" element={<PersonProfile />} /> */}
-          <Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>
     </Router>
