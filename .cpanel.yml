@@ -33,13 +33,12 @@ deployment:
     # 3) Sync built frontend to the same directory so Apache serves it
     - if [ -d deploy/dist ]; then /bin/rsync -a --delete deploy/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi
     # 3b) Write runtime app-config (prefer override if provided)
-    - if [ -f deploy/app-config.override.js ]; then /bin/cp deploy/app-config.override.js "/home/ludog319/public_html/webofinfluence"/app-config.js; else /bin/cp demo-cand/public/app-config.js "/home/ludog319/public_html/webofinfluence"/app-config.js; fi
-    # 3b-2) Copy demo auth-config.js (temporary token header for API testing)
-    - if [ -f demo-cand/public/auth-config.js ]; then /bin/cp demo-cand/public/auth-config.js "/home/ludog319/public_html/webofinfluence"/auth-config.js; fi
+    - if [ -f deploy/app-config.override.js ]; then /bin/cp deploy/app-config.override.js "/home/ludog319/public_html/webofinfluence"/app-config.js; else /bin/cp deploy/app-config.js "/home/ludog319/public_html/webofinfluence"/app-config.js; fi
+    # 3b-2) Copy auth-config.js (temporary token header for API testing)
+    - if [ -f deploy/auth-config.js ]; then /bin/cp deploy/auth-config.js "/home/ludog319/public_html/webofinfluence"/auth-config.js; fi
     # 3c) Copy environment file if present (for DB credentials and other secrets)
     - if [ -f deploy/.env ]; then /bin/cp deploy/.env "/home/ludog319/public_html/webofinfluence"/.env; fi
-    # 3d) Also sync demo-cand source for reference (not required to run)
-    - /bin/rsync -a --delete --exclude 'node_modules' demo-cand/ "/home/ludog319/public_html/webofinfluence"/demo-cand-src/
+    # 3d) Demo-cand source sync removed - using deploy folder only
 
     # 4) Ensure Passenger picks up Python deps and restart the app
     - echo "Skipping Passenger tmp/vendor setup (PHP-only API)"
