@@ -16,7 +16,7 @@ import ProtectedRoute from './auth/ProtectedRoute';
 
 createRoot(document.getElementById('root')).render(
   <AuthProvider>
-    <Router>
+    <Router basename="/webofinfluence">
       <Routes>
         {/* Default route - always shows login page first */}
         <Route path="/" element={<LoginPage />} />
