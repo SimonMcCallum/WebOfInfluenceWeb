@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "./auth/AuthProvider";
 import { sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "./firebase";
-import './Settings.css';
+import './AccSettings.css';
 
-export default function Settings() {
+export default function AccSettings() {
   const { user } = useAuth();
   const [msg, setMsg] = useState("");
   const [isLoading, setIsLoading] = useState(false);

@@ -1,0 +1,215 @@
+.settings-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #4b59a2 100%);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Header Section */
+.settings-header {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 1.5rem 0;
+}
+
+.settings-header-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.settings-title {
+  color: white;
+  font-size: 2.5rem;
+  font-weight: 700;
+  margin: 0;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.settings-icon {
+  font-size: 2rem;
+}
+
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: white;
+  text-decoration: none;
+  padding: 0.75rem 1.25rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  transition: all 0.3s ease;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.back-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+/* Settings Content */
+.settings-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+}
+
+/* Navigation Cards */
+.settings-card {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 1rem;
+  padding: 2rem;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1), 0 10px 15px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.settings-nav-card {
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.settings-nav-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15), 0 15px 35px rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.settings-nav-card:hover .nav-arrow {
+  transform: translateX(5px);
+  color: #667eea;
+}
+
+.settings-nav-card:active {
+  transform: translateY(-2px);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.card-icon {
+  font-size: 1.5rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 0.5rem;
+  transition: all 0.3s ease;
+}
+
+.settings-nav-card:hover .card-icon {
+  background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+  transform: scale(1.1);
+}
+
+.card-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0;
+  transition: color 0.3s ease;
+}
+
+.settings-nav-card:hover .card-title {
+  color: #667eea;
+}
+
+.card-description {
+  color: #6b7280;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+  transition: color 0.3s ease;
+}
+
+.settings-nav-card:hover .card-description {
+  color: #4b5563;
+}
+
+.nav-arrow {
+  position: absolute;
+  top: 50%;
+  right: 2rem;
+  transform: translateY(-50%);
+  font-size: 1.5rem;
+  color: #9ca3af;
+  transition: all 0.3s ease;
+  font-weight: bold;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .settings-content {
+    padding: 1rem;
+    grid-template-columns: 1fr;
+  }
+  
+  .settings-header-content {
+    padding: 0 1rem;
+    flex-direction: column;
+    text-align: center;
+  }
+  
+  .settings-title {
+    font-size: 2rem;
+  }
+  
+  .settings-card {
+    padding: 1.5rem;
+  }
+  
+  .nav-arrow {
+    right: 1.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .settings-content {
+    padding: 0.5rem;
+    grid-template-columns: 1fr;
+  }
+  
+  .settings-header {
+    padding: 1rem 0;
+  }
+  
+  .settings-title {
+    font-size: 1.5rem;
+  }
+  
+  .settings-card {
+    padding: 1rem;
+  }
+  
+  .card-title {
+    font-size: 1.25rem;
+  }
+  
+  .nav-arrow {
+    right: 1rem;
+  }
+}
