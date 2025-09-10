@@ -9,9 +9,6 @@ package-lock.json
 __pycache__/
 *.pyc
 
-# Environment and config
-.env
-
 # VSCode settings, Python virtual envs, etc.
 .vscode/
 *.log
