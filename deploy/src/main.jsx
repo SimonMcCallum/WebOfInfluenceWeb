@@ -27,8 +27,8 @@ createRoot(document.getElementById('root')).render(
           <Route path="/home" element={<HomePage />} />
           {/* <Route path="/candidate-overview" element={<CandidateOverview />} />
           <Route path="/meetings" element={<MeetingsSearch />} />
-          <Route path="/person/:firstName/:lastName" element={<PersonProfile />} />
-          <Route path="/settings" element={<Settings />} /> */}
+          <Route path="/person/:firstName/:lastName" element={<PersonProfile />} /> */}
+          <Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>
     </Router>
