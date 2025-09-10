@@ -1,0 +1,299 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSV Import Test - Web of Influence</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .step { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .step.active { border-color: #007cba; background-color: #f0f8ff; }
+        .step h3 { margin-top: 0; }
+        .form-group { margin: 10px 0; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select, button { padding: 8px; margin: 5px 0; }
+        button { background: #007cba; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background: #005a87; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .preview-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        .preview-table th, .preview-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        .preview-table th { background-color: #f2f2f2; }
+        .mapping-row { display: flex; align-items: center; margin: 5px 0; }
+        .mapping-row label { min-width: 150px; margin-right: 10px; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CSV Import Test Tool</h1>
+        
+        <!-- Step 1: File Upload -->
+        <div id="step1" class="step active">
+            <h3>Step 1: Upload CSV File</h3>
+            <div class="form-group">
+                <label for="csvFile">Select CSV file:</label>
+                <input type="file" id="csvFile" accept=".csv" />
+            </div>
+            <button id="uploadBtn" onclick="uploadFile()">Upload File</button>
+            <div id="uploadResult"></div>
+        </div>
+        
+        <!-- Step 2: Preview -->
+        <div id="step2" class="step">
+            <h3>Step 2: Preview Data</h3>
+            <div id="previewContent"></div>
+            <button id="previewBtn" onclick="getMapping()" disabled>Continue to Mapping</button>
+        </div>
+        
+        <!-- Step 3: Column Mapping -->
+        <div id="step3" class="step">
+            <h3>Step 3: Map Columns</h3>
+            <div class="form-group">
+                <label for="targetTable">Target Table:</label>
+                <select id="targetTable" onchange="updateColumnMapping()">
+                    <option value="">Select a table...</option>
+                </select>
+            </div>
+            <div id="mappingContent"></div>
+            <button id="executeBtn" onclick="executeImport()" disabled>Execute Import</button>
+        </div>
+        
+        <!-- Step 4: Results -->
+        <div id="step4" class="step">
+            <h3>Step 4: Import Results</h3>
+            <div id="resultContent"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentFilename = '';
+        let csvHeaders = [];
+        let availableTables = {};
+        
+        async function uploadFile() {
+            const fileInput = document.getElementById('csvFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Please select a file');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const response = await fetch('php-api/api/import/csv/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    currentFilename = result.filename;
+                    document.getElementById('uploadResult').innerHTML = '<div class="success">File uploaded successfully!</div>';
+                    await previewFile();
+                } else {
+                    document.getElementById('uploadResult').innerHTML = '<div class="error">Upload failed: ' + result.error + '</div>';
+                }
+            } catch (error) {
+                document.getElementById('uploadResult').innerHTML = '<div class="error">Upload error: ' + error.message + '</div>';
+            }
+        }
+        
+        async function previewFile() {
+            try {
+                const response = await fetch('php-api/api/import/csv/preview', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filename: currentFilename
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    csvHeaders = result.headers;
+                    displayPreview(result.headers, result.preview);
+                    document.getElementById('previewBtn').disabled = false;
+                    activateStep(2);
+                } else {
+                    document.getElementById('previewContent').innerHTML = '<div class="error">Preview failed: ' + result.error + '</div>';
+                }
+            } catch (error) {
+                document.getElementById('previewContent').innerHTML = '<div class="error">Preview error: ' + error.message + '</div>';
+            }
+        }
+        
+        function displayPreview(headers, preview) {
+            let html = '<table class="preview-table">';
+            html += '<thead><tr>';
+            headers.forEach(header => {
+                html += '<th>' + (header || 'Empty') + '</th>';
+            });
+            html += '</tr></thead><tbody>';
+            
+            preview.forEach(row => {
+                html += '<tr>';
+                row.forEach(cell => {
+                    html += '<td>' + (cell || '') + '</td>';
+                });
+                html += '</tr>';
+            });
+            
+            html += '</tbody></table>';
+            document.getElementById('previewContent').innerHTML = html;
+        }
+        
+        async function getMapping() {
+            try {
+                const response = await fetch('php-api/api/import/csv/mapping', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filename: currentFilename
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    availableTables = result.tables;
+                    populateTableSelect();
+                    activateStep(3);
+                } else {
+                    alert('Mapping failed: ' + result.error);
+                }
+            } catch (error) {
+                alert('Mapping error: ' + error.message);
+            }
+        }
+        
+        function populateTableSelect() {
+            const select = document.getElementById('targetTable');
+            select.innerHTML = '<option value="">Select a table...</option>';
+            
+            Object.keys(availableTables).forEach(table => {
+                const option = document.createElement('option');
+                option.value = table;
+                option.textContent = table;
+                select.appendChild(option);
+            });
+        }
+        
+        function updateColumnMapping() {
+            const selectedTable = document.getElementById('targetTable').value;
+            if (!selectedTable) {
+                document.getElementById('mappingContent').innerHTML = '';
+                document.getElementById('executeBtn').disabled = true;
+                return;
+            }
+            
+            const tableColumns = availableTables[selectedTable];
+            let html = '<h4>Map CSV columns to database columns:</h4>';
+            
+            csvHeaders.forEach(csvColumn => {
+                html += '<div class="mapping-row">';
+                html += '<label>' + csvColumn + ':</label>';
+                html += '<select name="mapping[' + csvColumn + ']">';
+                html += '<option value="">-- Skip this column --</option>';
+                
+                tableColumns.forEach(dbColumn => {
+                    html += '<option value="' + dbColumn + '">' + dbColumn + '</option>';
+                });
+                
+                html += '</select>';
+                html += '</div>';
+            });
+            
+            document.getElementById('mappingContent').innerHTML = html;
+            document.getElementById('executeBtn').disabled = false;
+        }
+        
+        async function executeImport() {
+            const selectedTable = document.getElementById('targetTable').value;
+            if (!selectedTable) {
+                alert('Please select a target table');
+                return;
+            }
+            
+            // Build mapping object
+            const mapping = {};
+            const mappingSelects = document.querySelectorAll('select[name^="mapping"]');
+            mappingSelects.forEach(select => {
+                const csvColumn = select.name.match(/mapping\[(.*)]/)[1];
+                if (select.value) {
+                    mapping[csvColumn] = select.value;
+                }
+            });
+            
+            if (Object.keys(mapping).length === 0) {
+                alert('Please map at least one column');
+                return;
+            }
+            
+            try {
+                document.getElementById('executeBtn').disabled = true;
+                document.getElementById('executeBtn').textContent = 'Importing...';
+                
+                const response = await fetch('php-api/api/import/csv/execute', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        filename: currentFilename,
+                        table: selectedTable,
+                        mapping: mapping
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    let html = '<div class="success">';
+                    html += '<h4>Import Completed Successfully!</h4>';
+                    html += '<p>Records inserted: ' + result.inserted + '</p>';
+                    if (result.errors > 0) {
+                        html += '<p>Errors: ' + result.errors + '</p>';
+                        if (result.error_details && result.error_details.length > 0) {
+                            html += '<h5>Error details:</h5><ul>';
+                            result.error_details.forEach(error => {
+                                html += '<li>' + error + '</li>';
+                            });
+                            html += '</ul>';
+                        }
+                    }
+                    html += '</div>';
+                    
+                    document.getElementById('resultContent').innerHTML = html;
+                    activateStep(4);
+                } else {
+                    alert('Import failed: ' + result.error);
+                }
+            } catch (error) {
+                alert('Import error: ' + error.message);
+            } finally {
+                document.getElementById('executeBtn').disabled = false;
+                document.getElementById('executeBtn').textContent = 'Execute Import';
+            }
+        }
+        
+        function activateStep(stepNumber) {
+            document.querySelectorAll('.step').forEach(step => {
+                step.classList.remove('active');
+            });
+            document.getElementById('step' + stepNumber).classList.add('active');
+        }
+    </script>
+</body>
+</html>
