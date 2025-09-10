@@ -44,7 +44,7 @@ const HomePage = () => {
       <div className="main-navigation">
         <h2 className="navigation-title">Explore the Data</h2>
         <div className="navigation-cards">
-          <Link to="/candidate-overview" className="nav-card donations-card">
+          <Link to="/donations-overview" className="nav-card donations-card">
             <div className="card-icon">💰</div>
             <div className="card-content">
               <h3 className="card-title">Donations Overview</h3>

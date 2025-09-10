@@ -4,7 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 
 // pages
 import HomePage from './Hompage.jsx';
-//import CandidateOverview from './CandidateOverview.jsx';
+import DonationsOverview from './DonationsOverview.jsx';
 //import MeetingsSearch from './MeetingsSearch.jsx';
 //import PersonProfile from './PersonProfile.jsx';
 import LoginPage from './Loginpage.jsx'; 
@@ -25,8 +25,8 @@ createRoot(document.getElementById('root')).render(
         <Route element={<ProtectedRoute />}>
           <Route path="/" element={<Navigate to="/home" replace />} />
           <Route path="/home" element={<HomePage />} />
-          {/*<Route path="/candidate-overview" element={<CandidateOverview />} />
-          <Route path="/meetings" element={<MeetingsSearch />} />
+          <Route path="/donations-overview" element={<DonationsOverview />} />
+          {/*<Route path="/meetings" element={<MeetingsSearch />} />
           <Route path="/person/:firstName/:lastName" element={<PersonProfile />} /> */}
           <Route path="/settings" element={<Settings />} />
         </Route>

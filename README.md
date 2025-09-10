@@ -22,3 +22,7 @@
 - Web link and showed a video walkthrough of its current functionality.
     -  Web Link: https://ludogogy.co.nz/webofinfluence/ 
     - Quick Link to the current admin page: https://ludogogy.co.nz/webofinfluence/api/index.php/admin
+
+#### Deployment commands
+- ```cd deploy && npm run build```
+- for local: ```cd deploy && npm run dev```
