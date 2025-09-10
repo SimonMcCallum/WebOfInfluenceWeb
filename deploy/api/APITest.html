@@ -210,6 +210,38 @@
       white-space: pre-wrap;
     }
 
+    .nav-buttons {
+      display: flex;
+      justify-content: right;
+      margin-bottom: 2rem;
+    }
+
+    .nav-btn {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.75rem 1.5rem;
+      background: rgba(11, 18, 32, 0.6);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+
+    .nav-btn:hover {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: rgba(59, 130, 246, 0.1);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+
+    .nav-btn:active {
+      transform: translateY(0);
+    }
+
     @media (max-width: 768px) {
       .container {
         padding: 1rem;
@@ -236,6 +268,12 @@
       <h1>🔌 API Test — Web Of Influence</h1>
       <p class="subtitle">Quickly verify the API works in the browser</p>
     </div>
+
+    <nav class="nav-buttons">
+      <a href="../src/dashboard.html" class="nav-btn">
+        <span>← Back to Settings</span>
+      </a>
+    </nav>
 
     <div class="info-panel">
       <div class="info-row">
