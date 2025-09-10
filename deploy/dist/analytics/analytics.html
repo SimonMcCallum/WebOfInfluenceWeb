@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Web Of Influence — Analytics</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="../app-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <link rel="stylesheet" crossorigin href="/webofinfluence/assets/analytics-LXiXNxY6.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Web Of Influence — Analytics</div>
+    <nav>
+      <a class="btn link" href="../api/index.php/admin" target="_blank" rel="noopener">Admin</a>
+      <a class="btn link" href="/webofinfluence/settings">Settings</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="tab-nav">
+      <button data-tab="donations" class="active">Donations Overview</button>
+      <button data-tab="meetings">Meetings Search</button>
+      <button data-tab="candidates">Candidates</button>
+    </div>
+    <!-- Donations Overview -->
+    <section id="tab-donations" class="panel">
+      <h2>Donations Overview</h2>
+      <div class="search-form">
+        <div class="row">
+          <div class="col-2">
+            <label>Election Year</label>
+            <select id="year">
+              <option value="2023">2023</option>
+              <option value="2020">2020</option>
+              <option value="2017">2017</option>
+              <option value="2014">2014</option>
+              <option value="2011">2011</option>
+            </select>
+          </div>
+          <div class="col-3">
+            <label>First Name</label>
+            <input id="firstName" placeholder="e.g., JANE">
+          </div>
+          <div class="col-3">
+            <label>Last Name</label>
+            <input id="lastName" placeholder="e.g., DOE">
+          </div>
+          <div class="col-2">
+            <label>Party</label>
+            <input id="partyName" placeholder="e.g., LABOUR">
+          </div>
+          <div class="col-2">
+            <label>&nbsp;</label>
+            <button id="btnSearchDonations" class="btn primary">Search</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="col-6">
+            <label>Electorate</label>
+            <input id="electorateName" placeholder="e.g., WELLINGTON CENTRAL">
+          </div>
+        </div>
+      </div>
+      
+      <div id="donationsStatus" class="status"></div>
+      <div class="legend" id="legend"></div>
+      <div id="chartWrap" class="chart-wrap"></div>
+      
+      <p class="note">Shows total candidate donations for the selected filters. Bars are color-coded by party.</p>
+    </section>
+
+    <!-- Meetings Search -->
+    <section id="tab-meetings" class="panel" hidden>
+      <h2>Ministerial Meetings</h2>
+      <div class="search-form">
+        <div class="row">
+          <div class="col-3">
+            <label>First Name</label>
+            <input id="mFirst" placeholder="e.g., CHRIS">
+          </div>
+          <div class="col-3">
+            <label>Last Name</label>
+            <input id="mLast" placeholder="e.g., HIPKINS">
+          </div>
+          <div class="col-3">
+            <label>Portfolio</label>
+            <input id="mPortfolio" placeholder="e.g., HEALTH">
+          </div>
+          <div class="col-3">
+            <label>&nbsp;</label>
+            <button id="btnSearchMeetings" class="btn primary">Search</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="col-3">
+            <label>Start Date</label>
+            <input id="mStart" type="date">
+          </div>
+          <div class="col-3">
+            <label>End Date</label>
+            <input id="mEnd" type="date">
+          </div>
+        </div>
+      </div>
+      
+      <div id="meetingsStatus" class="status"></div>
+      <div class="panel" style="overflow:auto; max-height: 600px;">
+        <table id="meetingsTable">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Portfolio</th>
+              <th>Title</th>
+              <th>Location</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- rows injected -->
+          </tbody>
+        </table>
+      </div>
+      
+      <p class="note">Search ministerial meetings by minister name and optional date range/portfolio.</p>
+    </section>
+
+    <!-- Candidates -->
+    <section id="tab-candidates" class="panel" hidden>
+      <h2>Candidates</h2>
+      <div class="search-form">
+        <div class="row">
+          <div class="col-4">
+            <label>First Name</label>
+            <input id="cFirst" placeholder="e.g., NICOLA">
+          </div>
+          <div class="col-4">
+            <label>Last Name</label>
+            <input id="cLast" placeholder="e.g., WILLIS">
+          </div>
+          <div class="col-4">
+            <label>&nbsp;</label>
+            <button id="btnSearchCandidates" class="btn primary">Search</button>
+          </div>
+        </div>
+      </div>
+      
+      <div id="candidatesStatus" class="status"></div>
+      <div class="panel" style="overflow:auto; max-height: 500px;">
+        <table id="candidatesTable">
+          <thead><tr><th>ID</th><th>First Name</th><th>Last Name</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      
+      <p class="note">Search People in the database. Uses case-insensitive matching on the server.</p>
+    </section>
+  </main>
+
+  <footer>
+    <div>Powered by D3.js and PHP API</div>
+  </footer>
+
+  <script>
+    // Tabs
+    document.querySelectorAll('.tab-nav button[data-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-nav button[data-tab]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const id = btn.getAttribute('data-tab');
+        document.querySelectorAll('main > section').forEach(s => s.hidden = true);
+        document.getElementById('tab-' + id).hidden = false;
+      });
+    });
+
+    const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/php-api';
+    const fmtNZD = d3.format('$,');
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+    // Donations Overview
+    const partyColors = new Map([
+      ["NATIONAL PARTY", "rgb(0,82,159)"],
+      ["LABOUR PARTY", "rgb(216,42,32)"],
+      ["ACT", "rgb(253,228,1)"],
+      ["GREEN PARTY", "rgb(9,129,55)"],
+      ["TE PATI MAORI", "rgb(106,29,44)"],
+      ["NEW ZEALAND FIRST PARTY", "rgb(0,0,0)"],
+      ["OTHER", "rgb(190,190,190)"]
+    ]);
+
+    function getPartyColor(p) {
+      if (!p) return partyColors.get("OTHER");
+      const k = String(p).trim().toUpperCase();
+      return partyColors.get(k) || partyColors.get("OTHER");
+    }
+
+    async function searchDonations() {
+      const year = document.getElementById('year').value;
+      const first = (document.getElementById('firstName').value || '').trim();
+      const last = (document.getElementById('lastName').value || '').trim();
+      const party = (document.getElementById('partyName').value || '').trim();
+      const elect = (document.getElementById('electorateName').value || '').trim();
+      const statusEl = document.getElementById('donationsStatus');
+      statusEl.textContent = 'Loading...';
+
+      const params = new URLSearchParams();
+      if (first) params.set('first_name', first);
+      if (last) params.set('last_name', last);
+      if (party) params.set('party_name', party);
+      if (elect) params.set('electorate_name', elect);
+
+      try {
+        const url = `${API_BASE}/candidates/election-overview/${encodeURIComponent(year)}/search/combined` + (params.toString() ? `?${params}` : '');
+        const res = await fetch(url, { cache: 'no-store' });
+        const data = await res.json();
+        if (!Array.isArray(data) || data.length === 0) {
+          statusEl.textContent = 'No data to display for selected filters.';
+          drawDonationsChart([]);
+          return;
+        }
+        statusEl.textContent = `Returned ${data.length} rows`;
+        // Map for chart
+        const mapped = data.map(d => ({
+          people_id: d.people_id,
+          party_id: d.party_id,
+          total: Number(d.total_donations || 0),
+          year: d.election_year || d.year || year
+        }));
+        // Fetch candidate + party names for labels
+        const enriched = await Promise.all(mapped.map(async (m) => {
+          try {
+            const [pc, pr] = await Promise.all([
+              fetch(`${API_BASE}/candidates/search-id?people_id=${encodeURIComponent(m.people_id)}`).then(r=>r.json()).catch(()=>[]),
+              fetch(`${API_BASE}/party/search-id?party_id=${encodeURIComponent(m.party_id)}`).then(r=>r.json()).catch(()=>[])
+            ]);
+            const name = [pc?.[0]?.first_name, pc?.[0]?.last_name].filter(Boolean).join(' ') || 'Unknown';
+            const partyName = pr?.[0]?.party_name || 'OTHER';
+            return { ...m, name, party_name: partyName };
+          } catch {
+            return { ...m, name: 'Unknown', party_name: 'OTHER' };
+          }
+        }));
+        // Sort by total desc
+        enriched.sort((a,b) => b.total - a.total);
+        drawDonationsChart(enriched);
+      } catch (e) {
+        statusEl.textContent = 'Error loading data: ' + e;
+        drawDonationsChart([]);
+      }
+    }
+
+    function drawDonationsChart(rows) {
+      const wrap = d3.select('#chartWrap');
+      wrap.selectAll('*').remove();
+      const H = clamp(rows.length * 48, 420, 2000);
+      wrap.node().style.setProperty('--h', H + 'px');
+
+      if (!rows.length) {
+        wrap.append('div').attr('class','warn').text('No data');
+        d3.select('#legend').html('');
+        return;
+      }
+
+      // Legend from rows
+      const parties = Array.from(new Set(rows.map(r => (r.party_name || 'OTHER').toUpperCase())));
+      const legend = d3.select('#legend').html('');
+      parties.forEach(p => {
+        const item = legend.append('div').attr('class','item');
+        item.append('span').attr('class','swatch').style('background', getPartyColor(p));
+        item.append('span').text(p.replace(/PARTY/i,'').trim() || p);
+      });
+
+      const margin = { top: 10, right: 20, bottom: 30, left: 220 };
+      const width = Math.max(600, wrap.node().clientWidth - 10);
+      const height = H;
+
+      const svg = wrap.append('svg')
+        .attr('width', width)
+        .attr('height', height);
+
+      const labels = rows.map(r => `${r.name} (${r.year})`);
+      const x = d3.scaleLinear()
+        .domain([0, d3.max(rows, d => d.total) || 0])
+        .nice()
+        .range([margin.left, width - margin.right]);
+
+      const y = d3.scaleBand()
+        .domain(d3.range(rows.length))
+        .range([margin.top, height - margin.bottom])
+        .padding(0.2);
+
+      // Axes
+      const xAxis = (g) => g
+        .attr('transform', `translate(0,${margin.top})`)
+        .call(d3.axisTop(x).ticks(5).tickFormat(v => fmtNZD(v)))
+        .call(g => g.selectAll('text').attr('fill', '#9ca3af'))
+        .call(g => g.selectAll('line').attr('stroke', '#1f2937'))
+        .call(g => g.select('.domain').attr('stroke', '#1f2937'));
+
+      const yAxis = (g) => g
+        .attr('transform', `translate(${margin.left},0)`)
+        .call(d3.axisLeft(y).tickFormat(i => labels[i]))
+        .call(g => g.selectAll('text').attr('fill', '#cbd5e1').style('font-size','12px'))
+        .call(g => g.selectAll('line').attr('stroke', '#1f2937'))
+        .call(g => g.select('.domain').attr('stroke', '#1f2937'));
+
+      svg.append('g').call(xAxis);
+      svg.append('g').call(yAxis);
+
+      // Bars
+      svg.append('g')
+        .selectAll('rect')
+        .data(rows)
+        .join('rect')
+        .attr('x', x(0))
+        .attr('y', (_, i) => y(i))
+        .attr('height', y.bandwidth())
+        .attr('width', d => Math.max(0, x(d.total) - x(0)))
+        .attr('fill', d => getPartyColor(String(d.party_name || 'OTHER')))
+        .append('title')
+        .text(d => `${d.name}\n${d.party_name}\nTotal: ${fmtNZD(d.total)}`);
+
+      // X axis label
+      svg.append('text')
+        .attr('x', margin.left)
+        .attr('y', margin.top - 8)
+        .attr('fill', '#9ca3af')
+        .attr('font-size', '12px')
+        .text('Total Donations (NZD)');
+    }
+
+    // Meetings Search
+    async function searchMeetings() {
+      const status = document.getElementById('meetingsStatus');
+      status.textContent = 'Loading...';
+      const fn = document.getElementById('mFirst').value.trim();
+      const ln = document.getElementById('mLast').value.trim();
+      const sd = document.getElementById('mStart').value;
+      const ed = document.getElementById('mEnd').value;
+      const pf = document.getElementById('mPortfolio').value.trim();
+
+      if (!fn || !ln) {
+        status.textContent = 'First and Last name are required.';
+        return;
+      }
+
+      const params = new URLSearchParams({ first_name: fn, last_name: ln });
+      if (sd) params.set('start_date', sd);
+      if (ed) params.set('end_date', ed);
+      if (pf) params.set('portfolio', pf);
+
+      try {
+        const res = await fetch(`${API_BASE}/ministerial_diaries/search-cand-filter?${params}`);
+        const data = await res.json();
+        renderMeetings(data || []);
+        status.textContent = Array.isArray(data) ? `Returned ${data.length} rows` : 'No data';
+      } catch (e) {
+        status.textContent = 'Error loading meetings: ' + e;
+        renderMeetings([]);
+      }
+    }
+
+    function renderMeetings(rows) {
+      const tbody = document.querySelector('#meetingsTable tbody');
+      tbody.innerHTML = '';
+      if (!Array.isArray(rows) || rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.className = 'warn';
+        td.textContent = 'No meetings found';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        const date = r.date || '';
+        const time = [r.start_time, r.end_time].filter(Boolean).join(' - ');
+        const portfolio = r.portfolio || '';
+        const title = r.title || '';
+        const loc = r.location || '';
+        [date, time, portfolio, title, loc].forEach(v => {
+          const td = document.createElement('td');
+          td.textContent = v;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Candidates Search
+    async function searchCandidates() {
+      const status = document.getElementById('candidatesStatus');
+      status.textContent = 'Loading...';
+      const fn = document.getElementById('cFirst').value.trim();
+      const ln = document.getElementById('cLast').value.trim();
+      const params = new URLSearchParams();
+      if (fn) params.set('first_name', fn);
+      if (ln) params.set('last_name', ln);
+      if (!fn && !ln) {
+        status.textContent = 'Enter at least First or Last name.';
+        renderCandidates([]);
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/candidates/search?${params}`);
+        const data = await res.json();
+        renderCandidates(data || []);
+        status.textContent = Array.isArray(data) ? `Returned ${data.length} rows` : 'No data';
+      } catch (e) {
+        status.textContent = 'Error loading candidates: ' + e;
+        renderCandidates([]);
+      }
+    }
+
+    function renderCandidates(rows) {
+      const tbody = document.querySelector('#candidatesTable tbody');
+      tbody.innerHTML = '';
+      if (!Array.isArray(rows) || rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 3;
+        td.className = 'warn';
+        td.textContent = 'No candidates found';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        const id = r.id ?? '';
+        const fn = r.first_name ?? '';
+        const ln = r.last_name ?? '';
+        [id, fn, ln].forEach(v => {
+          const td = document.createElement('td');
+          td.textContent = v;
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Wire events
+    document.getElementById('btnSearchDonations').addEventListener('click', searchDonations);
+    document.getElementById('btnSearchMeetings').addEventListener('click', searchMeetings);
+    document.getElementById('btnSearchCandidates').addEventListener('click', searchCandidates);
+
+    // Initial load
+    searchDonations();
+  </script>
+</body>
+</html>
