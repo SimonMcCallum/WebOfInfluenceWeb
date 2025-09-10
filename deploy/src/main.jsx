@@ -1,8 +1,9 @@
+import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 
 // pages
-import HomePage from './HomePage.jsx'; 
+import HomePage from './Homepage.jsx'; 
 //import CandidateOverview from './CandidateOverview.jsx';
 //import MeetingsSearch from './MeetingsSearch.jsx';
 //import PersonProfile from './PersonProfile.jsx';
@@ -15,7 +16,7 @@ import ProtectedRoute from './auth/ProtectedRoute';
 
 createRoot(document.getElementById('root')).render(
   <AuthProvider>
-    <Router basename="/WebOfInfluenceResearch">
+    <Router>
       <Routes>
         {/* Default route - always shows login page first */}
         <Route path="/" element={<LoginPage />} />
