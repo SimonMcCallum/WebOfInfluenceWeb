@@ -3,12 +3,12 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 
 // pages
-import HomePage from './Homepage'; 
+import HomePage from './Hompage.jsx';
 //import CandidateOverview from './CandidateOverview.jsx';
 //import MeetingsSearch from './MeetingsSearch.jsx';
 //import PersonProfile from './PersonProfile.jsx';
 import LoginPage from './Loginpage.jsx'; 
-import Settings from './Settings.jsx';
+//import Settings from './Settings.jsx';
 
 // auth
 import AuthProvider from './auth/AuthProvider';
@@ -16,7 +16,7 @@ import ProtectedRoute from './auth/ProtectedRoute';
 
 createRoot(document.getElementById('root')).render(
   <AuthProvider>
-    <Router basename="/WebOfInfluenceResearch">
+    <Router basename="/webofinfluence">
       <Routes>
         {/* Public routes */}
         <Route path="/login" element={<LoginPage />} />
@@ -27,8 +27,8 @@ createRoot(document.getElementById('root')).render(
           <Route path="/home" element={<HomePage />} />
           {/*<Route path="/candidate-overview" element={<CandidateOverview />} />
           <Route path="/meetings" element={<MeetingsSearch />} />
-          <Route path="/person/:firstName/:lastName" element={<PersonProfile />} /> */}
-          <Route path="/settings" element={<Settings />} />
+          <Route path="/person/:firstName/:lastName" element={<PersonProfile />} /> 
+          <Route path="/settings" element={<Settings />} /> */}
         </Route>
       </Routes>
     </Router>
