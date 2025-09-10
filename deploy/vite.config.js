@@ -11,7 +11,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: 'index.html',
-        analytics: 'analytics/analytics.html'
+        analytics: 'analytics/analytics.html',
+        apitest: 'api/APITest.html'
       }
     }
   },
