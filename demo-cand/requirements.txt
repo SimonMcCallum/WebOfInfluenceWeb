@@ -1,5 +1,0 @@
-Flask==2.0.3                 # Core web framework
-flask-cors==4.0.1            # To enable CORS for frontend access
-mysql-connector-python==9.3.0 # MySQL database access
-gunicorn                     # For production server
-python-dotenv                # For loading environment variables from .env
