@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth/AuthProvider';
-import './HomePage.css';
+import './Hompage.css';
 
 
 const HomePage = () => {
