@@ -2,102 +2,70 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Web Of Influence - Admin Dashboard</title>
+  <title>Web Of Influence - Deployed</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="dashboard.css">
-  <script src="../app-config.js"></script>
-  <script src="../auth-config.js"></script>
+  <script src="app-config.js"></script>
+  <script src="auth-config.js"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 2rem; line-height: 1.5; }
+    code { background: #f2f4f8; padding: 0 .25rem; border-radius: 4px; }
+    a { color: #0b5fff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .ok { color: #1e7e34; font-weight: 600; }
+    .warn { color: #b07900; font-weight: 600; }
+  </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>🛠️ Admin Dashboard</h1>
-      <p class="subtitle">Web Of Influence - System Management</p>
-    </div>
+  <h1>Web Of Influence</h1>
+  <p class="ok">Server deployment is installed. This is a placeholder index.html served from the deployed folder.</p>
 
-    <div class="status ok">
-      <div class="status-text">✅ Server deployment is active</div>
-      <p>System is running and ready for administration tasks.</p>
-    </div>
+  <h2>API</h2>
+  <ul>
+    <li>Health: <a href="./api/index.php">/webofinfluence/api/index.php</a></li>
+    <li>Example: <a href="./api/index.php/candidates">/webofinfluence/api/index.php/candidates</a></li>
+  </ul>
 
-    <div class="dashboard-grid">
-      <!-- API Section -->
-      <div class="dashboard-card">
-        <div class="card-header">
-          <div class="card-icon">🔌</div>
-          <h2 class="card-title">API Management</h2>
-        </div>
-        <div class="button-group">
-          <div class="button-item">
-            <a href="../api/APITest.html" class="dashboard-button">
-              <span>API Health Check</span>
-              <span class="button-arrow">→</span>
-            </a>
-            <p class="button-description">Test the API server status and verify that all endpoints are responding correctly.</p>
-          </div>
-        </div>
-      </div>
+  <h2>Analytics (D3)</h2>
+  <p>Open the analytics dashboard: <a href="./analytics/">/webofinfluence/analytics/</a></p>
 
-      <!-- Analytics Section -->
-      <div class="dashboard-card">
-        <div class="card-header">
-          <div class="card-icon">📊</div>
-          <h2 class="card-title">Analytics Dashboard</h2>
-        </div>
-        <div class="button-group">
-          <div class="button-item">
-            <a href="/webofinfluence/analytics/analytics.html" class="dashboard-button">
-              <span>Open Analytics (D3)</span>
-              <span class="button-arrow">→</span>
-            </a>
-            <p class="button-description">Access interactive data visualizations and charts powered by D3.js for comprehensive data analysis.</p>
-          </div>
-        </div>
-      </div>
-    </div>
+  <h2>Frontend</h2>
+  <p class="warn">The React app has not been built on this server because Node/npm is not available. You have two options:</p>
+  <ol>
+    <li>Install Node/npm on the cPanel build environment; the pipeline will run <code>npm run build</code> automatically.</li>
+    <li>Build locally and commit the built assets in <code>demo-cand/dist</code> to this repository. The pipeline will sync them.</li>
+  </ol>
 
-    <!-- Frontend Status -->
-    <div class="status warn">
-      <div class="status-text">⚠️ Frontend Build Status</div>
-      <p>The React app has not been built on this server because Node/npm is not available. You have two options:</p>
-      <ol style="margin-top: 1rem; padding-left: 1.5rem;">
-        <li>Install Node/npm on the cPanel build environment; the pipeline will run <code style="background: rgba(0,0,0,0.1); padding: 0.2rem 0.4rem; border-radius: 3px;">npm run build</code> automatically.</li>
-        <li>Build locally and commit the built assets in <code style="background: rgba(0,0,0,0.1); padding: 0.2rem 0.4rem; border-radius: 3px;">demo-cand/dist</code> to this repository.</li>
-      </ol>
-    </div>
-
-    <!-- Runtime Config -->
-    <div class="config-section">
-      <h3 class="config-title">🔧 Runtime Configuration</h3>
-      <p style="margin-bottom: 1rem; color: #6b7280;">Current API_BASE computed in the browser:</p>
-      <div class="config-code" id="cfg">Loading configuration...</div>
-      <div class="api-status" id="api-status">Testing API connection...</div>
-    </div>
-  </div>
+  <h2>Runtime Config</h2>
+  <p>This page includes <code>app-config.js</code>. Current API_BASE computed in the browser:</p>
+  <pre><code id="cfg"></code></pre>
 
   <script>
-    // Display configuration
     var cfgEl = document.getElementById('cfg');
     cfgEl.textContent = JSON.stringify(window.__APP_CONFIG__ || {}, null, 2);
 
-    // API health test
+    // Quick API health test using the demo token header from auth-config.js
     (function () {
-      var statusEl = document.getElementById('api-status');
       try {
         var base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
         fetch(base + '/', { cache: 'no-store' })
           .then(function (r) { return r.text(); })
           .then(function (t) {
-            statusEl.className = 'api-status ok';
-            statusEl.textContent = '✅ API Health: ' + t;
+            var d = document.createElement('div');
+            d.className = 'ok';
+            d.textContent = 'API health: ' + t;
+            document.body.appendChild(d);
           })
           .catch(function (e) {
-            statusEl.className = 'api-status warn';
-            statusEl.textContent = '⚠️ API Health fetch failed: ' + e;
+            var d = document.createElement('div');
+            d.className = 'warn';
+            d.textContent = 'API health fetch failed: ' + e;
+            document.body.appendChild(d);
           });
       } catch (e) {
-        statusEl.className = 'api-status warn';
-        statusEl.textContent = '❌ API Health test error: ' + e;
+        var d = document.createElement('div');
+        d.className = 'warn';
+        d.textContent = 'API health test error: ' + e;
+        document.body.appendChild(d);
       }
     })();
   </script>
