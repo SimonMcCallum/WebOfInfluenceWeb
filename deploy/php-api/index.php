@@ -196,11 +196,19 @@ function maybe_append_limit(string $q, int $default = 200): string {
 
 /** Temporary directory for admin uploads/mapping (../tmp relative to /api) */
 function tmp_dir(): string {
-  $dir = realpath(__DIR__ . '/../tmp');
-  if ($dir === false) {
-    $candidate = __DIR__ . '/../tmp';
+  $candidate = __DIR__ . '/../tmp';
+  if (!is_dir($candidate)) {
     @mkdir($candidate, 0775, true);
-    return $candidate;
+  }
+  $dir = realpath($candidate);
+  if ($dir === false) {
+    // Fallback to system temp directory
+    $systemTmp = sys_get_temp_dir();
+    $woiTmp = $systemTmp . '/woi_uploads';
+    if (!is_dir($woiTmp)) {
+      @mkdir($woiTmp, 0775, true);
+    }
+    return $woiTmp;
   }
   return $dir;
 }
@@ -1056,11 +1064,35 @@ function handle_admin_upload_commit(): void {
     return;
   }
 
-  $base = rtrim(tmp_dir(), '/\\') . DIRECTORY_SEPARATOR;
-  $abs = realpath($base . $tmpName);
-  if ($abs === false || strpos($abs, $base) !== 0 || !is_file($abs)) {
+  $base = tmp_dir();
+  $tmpPath = $base . DIRECTORY_SEPARATOR . $tmpName;
+  
+  // Try to find the file with different approaches
+  $abs = false;
+  if (is_file($tmpPath)) {
+    $abs = realpath($tmpPath);
+  }
+  
+  // If realpath fails but file exists, use the direct path
+  if ($abs === false && is_file($tmpPath)) {
+    $abs = $tmpPath;
+  }
+  
+  if ($abs === false || !is_file($abs)) {
     render_admin([
-      'error' => 'Invalid tmp file reference',
+      'error' => 'Invalid tmp file reference - file not found: ' . $tmpName,
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+  
+  // Security check: ensure the file is within our tmp directory
+  $realBase = realpath($base);
+  $realAbs = realpath($abs);
+  if ($realBase !== false && $realAbs !== false && strpos($realAbs, $realBase) !== 0) {
+    render_admin([
+      'error' => 'Invalid tmp file reference - security violation',
       'tables' => list_tables_with_counts(),
       'server_csvs' => find_server_csvs(),
     ]);
