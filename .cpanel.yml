@@ -31,7 +31,7 @@ deployment:
     - /bin/rsync -a --delete --exclude '.htaccess' --exclude 'config.php' deploy/php-api/ "/home/ludog319/public_html/webofinfluence/api"/
 
     # 3) Sync built frontend to the same directory so Apache serves it (preserve src/ directory)
-    - if [ -d deploy/dist ]; then /bin/rsync -a --delete deploy/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi
+    - if [ -d deploy/dist ]; then /bin/rsync -a deploy/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi
     # 3b) Write runtime app-config (prefer override if provided)
     - if [ -f deploy/app-config.override.js ]; then /bin/cp deploy/app-config.override.js "/home/ludog319/public_html/webofinfluence"/app-config.js; else /bin/cp deploy/app-config.js "/home/ludog319/public_html/webofinfluence"/app-config.js; fi
     # 3b-2) Copy auth-config.js (temporary token header for API testing)
