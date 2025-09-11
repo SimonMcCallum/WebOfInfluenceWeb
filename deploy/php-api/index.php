@@ -1488,6 +1488,7 @@ try {
 
   // Admin
   if ($METHOD === 'GET' && $ROUTE === '/admin') handle_admin_get();
+  if ($METHOD === 'GET' && $ROUTE === '/adddata') handle_admin_get(); // Data import interface
   if ($METHOD === 'POST' && $ROUTE === '/admin/query') handle_admin_query();
   if ($METHOD === 'POST' && $ROUTE === '/admin/upload') handle_admin_upload();
   if ($METHOD === 'POST' && $ROUTE === '/admin/upload-start') handle_admin_upload_start();
