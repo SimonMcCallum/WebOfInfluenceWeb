@@ -15,7 +15,7 @@
   </div>
 
   <nav class="nav-buttons">
-    <a href="../php-api/index.php/adddata" class="nav-btn" target="_blank" rel="noopener">
+    <a href="../api/index.php/adddata" class="nav-btn" target="_blank" rel="noopener">
       <span>Add Data</span>
     </a>
     <a href="../src/dashboard.html" class="nav-btn">
@@ -179,7 +179,7 @@
       });
     });
 
-    const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/php-api';
+    const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api/index.php';
     const fmtNZD = d3.format('$,');
     const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
