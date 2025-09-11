@@ -1,240 +1,170 @@
-
-<!doctype html>
+!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Web Of Influence — Analytics</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script src="../app-config.js"></script>
-  <script src="../auth-config.js"></script>
+  <link rel="stylesheet" href="analytics.css">
+
+  <script src="/webofinfluence/app-config.js?v=3"></script>
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-  <style>
-    :root {
-      --bg: #0f172a;          /* slate-900 */
-      --panel: #111827;       /* gray-900 */
-      --panel-2: #0b1220;     /* slight darker */
-      --text: #e5e7eb;        /* gray-200 */
-      --muted: #9ca3af;       /* gray-400 */
-      --accent: #60a5fa;      /* blue-400 */
-      --accent-2: #34d399;    /* emerald-400 */
-      --danger: #ef4444;      /* red-500 */
-      --warn: #f59e0b;        /* amber-500 */
-      --ok: #22c55e;          /* green-500 */
-      --border: #1f2937;      /* gray-800 */
-    }
-    * { box-sizing: border-box }
-    html, body { height: 100% }
-    body {
-      margin: 0;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      background: radial-gradient(1200px 800px at top left, #0b1220 0%, var(--bg) 40%);
-      color: var(--text);
-    }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 1rem 1.25rem; border-bottom: 1px solid var(--border);
-      position: sticky; top: 0; background: rgba(15,23,42,.8); backdrop-filter: blur(6px);
-      z-index: 10;
-    }
-    .brand { font-size: 1.1rem; font-weight: 700; letter-spacing: .2px }
-    nav { display: flex; gap: .75rem; flex-wrap: wrap }
-    nav button {
-      background: transparent; color: var(--text); border: 1px solid var(--border);
-      padding: .45rem .75rem; border-radius: 8px; cursor: pointer;
-    }
-    nav button.active, nav button:hover { border-color: var(--accent); color: var(--accent); }
-    main { padding: 1rem; max-width: 1200px; margin: 0 auto; }
-    .panel {
-      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
-      border: 1px solid var(--border); border-radius: 12px; padding: 1rem; margin-bottom: 1rem;
-      box-shadow: 0 10px 30px rgba(0,0,0,.25);
-    }
-    .panel h2 { margin: 0 0 .5rem 0; font-size: 1.1rem; }
-    .row { display: grid; gap: .75rem; grid-template-columns: repeat(12, 1fr); align-items: end; }
-    .row > .col-3 { grid-column: span 3; }
-    .row > .col-4 { grid-column: span 4; }
-    .row > .col-6 { grid-column: span 6; }
-    .row > .col-8 { grid-column: span 8; }
-    .row > .col-12 { grid-column: span 12; }
-    @media (max-width: 900px) {
-      .row { grid-template-columns: 1fr; }
-      .row > [class^="col-"] { grid-column: 1 / -1; }
-    }
-    label { font-size: .85rem; color: var(--muted) }
-    input, select, button, .btn {
-      width: 100%; padding: .5rem .6rem; border-radius: 8px; color: var(--text);
-      background: #0b1220; border: 1px solid var(--border);
-    }
-    input::placeholder { color: #6b7280 }
-    .btn {
-      display: inline-block; text-align: center; cursor: pointer; user-select: none;
-    }
-    .btn.primary { background: linear-gradient(180deg, #1e3a8a, #1f2937); border-color: #1e40af; }
-    .btn.primary:hover { filter: brightness(1.1) }
-    .btn.link { background: transparent; border: none; padding: 0; color: var(--accent) }
-    .help { color: var(--muted); font-size: .85rem }
-    .status { margin-top: .5rem; font-size: .9rem }
-    .ok { color: var(--ok) }
-    .warn { color: var(--warn) }
-    .err { color: var(--danger); white-space: pre-wrap }
-    .chart-wrap {
-      width: 100%; height: min(2000px, max(420px, var(--h, 420)));
-      overflow: auto;
-    }
-    .legend { display: flex; gap: .5rem; flex-wrap: wrap; margin: .5rem 0 }
-    .legend .item {
-      display: flex; align-items: center; gap: .5rem; font-size: .85rem; color: var(--muted);
-      border: 1px solid var(--border); padding: .25rem .5rem; border-radius: 999px;
-      background: #0b1220;
-    }
-    .swatch { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border-bottom: 1px solid var(--border); padding: .5rem .6rem; text-align: left; }
-    th { color: var(--muted); font-weight: 600; }
-    .note { color: var(--muted); font-size: .9rem }
-    footer { text-align: center; padding: 1rem; color: var(--muted); }
-  </style>
+
+  <script>
+    window.__APP_CONFIG__ = window.__APP_CONFIG__ || { API_BASE: '/webofinfluence/api/index.php' };
+  </script>
 </head>
+
 <body>
-  <header>
-    <div class="brand">Web Of Influence — Analytics</div>
-    <nav>
+  <div class="title-header">
+    <h1>📊 Analytics Dashboard — Web Of Influence</h1>
+    <p class="subtitle">Interactive data visualizations and comprehensive analysis</p>
+  </div>
+
+  <nav class="nav-buttons">
+    <a href="../api/index.php/adddata" class="nav-btn" target="_blank" rel="noopener">
+      <span>Add Data</span>
+    </a>
+    <a href="../dashboard.html" class="nav-btn">
+      <span>← Back to Settings</span>
+    </a>
+  </nav>
+
+  <main>
+    <div class="tab-nav">
       <button data-tab="donations" class="active">Donations Overview</button>
       <button data-tab="meetings">Meetings Search</button>
       <button data-tab="candidates">Candidates</button>
-      <a class="btn link" href="../api/index.php/admin" target="_blank" rel="noopener">Admin</a>
-      <a class="btn link" href="../" target="_blank" rel="noopener">Home</a>
-    </nav>
-  </header>
-
-  <main>
+    </div>
     <!-- Donations Overview -->
     <section id="tab-donations" class="panel">
       <h2>Donations Overview</h2>
-      <div class="row">
-        <div class="col-3">
-          <label>Election Year</label>
-          <select id="year">
-            <option value="2023">2023</option>
-            <option value="2020">2020</option>
-            <option value="2017">2017</option>
-            <option value="2014">2014</option>
-            <option value="2011">2011</option>
-          </select>
+      <div class="search-form">
+        <div class="row">
+          <div class="col-2">
+            <label>Election Year</label>
+            <select id="year">
+              <option value="2023">2023</option>
+              <option value="2020">2020</option>
+              <option value="2017">2017</option>
+              <option value="2014">2014</option>
+              <option value="2011">2011</option>
+            </select>
+          </div>
+          <div class="col-3">
+            <label>First Name</label>
+            <input id="firstName" placeholder="e.g., JANE">
+          </div>
+          <div class="col-3">
+            <label>Last Name</label>
+            <input id="lastName" placeholder="e.g., DOE">
+          </div>
+          <div class="col-2">
+            <label>Party</label>
+            <input id="partyName" placeholder="e.g., LABOUR">
+          </div>
+          <div class="col-2">
+            <label>&nbsp;</label>
+            <button id="btnSearchDonations" class="btn primary">Search</button>
+          </div>
         </div>
-        <div class="col-3">
-          <label>First Name</label>
-          <input id="firstName" placeholder="e.g., JANE">
-        </div>
-        <div class="col-3">
-          <label>Last Name</label>
-          <input id="lastName" placeholder="e.g., DOE">
-        </div>
-        <div class="col-3">
-          <label>Party</label>
-          <input id="partyName" placeholder="e.g., LABOUR PARTY">
-        </div>
-        <div class="col-3">
-          <label>Electorate</label>
-          <input id="electorateName" placeholder="e.g., WELLINGTON CENTRAL">
-        </div>
-        <div class="col-3">
-          <button id="btnSearchDonations" class="btn primary">Search</button>
-        </div>
-        <div class="col-12">
-          <div id="donationsStatus" class="status"></div>
-        </div>
-        <div class="col-12">
-          <div class="legend" id="legend"></div>
-        </div>
-        <div class="col-12">
-          <div id="chartWrap" class="chart-wrap"></div>
+        <div class="row">
+          <div class="col-6">
+            <label>Electorate</label>
+            <input id="electorateName" placeholder="e.g., WELLINGTON CENTRAL">
+          </div>
         </div>
       </div>
+      
+      <div id="donationsStatus" class="status"></div>
+      <div class="legend" id="legend"></div>
+      <div id="chartWrap" class="chart-wrap"></div>
+      
       <p class="note">Shows total candidate donations for the selected filters. Bars are color-coded by party.</p>
     </section>
 
     <!-- Meetings Search -->
     <section id="tab-meetings" class="panel" hidden>
       <h2>Ministerial Meetings</h2>
-      <div class="row">
-        <div class="col-3">
-          <label>First Name</label>
-          <input id="mFirst" placeholder="e.g., CHRIS">
+      <div class="search-form">
+        <div class="row">
+          <div class="col-3">
+            <label>First Name</label>
+            <input id="mFirst" placeholder="e.g., CHRIS">
+          </div>
+          <div class="col-3">
+            <label>Last Name</label>
+            <input id="mLast" placeholder="e.g., HIPKINS">
+          </div>
+          <div class="col-3">
+            <label>Portfolio</label>
+            <input id="mPortfolio" placeholder="e.g., HEALTH">
+          </div>
+          <div class="col-3">
+            <label>&nbsp;</label>
+            <button id="btnSearchMeetings" class="btn primary">Search</button>
+          </div>
         </div>
-        <div class="col-3">
-          <label>Last Name</label>
-          <input id="mLast" placeholder="e.g., HIPKINS">
-        </div>
-        <div class="col-3">
-          <label>Start Date</label>
-          <input id="mStart" type="date">
-        </div>
-        <div class="col-3">
-          <label>End Date</label>
-          <input id="mEnd" type="date">
-        </div>
-        <div class="col-3">
-          <label>Portfolio</label>
-          <input id="mPortfolio" placeholder="e.g., HEALTH">
-        </div>
-        <div class="col-3">
-          <button id="btnSearchMeetings" class="btn primary">Search Meetings</button>
-        </div>
-        <div class="col-12">
-          <div id="meetingsStatus" class="status"></div>
-        </div>
-        <div class="col-12">
-          <div class="panel" style="overflow:auto; max-height: 600px;">
-            <table id="meetingsTable">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Time</th>
-                  <th>Portfolio</th>
-                  <th>Title</th>
-                  <th>Location</th>
-                </tr>
-              </thead>
-              <tbody>
-                <!-- rows injected -->
-              </tbody>
-            </table>
+        <div class="row">
+          <div class="col-3">
+            <label>Start Date</label>
+            <input id="mStart" type="date">
+          </div>
+          <div class="col-3">
+            <label>End Date</label>
+            <input id="mEnd" type="date">
           </div>
         </div>
       </div>
+      
+      <div id="meetingsStatus" class="status"></div>
+      <div class="panel" style="overflow:auto; max-height: 600px;">
+        <table id="meetingsTable">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Portfolio</th>
+              <th>Title</th>
+              <th>Location</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- rows injected -->
+          </tbody>
+        </table>
+      </div>
+      
       <p class="note">Search ministerial meetings by minister name and optional date range/portfolio.</p>
     </section>
 
     <!-- Candidates -->
     <section id="tab-candidates" class="panel" hidden>
       <h2>Candidates</h2>
-      <div class="row">
-        <div class="col-3">
-          <label>First Name</label>
-          <input id="cFirst" placeholder="e.g., NICOLA">
-        </div>
-        <div class="col-3">
-          <label>Last Name</label>
-          <input id="cLast" placeholder="e.g., WILLIS">
-        </div>
-        <div class="col-3">
-          <button id="btnSearchCandidates" class="btn primary">Search Candidates</button>
-        </div>
-        <div class="col-12">
-          <div id="candidatesStatus" class="status"></div>
-        </div>
-        <div class="col-12">
-          <div class="panel" style="overflow:auto; max-height: 500px;">
-            <table id="candidatesTable">
-              <thead><tr><th>ID</th><th>First Name</th><th>Last Name</th></tr></thead>
-              <tbody></tbody>
-            </table>
+      <div class="search-form">
+        <div class="row">
+          <div class="col-4">
+            <label>First Name</label>
+            <input id="cFirst" placeholder="e.g., NICOLA">
+          </div>
+          <div class="col-4">
+            <label>Last Name</label>
+            <input id="cLast" placeholder="e.g., WILLIS">
+          </div>
+          <div class="col-4">
+            <label>&nbsp;</label>
+            <button id="btnSearchCandidates" class="btn primary">Search</button>
           </div>
         </div>
       </div>
+      
+      <div id="candidatesStatus" class="status"></div>
+      <div class="panel" style="overflow:auto; max-height: 500px;">
+        <table id="candidatesTable">
+          <thead><tr><th>ID</th><th>First Name</th><th>Last Name</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      
       <p class="note">Search People in the database. Uses case-insensitive matching on the server.</p>
     </section>
   </main>
@@ -245,9 +175,9 @@
 
   <script>
     // Tabs
-    document.querySelectorAll('nav button[data-tab]').forEach(btn => {
+    document.querySelectorAll('.tab-nav button[data-tab]').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('nav button[data-tab]').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-nav button[data-tab]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         const id = btn.getAttribute('data-tab');
         document.querySelectorAll('main > section').forEach(s => s.hidden = true);
@@ -292,7 +222,7 @@
       if (elect) params.set('electorate_name', elect);
 
       try {
-        const url = `${API_BASE}/candidates/election-overview/${encodeURIComponent(year)}/search/combined` + (params.toString() ? `?${params}` : '');
+        const url = `${API_BASE}?route=/candidates/election-overview/${encodeURIComponent(year)}/search/combined` + (params.toString() ? `&${params}` : '');
         const res = await fetch(url, { cache: 'no-store' });
         const data = await res.json();
         if (!Array.isArray(data) || data.length === 0) {
@@ -312,7 +242,7 @@
         const enriched = await Promise.all(mapped.map(async (m) => {
           try {
             const [pc, pr] = await Promise.all([
-              fetch(`${API_BASE}/candidates/search-id?people_id=${encodeURIComponent(m.people_id)}`).then(r=>r.json()).catch(()=>[]),
+              fetch(`${API_BASE}?route=/candidates/search-id&people_id=${encodeURIComponent(m.people_id)}`),
               fetch(`${API_BASE}/party/search-id?party_id=${encodeURIComponent(m.party_id)}`).then(r=>r.json()).catch(()=>[])
             ]);
             const name = [pc?.[0]?.first_name, pc?.[0]?.last_name].filter(Boolean).join(' ') || 'Unknown';
@@ -432,7 +362,7 @@
       if (pf) params.set('portfolio', pf);
 
       try {
-        const res = await fetch(`${API_BASE}/ministerial_diaries/search-cand-filter?${params}`);
+        const res = await fetch(`${API_BASE}?route=/ministerial_diaries/search-cand-filter&${params}`);
         const data = await res.json();
         renderMeetings(data || []);
         status.textContent = Array.isArray(data) ? `Returned ${data.length} rows` : 'No data';
@@ -486,7 +416,7 @@
         return;
       }
       try {
-        const res = await fetch(`${API_BASE}/candidates/search?${params}`);
+        const res = await fetch(`${API_BASE}?route=/candidates/search&${params}`);
         const data = await res.json();
         renderCandidates(data || []);
         status.textContent = Array.isArray(data) ? `Returned ${data.length} rows` : 'No data';
