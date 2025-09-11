@@ -1,0 +1,10 @@
+# Enable Phusion Passenger for Python WSGI
+PassengerEnabled on
+PassengerAppEnv production
+# Use system Python; Python deps are vendored into ./vendor by the deploy pipeline
+PassengerPython /usr/bin/python3
+PassengerAppRoot /home/ludog319/public_html/webofinfluence
+PassengerStartupFile passenger_wsgi.py
+
+# Keep it minimal; passenger_wsgi.py serves static and routes /api and /admin internally
+Options -MultiViews
