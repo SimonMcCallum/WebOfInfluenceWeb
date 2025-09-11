@@ -416,7 +416,7 @@ function render_admin(array $ctx = []): void {
     <div class="row">
       <div>
         <h2>Read-only Query</h2>
-        <form action="index.php?route=/adddata/query" method="post">
+        <form action="index.php?route=/admin/query" method="post">
           <label>SELECT Query (LIMIT enforced if missing)
             <textarea name="query" rows="5" placeholder="SELECT * FROM woi.people LIMIT 50" required></textarea>
           </label>
@@ -449,7 +449,7 @@ function render_admin(array $ctx = []): void {
 
       <div>
         <h2>CSV Upload → Table</h2>
-        <form action="index.php?route=/adddata/upload-start" method="post" enctype="multipart/form-data">
+        <form action="index.php?route=/admin/upload-start" method="post" enctype="multipart/form-data">
           <label>Destination Table (pick existing)
             <select name="dest_table_select">
               <option value="">-- choose an existing table --</option>
@@ -481,7 +481,7 @@ function render_admin(array $ctx = []): void {
     <section class="panel">
       <h2>CSV Column Mapping</h2>
       <p class="note">CSV: <?= htmlspecialchars((string)($ctx['tmp_label'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> → Table: <?= htmlspecialchars((string)($ctx['map_table'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p>
-      <form action="index.php?route=/adddata/upload-commit" method="post">
+      <form action="index.php?route=/admin/upload-commit" method="post">
         <input type="hidden" name="tmp_file" value="<?= htmlspecialchars((string)($ctx['tmp_file'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
         <input type="hidden" name="table" value="<?= htmlspecialchars((string)($ctx['map_table'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
         <div class="row">
@@ -531,12 +531,12 @@ function render_admin(array $ctx = []): void {
                 <td><?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
                 <td><?= (int)($t['rows'] ?? 0) ?></td>
                 <td>
-                  <form action="index.php?route=/adddata/table-action" method="post" style="display:inline;margin-right:.5rem">
+                  <form action="index.php?route=/admin/table-action" method="post" style="display:inline;margin-right:.5rem">
                     <input type="hidden" name="table" value="<?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
                     <input type="hidden" name="action" value="truncate">
                     <button type="submit" onclick="return confirm('Truncate table <?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>?')">Truncate</button>
                   </form>
-                  <form action="index.php?route=/adddata/table-action" method="post" style="display:inline">
+                  <form action="index.php?route=/admin/table-action" method="post" style="display:inline">
                     <input type="hidden" name="table" value="<?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
                     <input type="hidden" name="action" value="drop">
                     <button type="submit" onclick="return confirm('DROP table <?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>? This cannot be undone!')">Drop</button>
@@ -555,7 +555,7 @@ function render_admin(array $ctx = []): void {
         <h2>Import CSVs from Server</h2>
         <p class="note">CSV files discovered under: <?= htmlspecialchars(data_dir(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p>
 
-        <form action="index.php?route=/adddata/import-server" method="post">
+        <form action="index.php?route=/admin/import-server" method="post">
           <label>Select CSV file found on server
             <select name="csv_rel" required>
               <option value="">-- choose a CSV --</option>
@@ -571,7 +571,7 @@ function render_admin(array $ctx = []): void {
           <button type="submit">Import Selected CSV</button>
         </form>
 
-        <form action="index.php?route=/adddata/import-server-batch" method="post" style="margin-top:1rem">
+        <form action="index.php?route=/admin/import-server-batch" method="post" style="margin-top:1rem">
           <label>Optional Subdirectory (relative to data/)
             <input type="text" name="subdir" placeholder="e.g., candidate_csv">
           </label>
@@ -689,8 +689,8 @@ function handle_debug(): void {
     <h2>Useful Links</h2>
     <ul>
       <li><a href="./index.php">/api/index.php (health)</a></li>
-      <li><a href="./index.php/adddata">/api/index.php/adddata (add data)</a></li>
-      <li><a href="./index.php?route=/adddata">/api/index.php?route=/adddata (add data ?route form)</a></li>
+      <li><a href="./index.php/admin">/api/index.php/admin (admin)</a></li>
+      <li><a href="./index.php?route=/admin">/api/index.php?route=/admin (admin ?route form)</a></li>
     </ul>
   </body>
   </html><?php
@@ -1486,15 +1486,15 @@ try {
 
   if ($METHOD === 'GET' && $ROUTE === '/ministerial_diaries/search-cand-filter') handle_ministerial_diaries_search();
 
-  // Add Data
-  if ($METHOD === 'GET' && $ROUTE === '/adddata') handle_admin_get();
-  if ($METHOD === 'POST' && $ROUTE === '/adddata/query') handle_admin_query();
-  if ($METHOD === 'POST' && $ROUTE === '/adddata/upload') handle_admin_upload();
-  if ($METHOD === 'POST' && $ROUTE === '/adddata/upload-start') handle_admin_upload_start();
-  if ($METHOD === 'POST' && $ROUTE === '/adddata/upload-commit') handle_admin_upload_commit();
-  if ($METHOD === 'POST' && $ROUTE === '/adddata/table-action') handle_admin_table_action();
-  if ($METHOD === 'POST' && $ROUTE === '/adddata/import-server') handle_admin_import_server();
-  if ($METHOD === 'POST' && $ROUTE === '/adddata/import-server-batch') handle_admin_import_server_batch();
+  // Admin
+  if ($METHOD === 'GET' && $ROUTE === '/admin') handle_admin_get();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/query') handle_admin_query();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/upload') handle_admin_upload();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/upload-start') handle_admin_upload_start();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/upload-commit') handle_admin_upload_commit();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/table-action') handle_admin_table_action();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/import-server') handle_admin_import_server();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/import-server-batch') handle_admin_import_server_batch();
 
   // CSV Import API endpoints (for frontend integration)
   if ($METHOD === 'POST' && $ROUTE === '/api/import/csv/upload') handle_csv_upload_api();
