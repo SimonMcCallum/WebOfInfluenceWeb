@@ -5,9 +5,15 @@
   <title>Web Of Influence — Analytics</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="analytics.css">
-  <script src="../app-config.js"></script>
+
+  <script src="/webofinfluence/app-config.js?v=3"></script>
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+
+  <script>
+    window.__APP_CONFIG__ = window.__APP_CONFIG__ || { API_BASE: '/webofinfluence/api/index.php' };
+  </script>
 </head>
+
 <body>
   <div class="title-header">
     <h1>📊 Analytics Dashboard — Web Of Influence</h1>
@@ -18,7 +24,7 @@
     <a href="../api/index.php/adddata" class="nav-btn" target="_blank" rel="noopener">
       <span>Add Data</span>
     </a>
-    <a href="../src/dashboard.html" class="nav-btn">
+    <a href="../dashboard.html" class="nav-btn">
       <span>← Back to Settings</span>
     </a>
   </nav>
@@ -179,7 +185,7 @@
       });
     });
 
-    const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/api';
+    const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api/index.php';
     const fmtNZD = d3.format('$,');
     const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
@@ -216,7 +222,7 @@
       if (elect) params.set('electorate_name', elect);
 
       try {
-        const url = `${API_BASE}/candidates/election-overview/${encodeURIComponent(year)}/search/combined` + (params.toString() ? `?${params}` : '');
+        const url = `${API_BASE}?route=/candidates/election-overview/${encodeURIComponent(year)}/search/combined` + (params.toString() ? `&${params}` : '');
         const res = await fetch(url, { cache: 'no-store' });
         const data = await res.json();
         if (!Array.isArray(data) || data.length === 0) {
@@ -236,7 +242,7 @@
         const enriched = await Promise.all(mapped.map(async (m) => {
           try {
             const [pc, pr] = await Promise.all([
-              fetch(`${API_BASE}/candidates/search-id?people_id=${encodeURIComponent(m.people_id)}`).then(r=>r.json()).catch(()=>[]),
+              fetch(`${API_BASE}?route=/candidates/search-id&people_id=${encodeURIComponent(m.people_id)}`),
               fetch(`${API_BASE}/party/search-id?party_id=${encodeURIComponent(m.party_id)}`).then(r=>r.json()).catch(()=>[])
             ]);
             const name = [pc?.[0]?.first_name, pc?.[0]?.last_name].filter(Boolean).join(' ') || 'Unknown';
@@ -356,7 +362,7 @@
       if (pf) params.set('portfolio', pf);
 
       try {
-        const res = await fetch(`${API_BASE}/ministerial_diaries/search-cand-filter?${params}`);
+        const res = await fetch(`${API_BASE}?route=/ministerial_diaries/search-cand-filter&${params}`);
         const data = await res.json();
         renderMeetings(data || []);
         status.textContent = Array.isArray(data) ? `Returned ${data.length} rows` : 'No data';
@@ -410,7 +416,7 @@
         return;
       }
       try {
-        const res = await fetch(`${API_BASE}/candidates/search?${params}`);
+        const res = await fetch(`${API_BASE}?route=/candidates/search&${params}`);
         const data = await res.json();
         renderCandidates(data || []);
         status.textContent = Array.isArray(data) ? `Returned ${data.length} rows` : 'No data';
