@@ -349,7 +349,7 @@ function import_server_csv_to_table(string $relPath, ?string $targetTable, bool 
 
   $placeholders = implode(', ', array_fill(0, count($insertCols), '?'));
   $colList = implode(', ', array_map(fn($c) => '`' . $c . '`', $insertCols));
-  $sql = "INSERT INTO `" . str_replace('`', '``', $table) . "` ($colList) VALUES ($placeholders)";
+  $sql = "INSERT IGNORE INTO `" . str_replace('`', '``', $table) . "` ($colList) VALUES ($placeholders)";
   $stmt = pdo()->prepare($sql);
 
   $inserted = 0;
@@ -932,7 +932,7 @@ function handle_admin_upload(): void {
   $bt = backtick_qualified_table($table);
   $placeholders = implode(', ', array_fill(0, count($columns), '?'));
   $colList = implode(', ', array_map(fn($c) => '`' . $c . '`', $columns));
-  $sql = "INSERT INTO {$bt} ({$colList}) VALUES ({$placeholders})";
+  $sql = "INSERT IGNORE INTO {$bt} ({$colList}) VALUES ({$placeholders})";
   $stmt = pdo()->prepare($sql);
 
   $inserted = 0;
@@ -1149,7 +1149,7 @@ function handle_admin_upload_commit(): void {
   }
   $placeholders = implode(', ', array_fill(0, count($dbCols), '?'));
   $colList = implode(', ', array_map(fn($c) => '`' . $c . '`', $dbCols));
-  $sql = "INSERT INTO `" . str_replace('`', '``', $table) . "` ($colList) VALUES ($placeholders)";
+  $sql = "INSERT IGNORE INTO `" . str_replace('`', '``', $table) . "` ($colList) VALUES ($placeholders)";
   $stmt = pdo()->prepare($sql);
 
   $inserted = 0;
@@ -1418,7 +1418,7 @@ function handle_csv_execute_api(): void {
     $columns = array_values($mapping);
     $placeholders = array_fill(0, count($columns), '?');
 
-    $sql = "INSERT INTO `{$table}` (`" . implode('`, `', $columns) . "`) VALUES (" . implode(', ', $placeholders) . ")";
+    $sql = "INSERT IGNORE INTO `{$table}` (`" . implode('`, `', $columns) . "`) VALUES (" . implode(', ', $placeholders) . ")";
     $stmt = $pdo->prepare($sql);
 
     while (($row = fgetcsv($handle)) !== false) {
