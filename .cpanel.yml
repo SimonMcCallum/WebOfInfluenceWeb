@@ -21,30 +21,25 @@ deployment:
     # 1) Build the frontend with the correct base path so assets resolve under /webofinfluence/
     - (cd deploy && if command -v npm >/dev/null 2>&1; then (npm ci || npm install) && npm run build; else echo "npm not found, skipping frontend build"; fi)
 
-    # 1a) Copy required HTML files from src/ to dist/src/ (for SPA routing)
-    - (cd deploy && if [ -d dist ]; then mkdir -p dist/src && cp src/*.html dist/src/ 2>/dev/null || true; fi)
-
-    # 2) Clean the target directory to ensure only dist/ content is deployed
-    - /bin/rm -rf "/home/ludog319/public_html/webofinfluence"/*
-    - /bin/rm -rf "/home/ludog319/public_html/webofinfluence"/.[^.]* || true
-
-    # 3) Sync built frontend (dist/) to the target directory
-    - if [ -d deploy/dist ]; then /bin/rsync -a deploy/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi
-
-    # 4) Deploy PHP API into /webofinfluence/api (PHP-only; no .htaccess needed)
+    # 2) Sync server (Flask API) and config files
+    - /bin/rsync -a --delete --exclude '.htaccess' --exclude 'passenger_wsgi.py' --exclude 'requirements.txt' --exclude 'api/' deploy/ "/home/ludog319/public_html/webofinfluence"/
+    # 2a) Sync CSV data for server-side imports (available to Admin UI under /webofinfluence/data)
+    - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/data"
+    - /bin/rsync -a --delete csv_data/ "/home/ludog319/public_html/webofinfluence/data"/ || true
+    # 2b) Deploy PHP API into /webofinfluence/api (PHP-only; no .htaccess needed)
     - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/api"
     - /bin/rsync -a --delete --exclude '.htaccess' --exclude 'config.php' deploy/php-api/ "/home/ludog319/public_html/webofinfluence/api"/
 
-    # 5) Sync CSV data for server-side imports (available to Admin UI under /webofinfluence/data)
-    - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/data"
-    - /bin/rsync -a --delete csv_data/ "/home/ludog319/public_html/webofinfluence/data"/ || true
-
-    # 6) Write runtime app-config (prefer override if provided)
+    # 3) Sync built frontend to the same directory so Apache serves it (preserve src/ directory)
+    - if [ -d deploy/dist ]; then /bin/rsync -a deploy/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi
+    # 3b) Write runtime app-config (prefer override if provided)
     - if [ -f deploy/app-config.override.js ]; then /bin/cp deploy/app-config.override.js "/home/ludog319/public_html/webofinfluence"/app-config.js; else /bin/cp deploy/app-config.js "/home/ludog319/public_html/webofinfluence"/app-config.js; fi
-    # 6a) Copy auth-config.js (temporary token header for API testing)
+    # 3b-2) Copy auth-config.js (temporary token header for API testing)
     - if [ -f deploy/auth-config.js ]; then /bin/cp deploy/auth-config.js "/home/ludog319/public_html/webofinfluence"/auth-config.js; fi
-    # 6b) Copy environment file if present (for DB credentials and other secrets)
+    # 3c) Copy environment file if present (for DB credentials and other secrets)
     - if [ -f deploy/.env ]; then /bin/cp deploy/.env "/home/ludog319/public_html/webofinfluence"/.env; fi
+    # 3d) Also sync deploy source for reference (not required to run)
+    - /bin/rsync -a --delete --exclude 'node_modules' deploy/ "/home/ludog319/public_html/webofinfluence"/deploy-src/
 
     # 4) Ensure Passenger picks up Python deps and restart the app
     - echo "Skipping Passenger tmp/vendor setup (PHP-only API)"
