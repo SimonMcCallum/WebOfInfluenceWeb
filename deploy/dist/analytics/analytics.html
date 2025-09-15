@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 
   <script>
-    window.__APP_CONFIG__ = window.__APP_CONFIG__ || { API_BASE: '/webofinfluence/api/index.php' };
+    window.__APP_CONFIG__ = window.__APP_CONFIG__ || { API_BASE: '../php-api/index.php' };
   </script>
   <link rel="stylesheet" crossorigin href="/webofinfluence/assets/analytics-DQw6Szoy.css">
 </head>
@@ -25,7 +25,7 @@
       <span>Add Data</span>
     </a>
     <a href="../src/dashboard.html" class="nav-btn">
-      <span>← Back to Settings</span>
+      <span>← Back to Dashboard</span>
     </a>
   </nav>
 
@@ -185,7 +185,7 @@
       });
     });
 
-    const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api/index.php';
+    const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '../php-api/index.php';
     const fmtNZD = d3.format('$,');
     const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
