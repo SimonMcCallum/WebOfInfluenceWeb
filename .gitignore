@@ -8,6 +8,7 @@ package-lock.json
 # Python
 __pycache__/
 *.pyc
+deploy/venv/
 
 # VSCode settings, Python virtual envs, etc.
 .vscode/
