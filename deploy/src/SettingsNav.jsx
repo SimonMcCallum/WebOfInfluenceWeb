@@ -6,14 +6,6 @@ export default function SettingsNav() {
 
   const handleBackToHome = () => navigate('/');
   const handleAccountSettings = () => navigate('/account-settings');
-  const handleAdminPage = () => {
-    const newWindow = window.open('/webofinfluence/src/dashboard.html', '_blank');
-    if (newWindow) {
-      newWindow.focus();
-    } else {
-      alert('Popup blocked! Please allow popups for this site.');
-    }
-  };
 
   return (
     <div className="settings-container">
@@ -45,7 +37,7 @@ export default function SettingsNav() {
         </div>
 
         {/* Admin Page Card */}
-        <div className="settings-card settings-nav-card" onClick={handleAdminPage}>
+        <a href="/webofinfluence/src/dashboard.html" target="_blank" rel="noopener" className="settings-card settings-nav-card">
           <div className="card-header">
             <div className="card-icon">🛠️</div>
             <h2 className="card-title">Admin Page</h2>
@@ -54,7 +46,7 @@ export default function SettingsNav() {
             Access administrative functions and system management tools.
           </p>
           <div className="nav-arrow">→</div>
-        </div>
+        </a>
       </div>
     </div>
   );
