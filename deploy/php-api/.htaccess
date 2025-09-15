@@ -1,0 +1,8 @@
+# Enable PHP for this directory
+AddHandler application/x-httpd-php .php
+DirectoryIndex index.php
+
+# Allow all access (adjust as needed for security)
+<RequireAll>
+    Require all granted
+</RequireAll>
