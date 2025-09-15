@@ -12,7 +12,8 @@ export default defineConfig({
       input: {
         main: 'index.html',
         analytics: 'analytics/analytics.html',
-        apitest: 'api/APITest.html'
+        apitest: 'api/APITest.html',
+        ainamefinder: 'src/ai-name-finder.html'
       }
     }
   },

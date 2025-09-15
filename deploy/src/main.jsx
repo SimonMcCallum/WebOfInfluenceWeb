@@ -10,11 +10,18 @@ import MeetingsSearch from './MeetingsSearch.jsx';
 import LoginPage from './Loginpage.jsx';
 import SettingsNav from './SettingsNav.jsx';
 import AccSettings from './AccSettings.jsx';
-import AdminDashboard from './dashboard.jsx';
 
 // auth
 import AuthProvider from './auth/AuthProvider';
 import ProtectedRoute from './auth/ProtectedRoute';
+
+// Dashboard redirect component
+const DashboardRedirect = () => {
+  React.useEffect(() => {
+    window.location.href = '/webofinfluence/src/dashboard.html';
+  }, []);
+  return null;
+};
 
 createRoot(document.getElementById('root')).render(
   <AuthProvider>
@@ -32,8 +39,7 @@ createRoot(document.getElementById('root')).render(
           {/*<Route path="/person/:firstName/:lastName" element={<PersonProfile />} /> */}
           <Route path="/settings" element={<SettingsNav />} />
           <Route path="/account-settings" element={<AccSettings />} />
-          <Route path="/admin-dashboard" element={<AdminDashboard />} />
-          {/* Admin dashboard route */}
+          <Route path="/admin-dashboard" element={<DashboardRedirect />} />
         </Route>
       </Routes>
     </Router>

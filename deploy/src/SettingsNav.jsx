@@ -36,11 +36,11 @@ export default function SettingsNav() {
           <div className="nav-arrow">→</div>
         </div>
 
-        {/* Admin Page Card */}
+        {/* Admin Dashboarf Card */}
         <div className="settings-card settings-nav-card" onClick={() => navigate('/admin-dashboard')}>
           <div className="card-header">
             <div className="card-icon">🛠️</div>
-            <h2 className="card-title">Admin Page</h2>
+            <h2 className="card-title">Admin Dashboard</h2>
           </div>
           <p className="card-description">
             Access administrative functions and system management tools.
