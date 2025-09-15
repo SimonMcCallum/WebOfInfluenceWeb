@@ -25,7 +25,7 @@ const DashboardRedirect = () => {
 
 createRoot(document.getElementById('root')).render(
   <AuthProvider>
-    <Router basename="/webofinfluence">
+    <Router>
       <Routes>
         {/* Public routes */}
         <Route path="/login" element={<LoginPage />} />
