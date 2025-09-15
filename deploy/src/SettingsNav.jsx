@@ -6,9 +6,7 @@ export default function SettingsNav() {
 
   const handleBackToHome = () => navigate('/');
   const handleAccountSettings = () => navigate('/account-settings');
-  const handleAdminPage = () => {
-    window.location.href = '/webofinfluence/src/dashboard.html';
-  };
+  const handleAdminPage = () => navigate('/admin-dashboard');
 
   return (
     <div className="settings-container">

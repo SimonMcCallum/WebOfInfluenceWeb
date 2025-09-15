@@ -7,9 +7,10 @@ import HomePage from './Hompage.jsx';
 import DonationsOverview from './DonationsOverview.jsx';
 import MeetingsSearch from './MeetingsSearch.jsx';
 //import PersonProfile from './PersonProfile.jsx';
-import LoginPage from './Loginpage.jsx'; 
+import LoginPage from './Loginpage.jsx';
 import SettingsNav from './SettingsNav.jsx';
 import AccSettings from './AccSettings.jsx';
+import AdminDashboard from './AdminDashboard.jsx';
 
 // auth
 import AuthProvider from './auth/AuthProvider';
@@ -31,6 +32,7 @@ createRoot(document.getElementById('root')).render(
           {/*<Route path="/person/:firstName/:lastName" element={<PersonProfile />} /> */}
           <Route path="/settings" element={<SettingsNav />} />
           <Route path="/account-settings" element={<AccSettings />} />
+          <Route path="/admin-dashboard" element={<AdminDashboard />} />
         </Route>
       </Routes>
     </Router>
