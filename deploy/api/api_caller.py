@@ -28,12 +28,18 @@ def call_api_for_names(text_prompt):
             data = response.json()
             generated_text = data.get('response', '')
 
+            # Clean the response by removing markdown code blocks if present
+            import re
+            # Remove ```json and ``` markers
+            cleaned_text = re.sub(r'```\w*\n?', '', generated_text).strip()
+
             # Attempt to parse the generated text as JSON (assuming it contains names)
             try:
-                names_json = json.loads(generated_text)
+                names_json = json.loads(cleaned_text)
                 return names_json
             except json.JSONDecodeError:
                 print("Error: Generated response is not valid JSON")
+                print(f"Generated text: {generated_text}")
                 return None
         else:
             print(f"API Error: {response.status_code} - {response.text}")
