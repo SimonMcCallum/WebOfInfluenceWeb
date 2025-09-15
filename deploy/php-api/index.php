@@ -1048,6 +1048,296 @@ function handle_admin_upload_start(): void {
   render_admin($ctx);
 }
 
+/** 
+ * Map candidate names to people IDs using fuzzy matching with Gemini AI
+ * This function helps resolve foreign key relationships for donations import
+ */
+function resolve_candidate_person_id(string $firstName, string $lastName, string $electorate = ''): ?int {
+  // First try exact match
+  $stmt = pdo()->prepare(
+    'SELECT id FROM people WHERE UPPER(first_name) = UPPER(?) AND UPPER(last_name) = UPPER(?)'
+  );
+  $stmt->execute([$firstName, $lastName]);
+  $exact = $stmt->fetch();
+  if ($exact) {
+    return (int)$exact['id'];
+  }
+
+  // Try fuzzy matching using Gemini AI
+  $api_key = get_gemini_api_key();
+  if ($api_key) {
+    $candidates = get_candidate_suggestions_from_gemini($firstName, $lastName, $electorate, $api_key);
+    if ($candidates && count($candidates) > 0) {
+      return $candidates[0]['id']; // Return best match
+    }
+  }
+
+  // No match found - create new person entry
+  $stmt = pdo()->prepare(
+    'INSERT INTO people (first_name, last_name, electorate_name) VALUES (?, ?, ?)'
+  );
+  $stmt->execute([$firstName, $lastName, $electorate ?: null]);
+  return (int)pdo()->lastInsertId();
+}
+
+/**
+ * Get candidate suggestions using Gemini AI for name matching
+ */
+function get_candidate_suggestions_from_gemini(string $firstName, string $lastName, string $electorate, string $api_key): array {
+  // Get existing people from database for comparison
+  $stmt = pdo()->query('SELECT id, first_name, last_name, electorate_name FROM people LIMIT 1000');
+  $existing_people = $stmt->fetchAll();
+  
+  $people_list = [];
+  foreach ($existing_people as $person) {
+    $people_list[] = sprintf(
+      'ID:%d - %s %s (%s)', 
+      $person['id'], 
+      $person['first_name'], 
+      $person['last_name'],
+      $person['electorate_name'] ?: 'Unknown'
+    );
+  }
+  
+  $people_text = implode("\n", array_slice($people_list, 0, 100)); // Limit for API
+  
+  $prompt = sprintf(
+    'Find the best match for candidate "%s %s" from electorate "%s" in this list of existing people. ' .
+    'Return JSON format: {"matches": [{"id": number, "confidence": 0-100, "reason": "explanation"}]} ' .
+    'Only return matches with confidence > 70. If no good match, return empty matches array.\n\n' .
+    'Existing people:\n%s',
+    $firstName,
+    $lastName,
+    $electorate,
+    $people_text
+  );
+
+  try {
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$api_key}";
+    $payload = json_encode([
+      'contents' => [['parts' => [['text' => $prompt]]]]
+    ]);
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode === 200 && $response) {
+      $result = json_decode($response, true);
+      if (isset($result['candidates'][0]['content']['parts'][0]['text'])) {
+        $text = $result['candidates'][0]['content']['parts'][0]['text'];
+        $text = preg_replace('/```\w*\n?/', '', $text); // Clean markdown
+        $text = trim($text);
+        
+        $data = json_decode($text, true);
+        if ($data && isset($data['matches']) && is_array($data['matches'])) {
+          return $data['matches'];
+        }
+      }
+    }
+  } catch (Exception $e) {
+    error_log("Gemini API error: " . $e->getMessage());
+  }
+
+  return [];
+}
+
+/**
+ * Get Gemini API key from file
+ */
+function get_gemini_api_key(): ?string {
+  $api_key_file = __DIR__ . '/gemini_api_key.txt';
+  if (!file_exists($api_key_file)) {
+    // Try the api directory
+    $api_key_file = __DIR__ . '/../api/gemini_api_key.txt';
+  }
+  if (file_exists($api_key_file)) {
+    return trim(file_get_contents($api_key_file));
+  }
+  return null;
+}
+
+/**
+ * Enhanced function to handle donations import with proper foreign key resolution
+ */
+function handle_donations_import_with_candidate_mapping(string $tmpPath, string $table, array $mapping, bool $truncate): array {
+  if ($truncate) {
+    pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $table) . "`");
+  }
+
+  $fh = fopen($tmpPath, 'r');
+  if ($fh === false) {
+    return ['inserted' => 0, 'errors' => ['Failed to open CSV file']];
+  }
+
+  $header = fgetcsv($fh);
+  if (!$header) {
+    fclose($fh);
+    return ['inserted' => 0, 'errors' => ['CSV must have header row']];
+  }
+
+  // Create header index mapping
+  $header_index = [];
+  foreach ($header as $i => $col) {
+    $header_index[trim($col)] = $i;
+  }
+
+  $inserted = 0;
+  $errors = [];
+  $candidate_cache = []; // Cache resolved candidates
+
+  try {
+    pdo()->beginTransaction();
+
+    while (($row = fgetcsv($fh)) !== false) {
+      try {
+        $donation_data = [];
+        $candidate_person_id = null;
+
+        // Process each mapped field
+        foreach ($mapping as $csv_col => $db_col) {
+          if (!$db_col || $db_col === 'ignore') continue;
+
+          $csv_index = $header_index[$csv_col] ?? null;
+          $value = ($csv_index !== null && isset($row[$csv_index])) ? trim($row[$csv_index]) : null;
+
+          // Handle special cases for donations
+          if ($db_col === 'candidate_person_id') {
+            // Extract candidate name from CSV - this might be in separate first/last name columns
+            // or we might need to parse from a full name column
+            $first_name = '';
+            $last_name = '';
+            $electorate = '';
+
+            // Try to get first name, last name, and electorate from various possible columns
+            if (isset($header_index['CandidateName_First'])) {
+              $first_name = trim($row[$header_index['CandidateName_First']] ?? '');
+            }
+            if (isset($header_index['CandidateName_Last'])) {
+              $last_name = trim($row[$header_index['CandidateName_Last']] ?? '');
+            }
+            if (isset($header_index['Electorate'])) {
+              $electorate = trim($row[$header_index['Electorate']] ?? '');
+            }
+
+            // Alternative column names that might exist
+            if (!$first_name && isset($header_index['first_name'])) {
+              $first_name = trim($row[$header_index['first_name']] ?? '');
+            }
+            if (!$last_name && isset($header_index['last_name'])) {
+              $last_name = trim($row[$header_index['last_name']] ?? '');
+            }
+
+            if ($first_name && $last_name) {
+              $cache_key = strtolower($first_name . '|' . $last_name . '|' . $electorate);
+              
+              if (isset($candidate_cache[$cache_key])) {
+                $candidate_person_id = $candidate_cache[$cache_key];
+              } else {
+                $candidate_person_id = resolve_candidate_person_id($first_name, $last_name, $electorate);
+                $candidate_cache[$cache_key] = $candidate_person_id;
+              }
+              
+              $donation_data[$db_col] = $candidate_person_id;
+            }
+          } elseif ($db_col === 'amount') {
+            // Clean monetary amounts - remove $ and commas
+            if ($value) {
+              $clean_amount = preg_replace('/[$,]/', '', $value);
+              $donation_data[$db_col] = is_numeric($clean_amount) ? (float)$clean_amount : 0;
+            } else {
+              $donation_data[$db_col] = 0;
+            }
+          } elseif ($db_col === 'date') {
+            // Handle date parsing - try multiple formats
+            if ($value) {
+              $parsed_date = null;
+              $formats = ['Y-m-d', 'd/m/Y', 'm/d/Y', 'd-m-Y', 'm-d-Y'];
+              
+              foreach ($formats as $format) {
+                $date_obj = DateTime::createFromFormat($format, $value);
+                if ($date_obj !== false) {
+                  $parsed_date = $date_obj->format('Y-m-d');
+                  break;
+                }
+              }
+              
+              $donation_data[$db_col] = $parsed_date;
+            } else {
+              $donation_data[$db_col] = null;
+            }
+          } elseif ($db_col === 'year') {
+            // Extract year from various sources
+            if ($value) {
+              if (is_numeric($value) && strlen($value) === 4) {
+                $donation_data[$db_col] = $value;
+              } else {
+                // Try to extract year from date
+                $year = date('Y', strtotime($value));
+                $donation_data[$db_col] = $year ?: null;
+              }
+            } else {
+              $donation_data[$db_col] = null;
+            }
+          } else {
+            // Handle other fields normally
+            $donation_data[$db_col] = ($value === '') ? null : $value;
+          }
+        }
+
+        // Ensure required fields are present
+        if (!isset($donation_data['candidate_person_id']) || !$donation_data['candidate_person_id']) {
+          $errors[] = "Row " . ($inserted + 1) . ": Missing or invalid candidate information";
+          continue;
+        }
+
+        if (!isset($donation_data['amount'])) {
+          $donation_data['amount'] = 0;
+        }
+
+        if (!isset($donation_data['year']) && isset($donation_data['date'])) {
+          // Extract year from date if not provided
+          $donation_data['year'] = date('Y', strtotime($donation_data['date']));
+        }
+
+        // Build and execute insert query
+        $columns = array_keys($donation_data);
+        $placeholders = implode(',', array_fill(0, count($columns), '?'));
+        $column_list = implode(',', array_map(fn($c) => "`$c`", $columns));
+        
+        $sql = "INSERT INTO `" . str_replace('`', '``', $table) . "` ($column_list) VALUES ($placeholders)";
+        $stmt = pdo()->prepare($sql);
+        $stmt->execute(array_values($donation_data));
+        
+        $inserted++;
+
+      } catch (Exception $e) {
+        $errors[] = "Row " . ($inserted + 1) . ": " . $e->getMessage();
+      }
+    }
+
+    pdo()->commit();
+
+  } catch (Exception $e) {
+    pdo()->rollBack();
+    $errors[] = "Transaction failed: " . $e->getMessage();
+  }
+
+  fclose($fh);
+  
+  return [
+    'inserted' => $inserted,
+    'errors' => $errors
+  ];
+}
+
 /** Admin: POST /admin/upload-commit (execute mapping import) */
 function handle_admin_upload_commit(): void {
   $tmpName = $_POST['tmp_file'] ?? '';
@@ -1147,68 +1437,94 @@ function handle_admin_upload_commit(): void {
     }
   }
 
-  // Re-open CSV
-  $fh = @fopen($abs, 'r');
-  if ($fh === false) {
-    render_admin([
-      'error' => 'Failed to re-open tmp CSV',
-      'tables' => list_tables_with_counts(),
-      'server_csvs' => find_server_csvs(),
-    ]);
-    return;
-  }
-  $header = fgetcsv($fh) ?: [];
-  // Map header index
-  $idx = [];
-  foreach ($header as $i => $name) {
-    $name = sanitize_table_name((string)$name);
-    $idx[$name] = $i;
-  }
-
-  if ($truncate) {
-    pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $table) . "`");
-  }
-
-  $dbCols = array_values(array_unique(array_values($finalMap)));
-  if (empty($dbCols)) {
-    fclose($fh);
-    render_admin([
-      'error' => 'No destination columns after mapping',
-      'tables' => list_tables_with_counts(),
-      'server_csvs' => find_server_csvs(),
-    ]);
-    return;
-  }
-  $placeholders = implode(', ', array_fill(0, count($dbCols), '?'));
-  $colList = implode(', ', array_map(fn($c) => '`' . $c . '`', $dbCols));
-  $sql = "INSERT IGNORE INTO `" . str_replace('`', '``', $table) . "` ($colList) VALUES ($placeholders)";
-  $stmt = pdo()->prepare($sql);
-
-  $inserted = 0;
-  while (($row = fgetcsv($fh)) !== false) {
-    $vals = [];
-    foreach ($dbCols as $dbCol) {
-      // find csv col that maps to this dbCol
-      $csvCol = array_search($dbCol, $finalMap, true);
-      if ($csvCol === false) { $vals[] = null; continue; }
-      $i = $idx[$csvCol] ?? null;
-      $val = ($i !== null && array_key_exists($i, $row)) ? $row[$i] : null;
-      $vals[] = ($val === '') ? null : $val;
-    }
-    try {
-      $stmt->execute($vals);
-      $inserted++;
-    } catch (Throwable $e) {
-      fclose($fh);
+  // Check if this is a donations table that needs special handling
+  $isDonationsTable = (strpos(strtolower($table), 'donation') !== false);
+  
+  if ($isDonationsTable) {
+    // Use the enhanced donations import function
+    $result = handle_donations_import_with_candidate_mapping($abs, $table, $finalMap, $truncate);
+    $inserted = $result['inserted'];
+    $errors = $result['errors'] ?? [];
+    
+    if (!empty($errors)) {
+      $errorMsg = "Import completed with errors:\n" . implode("\n", array_slice($errors, 0, 10));
+      if (count($errors) > 10) {
+        $errorMsg .= "\n... and " . (count($errors) - 10) . " more errors.";
+      }
       render_admin([
-        'error' => 'Insert failed at row ' . ($inserted + 1) . ': ' . $e->getMessage(),
+        'error' => $errorMsg,
+        'upload_result' => true,
+        'inserted' => $inserted,
+        'table_shown' => $table,
         'tables' => list_tables_with_counts(),
         'server_csvs' => find_server_csvs(),
       ]);
       return;
     }
+  } else {
+    // Use standard import for non-donation tables
+    $fh = @fopen($abs, 'r');
+    if ($fh === false) {
+      render_admin([
+        'error' => 'Failed to re-open tmp CSV',
+        'tables' => list_tables_with_counts(),
+        'server_csvs' => find_server_csvs(),
+      ]);
+      return;
+    }
+    $header = fgetcsv($fh) ?: [];
+    // Map header index
+    $idx = [];
+    foreach ($header as $i => $name) {
+      $name = sanitize_table_name((string)$name);
+      $idx[$name] = $i;
+    }
+
+    if ($truncate) {
+      pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $table) . "`");
+    }
+
+    $dbCols = array_values(array_unique(array_values($finalMap)));
+    if (empty($dbCols)) {
+      fclose($fh);
+      render_admin([
+        'error' => 'No destination columns after mapping',
+        'tables' => list_tables_with_counts(),
+        'server_csvs' => find_server_csvs(),
+      ]);
+      return;
+    }
+    $placeholders = implode(', ', array_fill(0, count($dbCols), '?'));
+    $colList = implode(', ', array_map(fn($c) => '`' . $c . '`', $dbCols));
+    $sql = "INSERT IGNORE INTO `" . str_replace('`', '``', $table) . "` ($colList) VALUES ($placeholders)";
+    $stmt = pdo()->prepare($sql);
+
+    $inserted = 0;
+    while (($row = fgetcsv($fh)) !== false) {
+      $vals = [];
+      foreach ($dbCols as $dbCol) {
+        // find csv col that maps to this dbCol
+        $csvCol = array_search($dbCol, $finalMap, true);
+        if ($csvCol === false) { $vals[] = null; continue; }
+        $i = $idx[$csvCol] ?? null;
+        $val = ($i !== null && array_key_exists($i, $row)) ? $row[$i] : null;
+        $vals[] = ($val === '') ? null : $val;
+      }
+      try {
+        $stmt->execute($vals);
+        $inserted++;
+      } catch (Throwable $e) {
+        fclose($fh);
+        render_admin([
+          'error' => 'Insert failed at row ' . ($inserted + 1) . ': ' . $e->getMessage(),
+          'tables' => list_tables_with_counts(),
+          'server_csvs' => find_server_csvs(),
+        ]);
+        return;
+      }
+    }
+    fclose($fh);
   }
-  fclose($fh);
 
   // Cleanup tmp file
   @unlink($abs);
