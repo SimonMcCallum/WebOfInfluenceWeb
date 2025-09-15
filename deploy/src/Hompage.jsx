@@ -5,8 +5,6 @@ import './Hompage.css';
 
 
 const HomePage = () => {
-  //const [firstName, setFirstName] = useState('');
-  //const [lastName, setLastName] = useState('');
   const navigate = useNavigate();
   const { logout } = useAuth();
 

@@ -33,6 +33,7 @@ createRoot(document.getElementById('root')).render(
           <Route path="/settings" element={<SettingsNav />} />
           <Route path="/account-settings" element={<AccSettings />} />
           <Route path="/admin-dashboard" element={<AdminDashboard />} />
+          {/* Admin dashboard route */}
         </Route>
       </Routes>
     </Router>
