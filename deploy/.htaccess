@@ -8,3 +8,9 @@ PassengerStartupFile passenger_wsgi.py
 
 # Keep it minimal; passenger_wsgi.py serves static and routes /api and /admin internally
 Options -MultiViews
+
+# SPA routing: redirect all non-file/non-directory requests to index.html
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.html [L]

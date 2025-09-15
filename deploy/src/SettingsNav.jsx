@@ -36,7 +36,7 @@ export default function SettingsNav() {
           <div className="nav-arrow">→</div>
         </div>
 
-        {/* Admin Dashboarf Card */}
+        {/* Admin Dashboard Card */}
         <div className="settings-card settings-nav-card" onClick={() => navigate('/admin-dashboard')}>
           <div className="card-header">
             <div className="card-icon">🛠️</div>
