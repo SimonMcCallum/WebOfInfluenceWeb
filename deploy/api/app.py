@@ -350,7 +350,7 @@ def admin_upload():
 # --- AI Integration ---
 def get_gemini_api_key():
     try:
-        with open('../gemini_api_key.txt', 'r') as f:
+        with open('gemini_api_key.txt', 'r') as f:
             return f.read().strip()
     except FileNotFoundError:
         return None
