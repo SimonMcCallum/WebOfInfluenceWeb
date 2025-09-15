@@ -7,7 +7,12 @@ export default function SettingsNav() {
   const handleBackToHome = () => navigate('/');
   const handleAccountSettings = () => navigate('/account-settings');
   const handleAdminPage = () => {
-    window.open('/webofinfluence/src/dashboard.html', '_blank');
+    const newWindow = window.open('/webofinfluence/src/dashboard.html', '_blank');
+    if (newWindow) {
+      newWindow.focus();
+    } else {
+      alert('Popup blocked! Please allow popups for this site.');
+    }
   };
 
   return (
