@@ -10,6 +10,7 @@ from flask_cors import CORS
 import pymysql
 from pymysql import MySQLError
 from dotenv import load_dotenv
+import requests
 
 # Load environment from .env if present (optional)
 load_dotenv()
@@ -345,6 +346,53 @@ def admin_upload():
             connection.close()
     except Exception as e:
         return render_template_string(ADMIN_HTML, error=str(e), upload_result=True, inserted=0, table_shown=table)
+
+# --- AI Integration ---
+def get_gemini_api_key():
+    try:
+        with open('../gemini_api_key.txt', 'r') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return None
+
+@app.route('/ai/generate', methods=['POST'])
+def ai_generate():
+    data = request.get_json()
+    if not data or 'prompt' not in data:
+        return jsonify({"error": "Prompt is required"}), 400
+
+    api_key = get_gemini_api_key()
+    if not api_key:
+        return jsonify({"error": "Gemini API key not found"}), 500
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    headers = {'Content-Type': 'application/json'}
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": data['prompt']
+                    }
+                ]
+            }
+        ]
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code == 200:
+            result = response.json()
+            # Extract the generated text
+            if 'candidates' in result and result['candidates']:
+                text = result['candidates'][0]['content']['parts'][0]['text']
+                return jsonify({"response": text})
+            else:
+                return jsonify({"error": "No response generated"}), 500
+        else:
+            return jsonify({"error": f"API error: {response.status_code}"}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # --- Extended endpoints for compatibility and search (migrating from TestDbLoader/database_api.py) ---
 
