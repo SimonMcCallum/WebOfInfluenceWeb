@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>AI Name Finder - Web Of Influence</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="dashboard.css">
+  <link rel="stylesheet" href="ai-name-finder.css">
+  <script src="../app-config.js"></script>
+  <script src="../auth-config.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🤖 AI Name Finder</h1>
+      <p class="subtitle">Upload a file and let AI extract person names for you</p>
+    </div>
+
+    <div class="dashboard-grid">
+      <div class="dashboard-card">
+        <div class="card-header">
+          <div class="card-icon">📄</div>
+          <h2 class="card-title">File Upload</h2>
+        </div>
+
+        <div class="upload-area" id="uploadArea">
+          <div id="uploadContent">
+            <h3>Drop your file here or click to browse</h3>
+            <p>Supported formats: TXT, CSV, DOC, DOCX, PDF (max 1MB)</p>
+            <input type="file" id="fileInput" class="file-input" accept=".txt,.csv,.doc,.docx,.pdf">
+            <button class="upload-button" onclick="document.getElementById('fileInput').click()">
+              Choose File
+            </button>
+          </div>
+        </div>
+
+        <div id="fileInfo" style="display: none;">
+          <p><strong>Selected file:</strong> <span id="fileName"></span></p>
+          <p><strong>Size:</strong> <span id="fileSize"></span></p>
+          <button class="dashboard-button" onclick="processFile()" id="processBtn">
+            <span>🔍 Find Names with AI</span>
+            <span class="button-arrow">→</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="dashboard-card">
+        <div class="card-header">
+          <div class="card-icon">📊</div>
+          <h2 class="card-title">Results</h2>
+        </div>
+
+        <div id="resultsContent">
+          <p>Upload a file and click "Find Names with AI" to get started.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- API Status -->
+    <div class="config-section">
+      <h3 class="config-title">🔧 API Configuration</h3>
+      <p style="margin-bottom: 1rem; color: #6b7280;">Current API_BASE computed in the browser:</p>
+      <div class="config-code" id="cfg">Loading configuration...</div>
+      <div class="api-status" id="api-status">Testing API connection...</div>
+    </div>
+  </div>
+
+  <script>
+    let selectedFile = null;
+
+    // File upload handling
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const fileInfo = document.getElementById('fileInfo');
+    const fileName = document.getElementById('fileName');
+    const fileSize = document.getElementById('fileSize');
+    const resultsContent = document.getElementById('resultsContent');
+
+    // Drag and drop functionality
+    uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadArea.classList.add('dragover');
+    });
+
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('dragover');
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragover');
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        handleFileSelect(files[0]);
+      }
+    });
+
+    uploadArea.addEventListener('click', () => {
+      fileInput.click();
+    });
+
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        handleFileSelect(e.target.files[0]);
+      }
+    });
+
+    function handleFileSelect(file) {
+      selectedFile = file;
+      fileName.textContent = file.name;
+      fileSize.textContent = formatFileSize(file.size);
+      fileInfo.style.display = 'block';
+      uploadArea.style.display = 'none';
+    }
+
+    function formatFileSize(bytes) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    async function processFile() {
+      if (!selectedFile) {
+        showError('No file selected');
+        return;
+      }
+
+      const processBtn = document.getElementById('processBtn');
+      const originalText = processBtn.innerHTML;
+      processBtn.innerHTML = '<span class="loading"></span>Processing...';
+      processBtn.disabled = true;
+
+      try {
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+
+        const base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
+        const response = await fetch(base + '/ai/extract-names', {
+          method: 'POST',
+          body: formData
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          displayResults(result);
+        } else {
+          showError(result.error || 'An error occurred');
+        }
+      } catch (error) {
+        showError('Network error: ' + error.message);
+      } finally {
+        processBtn.innerHTML = originalText;
+        processBtn.disabled = false;
+      }
+    }
+
+    function displayResults(result) {
+      let html = '<div class="results-section">';
+      html += '<div class="success-message">';
+      html += `<strong>✅ Success!</strong> Found ${result.count} names in "${result.file_name}"`;
+      html += '</div>';
+
+      if (result.names && result.names.length > 0) {
+        html += '<h3>Extracted Names:</h3>';
+        html += '<div class="names-list">';
+        result.names.forEach(name => {
+          html += `<div class="name-item">${name}</div>`;
+        });
+        html += '</div>';
+
+        html += '<div style="margin-top: 1rem;">';
+        html += '<button class="dashboard-button" onclick="downloadJSON(' + JSON.stringify(result.names).replace(/"/g, '"') + ')">';
+        html += '<span>📥 Download as JSON</span>';
+        html += '<span class="button-arrow">→</span>';
+        html += '</button>';
+        html += '</div>';
+      } else {
+        html += '<p>No names were found in the file.</p>';
+      }
+
+      html += '</div>';
+      resultsContent.innerHTML = html;
+    }
+
+    function showError(message) {
+      resultsContent.innerHTML = `<div class="error-message">❌ Error: ${message}</div>`;
+    }
+
+    function downloadJSON(names) {
+      const data = {
+        names: names,
+        extracted_at: new Date().toISOString(),
+        source: 'AI Name Finder'
+      };
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'extracted_names.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    // Display configuration
+    var cfgEl = document.getElementById('cfg');
+    cfgEl.textContent = JSON.stringify(window.__APP_CONFIG__ || {}, null, 2);
+
+    // API health test
+    (function () {
+      var statusEl = document.getElementById('api-status');
+      try {
+        var base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
+        fetch(base + '/', { cache: 'no-store' })
+          .then(function (r) { return r.text(); })
+          .then(function (t) {
+            statusEl.className = 'api-status ok';
+            statusEl.textContent = '✅ API Health: ' + t;
+          })
+          .catch(function (e) {
+            statusEl.className = 'api-status warn';
+            statusEl.textContent = '⚠️ API Health fetch failed: ' + e;
+          });
+      } catch (e) {
+        statusEl.className = 'api-status warn';
+        statusEl.textContent = '❌ API Health test error: ' + e;
+      }
+    })();
+  </script>
+</body>
+</html>
