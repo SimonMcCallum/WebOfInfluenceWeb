@@ -18,3 +18,7 @@ __pycache__/
 # Github
 .github/
 .git/
+
+# API Keys
+deploy/api/gemini_api_key.txt
+gemini_api_key.txt

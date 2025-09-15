@@ -64,9 +64,11 @@ def require_token(req) -> Optional[Response]:
 @app.before_request
 def maybe_protect_all():
     # Always allow health and admin HTML GET to render login form, but enforce on POST actions or protected mode
-    open_paths = {"/", "/admin"}
+    open_paths = {"/", "/admin", "/ai/extract-names"}
     if request.path in open_paths and request.method == "GET":
         return None
+    if request.path == "/ai/extract-names" and request.method == "POST":
+        return None  # Allow AI name extraction without token
     if API_PROTECT_ALL:
         # Protect everything (except health)
         if request.path != "/":
