@@ -37,7 +37,7 @@ export default function SettingsNav() {
         </div>
 
         {/* Admin Page Card */}
-        <a href="/webofinfluence/src/dashboard.html" target="_blank" rel="noopener" className="settings-card settings-nav-card">
+        <div className="settings-card settings-nav-card" onClick={() => navigate('/admin-dashboard')}>
           <div className="card-header">
             <div className="card-icon">🛠️</div>
             <h2 className="card-title">Admin Page</h2>
@@ -46,7 +46,7 @@ export default function SettingsNav() {
             Access administrative functions and system management tools.
           </p>
           <div className="nav-arrow">→</div>
-        </a>
+        </div>
       </div>
     </div>
   );
