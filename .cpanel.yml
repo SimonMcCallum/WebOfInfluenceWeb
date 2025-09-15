@@ -21,6 +21,9 @@ deployment:
     # 1) Build the frontend with the correct base path so assets resolve under /webofinfluence/
     - (cd deploy && if command -v npm >/dev/null 2>&1; then (npm ci || npm install) && npm run build; else echo "npm not found, skipping frontend build"; fi)
 
+    # 1a) Copy required HTML files from src/ to dist/src/ (for SPA routing)
+    - (cd deploy && if [ -d dist ]; then mkdir -p dist/src && cp src/*.html dist/src/ 2>/dev/null || true; fi)
+
     # 2) Clean the target directory to ensure only dist/ content is deployed
     - /bin/rm -rf "/home/ludog319/public_html/webofinfluence"/*
     - /bin/rm -rf "/home/ludog319/public_html/webofinfluence"/.[^.]* || true
