@@ -28,6 +28,22 @@
           <h2 class="card-title">File Upload</h2>
         </div>
 
+        <!-- Mode selector -->
+        <div style="margin: .25rem 0 1rem; display:flex; gap:1rem; align-items:center; flex-wrap:wrap;">
+          <div><strong>Mode:</strong></div>
+          <label style="display:flex; align-items:center; gap:.4rem;">
+            <input type="radio" name="mode" id="mode-generic" value="generic" checked>
+            <span>Generic Text/CSV → extract names</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:.4rem;">
+            <input type="radio" name="mode" id="mode-diaries" value="diaries">
+            <span>Ministerial Diaries CSV → enrich + flag attendees</span>
+          </label>
+        </div>
+        <div id="modeHelp" class="subtitle" style="margin-top:-.5rem; margin-bottom:.75rem; color:#6b7280;">
+          In Diaries mode, upload a CSV with headers: Minister, Date or Date Started, Date Finished, Schedule Time, Type, Meeting, Location, With, Portfolio.
+        </div>
+
         <div class="upload-area" id="uploadArea">
           <div id="uploadContent">
             <h3>Drop your file here or click to browse</h3>
@@ -43,7 +59,7 @@
           <p><strong>Selected file:</strong> <span id="fileName"></span></p>
           <p><strong>Size:</strong> <span id="fileSize"></span></p>
           <button class="dashboard-button" onclick="processFile()" id="processBtn">
-            <span>🔍 Find Names with AI</span>
+            <span>🔍 Run</span>
             <span class="button-arrow">→</span>
           </button>
         </div>
@@ -56,7 +72,7 @@
         </div>
 
         <div id="resultsContent">
-          <p>Upload a file and click "Find Names with AI" to get started.</p>
+          <p>Upload a file, choose a mode, and click "Run" to get started.</p>
         </div>
       </div>
     </div>
@@ -80,6 +96,11 @@
     const fileName = document.getElementById('fileName');
     const fileSize = document.getElementById('fileSize');
     const resultsContent = document.getElementById('resultsContent');
+
+    function getSelectedMode() {
+      const r = document.querySelector('input[name="mode"]:checked');
+      return r ? r.value : 'generic';
+    }
 
     // Drag and drop functionality
     uploadArea.addEventListener('dragover', (e) => {
@@ -142,7 +163,10 @@
         formData.append('file', selectedFile);
 
         const base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
-        const response = await fetch(base + '/ai/extract-names', {
+        const mode = getSelectedMode();
+        const endpoint = mode === 'diaries' ? '/ai/extract-names-diaries' : '/ai/extract-names';
+
+        const response = await fetch(base + endpoint, {
           method: 'POST',
           body: formData
         });
@@ -150,7 +174,7 @@
         const result = await response.json();
 
         if (response.ok) {
-          displayResults(result);
+          displayResults(mode, result);
         } else {
           showError(result.error || 'An error occurred');
         }
@@ -162,7 +186,16 @@
       }
     }
 
-    function displayResults(result) {
+    function displayResults(mode, result) {
+      if (mode === 'diaries' || (result && result.rows)) {
+        displayDiariesResults(result);
+      } else {
+        displayNamesResults(result);
+      }
+    }
+
+    // Original names extraction rendering
+    function displayNamesResults(result) {
       let html = '<div class="results-section">';
       html += '<div class="success-message">';
       html += `<strong>✅ Success!</strong> Found ${result.count} names in "${result.file_name}"`;
@@ -176,8 +209,8 @@
         });
         html += '</div>';
 
-        html += '<div style="margin-top: 1rem;">';
-        html += '<button class="dashboard-button" onclick="downloadJSON(' + JSON.stringify(result.names).replace(/"/g, '"') + ')">';
+        html += '<div style="margin-top: 1rem; display:flex; gap:.5rem; flex-wrap:wrap;">';
+        html += `<button class="dashboard-button" onclick='downloadJSON(${JSON.stringify(result.names).replace(/"/g, '"')})'>`;
         html += '<span>📥 Download as JSON</span>';
         html += '<span class="button-arrow">→</span>';
         html += '</button>';
@@ -190,10 +223,73 @@
       resultsContent.innerHTML = html;
     }
 
-    function showError(message) {
-      resultsContent.innerHTML = `<div class="error-message">❌ Error: ${message}</div>`;
+    // Diaries enrichment rendering
+    function displayDiariesResults(result) {
+      const rows = Array.isArray(result.rows) ? result.rows : [];
+      let html = '<div class="results-section">';
+      html += '<div class="success-message">';
+      html += `<strong>✅ Success!</strong> Processed ${rows.length} rows in "${result.file_name || selectedFile?.name || ''}"`;
+      if (result.warning) {
+        html += `<div style="margin-top:.25rem; color:#a16207;">⚠️ ${escapeHtml(result.warning)}</div>`;
+      }
+      html += '</div>';
+
+      if (rows.length > 0) {
+        // Table
+        html += '<div class="table-responsive" style="overflow:auto; max-height:420px; border:1px solid #e5e7eb; border-radius:8px; margin-top:.75rem;">';
+        html += '<table class="data-table" style="width:100%; border-collapse:collapse; font-size:.92rem;">';
+        html += '<thead><tr>';
+        const headers = ['Date','Start','End','Title','Type','Portfolio','Location','Notes','Attendees (text)','Flagged Names'];
+        headers.forEach(h => {
+          html += `<th style="position:sticky; top:0; background:#f9fafb; border-bottom:1px solid #e5e7eb; text-align:left; padding:.5rem .6rem;">${h}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+
+        rows.forEach(r => {
+          const flagged = (r.attendees_names || []).join(', ');
+          const attendees = r.attendees_text || '';
+          html += '<tr>';
+          html += td(r.date);
+          html += td(r.start_time);
+          html += td(r.end_time);
+          html += td(r.title);
+          html += td(r.type);
+          html += td(r.portfolio);
+          html += td(r.location);
+          html += td(r.notes || '');
+          html += td(attendees);
+          html += td(flagged);
+          html += '</tr>';
+        });
+
+        html += '</tbody></table></div>';
+
+        // Actions
+        html += '<div style="margin-top: 1rem; display:flex; gap:.5rem; flex-wrap:wrap;">';
+        html += `<button class="dashboard-button" onclick='downloadDiariesJSON(${JSON.stringify(rows).replace(/"/g, '"')})'><span>📥 Download JSON</span><span class="button-arrow">→</span></button>`;
+        html += `<button class="dashboard-button" onclick='downloadDiariesCSV(${JSON.stringify(rows).replace(/"/g, '"')})'><span>📄 Download CSV</span><span class="button-arrow">→</span></button>`;
+        html += '</div>';
+      } else {
+        html += '<p>No rows were returned. Check your CSV headers and try again.</p>';
+      }
+
+      html += '</div>';
+      resultsContent.innerHTML = html;
     }
 
+    function td(val) {
+      return `<td style="border-top:1px solid #f1f5f9; padding:.45rem .6rem; vertical-align:top;">${escapeHtml(val ?? '')}</td>`;
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&','<':'<','>':'>','"':'"',"'":'&#39;'}[m]));
+    }
+
+    function showError(message) {
+      resultsContent.innerHTML = `<div class="error-message">❌ Error: ${escapeHtml(message)}</div>`;
+    }
+
+    // Downloads
     function downloadJSON(names) {
       const data = {
         names: names,
@@ -210,6 +306,61 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    }
+
+    function downloadDiariesJSON(rows) {
+      const data = {
+        rows,
+        extracted_at: new Date().toISOString(),
+        source: 'AI Name Finder (Ministerial Diaries)'
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'ministerial_diaries_enriched.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function downloadDiariesCSV(rows) {
+      const cols = ['date','start_time','end_time','title','type','portfolio','location','notes','attendees_text','attendees_names'];
+      const header = cols.join(',');
+      const lines = rows.map(r => {
+        const obj = {
+          date: r.date || '',
+          start_time: r.start_time || '',
+          end_time: r.end_time || '',
+          title: r.title || '',
+          type: r.type || '',
+          portfolio: r.portfolio || '',
+          location: r.location || '',
+          notes: r.notes || '',
+          attendees_text: r.attendees_text || '',
+          attendees_names: Array.isArray(r.attendees_names) ? r.attendees_names.join('; ') : ''
+        };
+        return cols.map(k => csvEscape(obj[k])).join(',');
+      });
+      const csv = [header].concat(lines).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'ministerial_diaries_enriched.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function csvEscape(v) {
+      const s = String(v ?? '');
+      if (/[",\n]/.test(s)) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
     }
 
     // Display configuration
@@ -238,4 +389,4 @@
     })();
   </script>
 </body>
-</html>
+</html>]

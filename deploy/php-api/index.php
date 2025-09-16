@@ -2702,6 +2702,256 @@ Text to analyze:
  *   - If an exact match (case-insensitive) exists, returns that id with created=false
  *   - Otherwise inserts a new row and returns the new id with created=true
  */
+/** AI Name Extraction for Ministerial Diaries CSV
+ * POST /ai/extract-names-diaries
+ * Upload a diaries CSV with headers:
+ *   Minister, Date or Date Started, Date Finished, Schedule Time, Type, Meeting, Location, With, Portfolio
+ * Returns JSON with enriched rows and attendees_names flagged by AI.
+ */
+function handle_ai_extract_names_diaries(): void {
+  if (!isset($_FILES['file']) || !is_uploaded_file($_FILES['file']['tmp_name'])) {
+    json_response(['error' => 'No file uploaded'], 400);
+  }
+
+  $content = file_get_contents($_FILES['file']['tmp_name']);
+  if ($content === false) {
+    json_response(['error' => 'Error reading file'], 400);
+  }
+
+  if (strlen($content) > 1024 * 1024) {
+    json_response(['error' => 'File too large (max 1MB)'], 400);
+  }
+
+  // Parse CSV with quoted newlines support using php://memory
+  $mem = fopen('php://memory', 'r+');
+  fwrite($mem, $content);
+  rewind($mem);
+
+  $header = fgetcsv($mem);
+  if (!$header) {
+    fclose($mem);
+    json_response(['error' => 'CSV must include a header row'], 400);
+  }
+
+  // Build header index (exact match to expected headers)
+  $idx = [];
+  foreach ($header as $i => $h) {
+    $idx[trim((string)$h)] = $i;
+  }
+
+  $H_MINISTER = 'Minister';
+  $H_DATE = 'Date or Date Started';
+  $H_DATE_FIN = 'Date Finished';
+  $H_TIME = 'Schedule Time';
+  $H_TYPE = 'Type';
+  $H_TITLE = 'Meeting';
+  $H_LOCATION = 'Location';
+  $H_WITH = 'With';
+  $H_PORTFOLIO = 'Portfolio';
+
+  $get = function(array $row, string $key) use ($idx) {
+    if (!array_key_exists($key, $idx)) return null;
+    $i = $idx[$key];
+    return isset($row[$i]) ? (string)$row[$i] : null;
+  };
+
+  $norm_ws = function($s) {
+    $s = (string)($s ?? '');
+    // Collapse any whitespace (including newlines) to single spaces
+    $s = preg_replace('/\s+/u', ' ', $s);
+    return trim($s);
+  };
+
+  $extract_times = function($s) use ($norm_ws) {
+    $t = $norm_ws($s);
+    if ($t === '') return [null, null];
+    if (preg_match('/(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\s*-\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))/', $t, $m)) {
+      $a = strtoupper(trim(preg_replace('/\s+/', ' ', $m[1])));
+      $b = strtoupper(trim(preg_replace('/\s+/', ' ', $m[2])));
+      return [$a, $b];
+    }
+    return [null, null];
+  };
+
+  $rows_raw = [];
+  while (($row = fgetcsv($mem)) !== false) {
+    $rows_raw[] = $row;
+  }
+  fclose($mem);
+
+  if (empty($rows_raw)) {
+    json_response(['error' => 'CSV contains no data rows'], 400);
+  }
+
+  $enriched = [];
+  $ai_items = []; // [ [id, text], ... ]
+  foreach ($rows_raw as $i => $r) {
+    $date = $norm_ws($get($r, $H_DATE));
+    $title = $norm_ws($get($r, $H_TITLE));
+    $type = $norm_ws($get($r, $H_TYPE));
+    $portfolio = $norm_ws($get($r, $H_PORTFOLIO));
+    $location = $norm_ws($get($r, $H_LOCATION));
+    $with = $norm_ws($get($r, $H_WITH));
+    $minister = $norm_ws($get($r, $H_MINISTER));
+    [$start, $end] = $extract_times($get($r, $H_TIME));
+
+    $enriched[] = [
+      'row_index' => $i,
+      'minister' => $minister !== '' ? $minister : null,
+      'date' => $date !== '' ? $date : null,
+      'start_time' => $start,
+      'end_time' => $end,
+      'title' => $title !== '' ? $title : null,
+      'type' => $type !== '' ? $type : null,
+      'portfolio' => $portfolio !== '' ? $portfolio : null,
+      'location' => $location !== '' ? $location : null,
+      'notes' => '',
+      'attendees_text' => $with !== '' ? $with : ''
+    ];
+
+    $textForAi = trim(implode(' | ', array_filter([$with, $title], fn($x) => $x !== '')));
+    $ai_items[] = [$i, $textForAi];
+  }
+
+  $apiKey = get_gemini_api_key();
+  if (!$apiKey) {
+    // Return without attendees_names if no API key
+    foreach ($enriched as &$row) {
+      $row['attendees_names'] = [];
+    }
+    unset($row);
+    json_response([
+      'file_name' => $_FILES['file']['name'],
+      'count_rows' => count($enriched),
+      'rows' => $enriched,
+      'warning' => 'Gemini API key not found; attendees_names left empty.'
+    ]);
+  }
+
+  // Chunk AI requests to keep prompt sizes reasonable
+  $chunks = [];
+  $current = [];
+  $curLen = 0;
+  foreach ($ai_items as [$rid, $text]) {
+    $tlen = strlen($text);
+    if (!empty($current) && ($curLen + $tlen) > 8000) {
+      $chunks[] = $current;
+      $current = [];
+      $curLen = 0;
+    }
+    $current[] = [$rid, $text];
+    $curLen += $tlen;
+  }
+  if (!empty($current)) $chunks[] = $current;
+
+  $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}";
+
+  $call_chunk = function(array $chunk) use ($endpoint) {
+    $payloadRows = [];
+    foreach ($chunk as [$rid, $text]) {
+      $payloadRows[] = ['id' => $rid, 'text' => $text];
+    }
+
+    $instruction = "You are given a JSON object with an array named 'rows'. Each item has 'id' and 'text' fields "
+      . "(from ministerial diary attendees or meeting descriptions). "
+      . "For EACH item, extract ONLY human person names (no organizations, roles, titles-only, acronyms, departments, or locations). "
+      . "Return STRICTLY VALID JSON in this exact form with no extra text or markdown:\n"
+      . "{\"results\":[{\"id\": <id>, \"names\": [\"First Last\", ...]}, ...]}\n"
+      . "Rules:\n"
+      . "- Only include people names. Exclude ministries, committees, departments, companies, acronyms (e.g., 'MPI', 'FSANZ'), and role words (e.g., 'Officials', 'Ministers', 'Attendees').\n"
+      . "- Keep names as plain strings; do not include roles or parentheses. If uncertain, omit.\n"
+      . "- If no person names for an item, use an empty array for that item.\n"
+      . "- Preserve original spelling as best as possible.\n"
+      . "- Do NOT include any explanation or markdown. JSON only.\n"
+      . "rows:\n"
+      . json_encode(['rows' => $payloadRows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+    $body = json_encode([
+      'contents' => [
+        [
+          'parts' => [
+            ['text' => $instruction]
+          ]
+        ]
+      ]
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+    $ch = curl_init($endpoint);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $default = [];
+    foreach ($chunk as [$rid, $_]) $default[$rid] = [];
+
+    if ($code !== 200 || !$resp) return $default;
+
+    $result = json_decode($resp, true);
+    if (!is_array($result) || empty($result['candidates'][0]['content']['parts'][0]['text'])) {
+      return $default;
+    }
+
+    $text = $result['candidates'][0]['content']['parts'][0]['text'];
+    // Clean markdown code blocks
+    $text = preg_replace('/```\w*\n?/', '', $text);
+    $text = trim((string)$text);
+
+    $data = json_decode($text, true);
+    if (!is_array($data) || !isset($data['results']) || !is_array($data['results'])) {
+      return $default;
+    }
+
+    $out = [];
+    foreach ($data['results'] as $item) {
+      if (!is_array($item)) continue;
+      $rid = $item['id'] ?? null;
+      $names = $item['names'] ?? [];
+      if ($rid === null || !is_array($names)) continue;
+      $norm = [];
+      foreach ($names as $n) {
+        if (is_string($n) || is_numeric($n)) {
+          $norm[] = (string)$n;
+        }
+      }
+      $out[$rid] = $norm;
+    }
+
+    foreach ($chunk as [$rid, $_]) {
+      if (!array_key_exists($rid, $out)) $out[$rid] = [];
+    }
+    return $out;
+  };
+
+  $idToNames = [];
+  foreach ($chunks as $ch) {
+    try {
+      $res = $call_chunk($ch);
+      foreach ($res as $rid => $names) {
+        $idToNames[$rid] = $names;
+      }
+    } catch (Throwable $e) {
+      foreach ($ch as [$rid, $_]) $idToNames[$rid] = [];
+    }
+  }
+
+  foreach ($enriched as &$row) {
+    $rid = $row['row_index'];
+    $row['attendees_names'] = $idToNames[$rid] ?? [];
+  }
+  unset($row);
+
+  json_response([
+    'file_name' => $_FILES['file']['name'],
+    'count_rows' => count($enriched),
+    'rows' => $enriched
+  ]);
+}
+
 function handle_add_person(): void {
   // Support JSON or form POST
   $input = null;
@@ -2763,6 +3013,7 @@ try {
 
   // AI
   if ($METHOD === 'POST' && $ROUTE === '/ai/extract-names') handle_ai_extract_names();
+  if ($METHOD === 'POST' && $ROUTE === '/ai/extract-names-diaries') handle_ai_extract_names_diaries();
 
   // People management
   if ($METHOD === 'POST' && $ROUTE === '/people') handle_add_person();

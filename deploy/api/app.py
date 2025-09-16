@@ -11,6 +11,7 @@ import pymysql
 from pymysql import MySQLError
 from dotenv import load_dotenv
 import requests
+import json
 
 # Load environment from .env if present (optional)
 load_dotenv()
@@ -64,10 +65,10 @@ def require_token(req) -> Optional[Response]:
 @app.before_request
 def maybe_protect_all():
     # Always allow health and admin HTML GET to render login form, but enforce on POST actions or protected mode
-    open_paths = {"/", "/admin", "/ai/extract-names"}
+    open_paths = {"/", "/admin", "/ai/extract-names", "/ai/extract-names-diaries"}
     if request.path in open_paths and request.method == "GET":
         return None
-    if request.path == "/ai/extract-names" and request.method == "POST":
+    if request.path in ["/ai/extract-names", "/ai/extract-names-diaries"] and request.method == "POST":
         return None  # Allow AI name extraction without token
     if API_PROTECT_ALL:
         # Protect everything (except health)
@@ -625,6 +626,246 @@ Text to analyze:
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/ai/extract-names-diaries', methods=['POST'])
+def ai_extract_names_diaries():
+    """
+    Upload a diaries CSV and return enriched rows with parsed fields and AI-flagged attendee names.
+    Expected CSV headers (case-sensitive):
+      - Minister
+      - Date or Date Started
+      - Date Finished           (optional)
+      - Schedule Time           (e.g., "6:00 PM - 7:30 PM" with possible line breaks)
+      - Type
+      - Meeting                 (title/description)
+      - Location
+      - With                    (free-text attendees/participants)
+      - Portfolio
+    Returns JSON:
+    {
+      "file_name": "...",
+      "count_rows": N,
+      "rows": [
+        {
+          "row_index": i,
+          "minister": "...",
+          "date": "m/d/yyyy",
+          "start_time": "h:mm AM/PM" | null,
+          "end_time": "h:mm AM/PM" | null,
+          "title": "...",
+          "type": "...",
+          "portfolio": "...",
+          "location": "...",
+          "notes": "",
+          "attendees_text": "...",
+          "attendees_names": ["..."]
+        },
+        ...
+      ]
+    }
+    """
+    # Validate file
+    file = request.files.get('file')
+    if not file:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    try:
+        content_bytes = file.read()
+        # Attempt to decode as UTF-8 with replacement for bad chars
+        content = content_bytes.decode('utf-8', errors='replace')
+    except Exception as e:
+        return jsonify({"error": f"Error reading file: {str(e)}"}), 400
+
+    # Limit file size (1MB similar to /ai/extract-names)
+    if len(content) > 1024 * 1024:
+        return jsonify({"error": "File too large (max 1MB)"}), 400
+
+    # Parse CSV with Python's csv module (handles quoted line breaks)
+    try:
+        reader = csv.DictReader(io.StringIO(content))
+        rows_raw = list(reader)
+        if not rows_raw:
+            return jsonify({"error": "CSV contains no data rows"}), 400
+    except Exception as e:
+        return jsonify({"error": f"CSV parse error: {str(e)}"}), 400
+
+    # Header keys we expect
+    MINISTER = 'Minister'
+    DATE_STARTED = 'Date or Date Started'
+    DATE_FINISHED = 'Date Finished'
+    SCHEDULE_TIME = 'Schedule Time'
+    TYPE = 'Type'
+    MEETING = 'Meeting'
+    LOCATION = 'Location'
+    WITH = 'With'
+    PORTFOLIO = 'Portfolio'
+
+    # Helpers
+    def norm_ws(s: Optional[str]) -> str:
+        return ' '.join((s or '').split()).strip()
+
+    def extract_times(s: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+        text = norm_ws(s)
+        if not text:
+            return None, None
+        m = re.search(r'(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))\s*-\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))', text, flags=re.IGNORECASE)
+        if m:
+            start = m.group(1).upper().replace('  ', ' ').strip()
+            end = m.group(2).upper().replace('  ', ' ').strip()
+            return start, end
+        return None, None
+
+    # Build minimal text per row for AI extraction (attendees + meeting title)
+    ai_items = []  # [(id, text)]
+    enriched_rows = []  # pre-populated rows without attendees_names
+    for idx, r in enumerate(rows_raw):
+        date = norm_ws(r.get(DATE_STARTED))
+        start_time, end_time = extract_times(r.get(SCHEDULE_TIME))
+        title = norm_ws(r.get(MEETING))
+        row_type = norm_ws(r.get(TYPE))
+        portfolio = norm_ws(r.get(PORTFOLIO))
+        location = norm_ws(r.get(LOCATION))
+        attendees_text = norm_ws(r.get(WITH))
+        minister = norm_ws(r.get(MINISTER))
+
+        enriched_rows.append({
+            "row_index": idx,
+            "minister": minister or None,
+            "date": date or None,
+            "start_time": start_time,
+            "end_time": end_time,
+            "title": title or None,
+            "type": row_type or None,
+            "portfolio": portfolio or None,
+            "location": location or None,
+            "notes": "",  # not present in source CSV
+            "attendees_text": attendees_text or ""
+        })
+
+        # Text for AI: prioritize attendees list, then title context
+        text_for_ai = " | ".join([t for t in [attendees_text, title] if t])
+        ai_items.append((idx, text_for_ai))
+
+    # If no AI key, we can still return baseline enriched rows without attendees_names
+    api_key = get_gemini_api_key()
+    if not api_key:
+        for row in enriched_rows:
+            row["attendees_names"] = []
+        return jsonify({
+            "file_name": file.filename,
+            "count_rows": len(enriched_rows),
+            "rows": enriched_rows,
+            "warning": "Gemini API key not found; attendees_names left empty."
+        })
+
+    # Chunk AI requests to stay within token/size limits
+    def chunk_items(items, char_limit=8000):
+        chunks = []
+        current = []
+        current_len = 0
+        for (rid, text) in items:
+            tlen = len(text)
+            # Ensure at least one item per chunk
+            if current and current_len + tlen > char_limit:
+                chunks.append(current)
+                current = []
+                current_len = 0
+            current.append((rid, text))
+            current_len += tlen
+        if current:
+            chunks.append(current)
+        return chunks
+
+    chunks = chunk_items(ai_items, char_limit=8000)
+
+    def call_gemini_for_chunk(chunk):
+        """
+        chunk: list of (id, text)
+        Returns: dict id -> [names]
+        """
+        payload_rows = [{"id": rid, "text": text} for (rid, text) in chunk]
+        instruction = (
+            "You are given a JSON object with an array named 'rows'. Each item has 'id' and 'text' fields "
+            "(from ministerial diary attendees or meeting descriptions). "
+            "For EACH item, extract ONLY human person names (no organizations, roles, titles-only, acronyms, departments, or locations). "
+            "Return STRICTLY VALID JSON in this exact form with no extra text or markdown:\n"
+            '{"results":[{"id": <id>, "names": ["First Last", ...]}, ...]}\n'
+            "Rules:\n"
+            "- Only include people names. Exclude ministries, committees, departments, companies, acronyms (e.g., 'MPI', 'FSANZ'), and role words (e.g., 'Officials', 'Ministers', 'Attendees').\n"
+            "- Keep names as plain strings; do not include roles or parentheses. If uncertain, omit.\n"
+            "- If no person names for an item, use an empty array for that item.\n"
+            "- Preserve original spelling as best as possible.\n"
+            "- Do NOT include any explanation or markdown. JSON only.\n"
+            "rows:\n"
+            f"{json.dumps({'rows': payload_rows}, ensure_ascii=False)}"
+        )
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+        headers = {'Content-Type': 'application/json'}
+        body = {
+            "contents": [
+                {
+                    "parts": [
+                        {
+                            "text": instruction
+                        }
+                    ]
+                }
+            ]
+        }
+        resp = requests.post(url, headers=headers, json=body)
+        if resp.status_code != 200:
+            # Fallback: give empty names for all in chunk
+            return {rid: [] for (rid, _) in chunk}
+
+        result = resp.json()
+        if 'candidates' not in result or not result['candidates']:
+            return {rid: [] for (rid, _) in chunk}
+
+        generated_text = result['candidates'][0]['content']['parts'][0]['text']
+        cleaned_text = re.sub(r'```\w*\n?', '', generated_text).strip()
+
+        try:
+            data = json.loads(cleaned_text)
+            out = {}
+            if isinstance(data, dict) and isinstance(data.get("results"), list):
+                for item in data["results"]:
+                    rid = item.get("id")
+                    names = item.get("names") if isinstance(item, dict) else []
+                    if isinstance(names, list):
+                        # Normalize names to strings
+                        out[rid] = [str(n) for n in names if isinstance(n, (str, int, float))]
+            else:
+                out = {}
+        except Exception:
+            out = {}
+
+        # Ensure all ids in chunk present
+        for (rid, _) in chunk:
+            if rid not in out:
+                out[rid] = []
+        return out
+
+    # Aggregate AI results
+    id_to_names = {}
+    for chunk in chunks:
+        try:
+            chunk_result = call_gemini_for_chunk(chunk)
+            id_to_names.update(chunk_result)
+        except Exception:
+            # On any unexpected error, default empty names for that chunk
+            for (rid, _) in chunk:
+                id_to_names[rid] = []
+
+    # Merge into enriched rows
+    for row in enriched_rows:
+        row["attendees_names"] = id_to_names.get(row["row_index"], [])
+
+    return jsonify({
+        "file_name": file.filename,
+        "count_rows": len(enriched_rows),
+        "rows": enriched_rows
+    })
 
 # --- Extended endpoints for compatibility and search (migrating from TestDbLoader/database_api.py) ---
 
