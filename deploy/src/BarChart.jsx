@@ -64,7 +64,7 @@ const BarChart = ({ results, isLoading }) => {
         if (personCache.has(people_id)) {
           [first, last] = personCache.get(people_id);
         } else {
-          const res = await fetch(`${API_BASE}/candidates/search-id?people_id=${encodeURIComponent(people_id)}`);
+          const res = await fetch(`${API_BASE}?route=/candidates/search-id&people_id=${encodeURIComponent(people_id)}`);
           if (res.ok) {
             const data = await res.json();
             const obj = Array.isArray(data) && data.length ? data[0] : (data || {});
@@ -80,7 +80,7 @@ const BarChart = ({ results, isLoading }) => {
         if (partyCache.has(party_id)) {
           partyName = partyCache.get(party_id);
         } else {
-          const res2 = await fetch(`${API_BASE}/party/search-id?party_id=${encodeURIComponent(party_id)}`);
+          const res2 = await fetch(`${API_BASE}?route=/party/search-id&party_id=${encodeURIComponent(party_id)}`);
           if (res2.ok) {
             const data2 = await res2.json();
             const obj2 = Array.isArray(data2) && data2.length ? data2[0] : (data2 || {});

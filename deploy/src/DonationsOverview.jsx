@@ -195,7 +195,7 @@ function DonationsOverview() {
                         const [f, l] = personCache.get(key);
                         firstName = f; lastName = l;
                     } else {
-                        const res = await fetch(`${API_BASE}/candidates/search-id?people_id=${encodeURIComponent(result.people_id)}`);
+                        const res = await fetch(`${API_BASE}?route=/candidates/search-id&people_id=${encodeURIComponent(result.people_id)}`);
                         if (res.ok) {
                             const data = await res.json();
                             const d = Array.isArray(data) && data.length ? data[0] : (data || {});
@@ -214,7 +214,7 @@ function DonationsOverview() {
                     if (partyCache.has(key)) {
                         party = partyCache.get(key);
                     } else {
-                        const res = await fetch(`${API_BASE}/party/search-id?party_id=${encodeURIComponent(result.party_id)}`);
+                        const res = await fetch(`${API_BASE}?route=/party/search-id&party_id=${encodeURIComponent(result.party_id)}`);
                         if (res.ok) {
                             const data = await res.json();
                             const d = Array.isArray(data) && data.length ? data[0] : (data || {});
@@ -232,7 +232,7 @@ function DonationsOverview() {
                     if (electorateCache.has(key)) {
                         electorate = electorateCache.get(key);
                     } else {
-                        const res = await fetch(`${API_BASE}/electorate/search-id?electorate_id=${encodeURIComponent(result.electorate_id)}`);
+                        const res = await fetch(`${API_BASE}?route=/electorate/search-id&electorate_id=${encodeURIComponent(result.electorate_id)}`);
                         if (res.ok) {
                             const data = await res.json();
                             const d = Array.isArray(data) && data.length ? data[0] : (data || {});
