@@ -573,6 +573,29 @@ function render_admin(array $ctx = []): void {
                       <?php foreach (($ctx['db_columns'] ?? []) as $dbc): ?>
                         <option value="<?= htmlspecialchars($dbc, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"><?= htmlspecialchars($dbc, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></option>
                       <?php endforeach; ?>
+                      <?php
+                        // Expose helper tokens for donations importer, even if not real DB columns
+                        $isDonationsTarget = isset($ctx['map_table']) && stripos((string)$ctx['map_table'], 'donation') !== false;
+                        if ($isDonationsTarget):
+                          $helperTokens = [
+                            'address_line1',
+                            'address_line2',
+                            'address_city',
+                            'address_state',
+                            'address_postalcode',
+                            'address_country',
+                            'address_countrycode',
+                            'donor_first_name',
+                            'donor_last_name',
+                            'donor_org_name',
+                          ];
+                      ?>
+                        <optgroup label="Helper tokens (donations importer)">
+                          <?php foreach ($helperTokens as $tok): ?>
+                            <option value="<?= htmlspecialchars($tok, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"><?= htmlspecialchars($tok, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></option>
+                          <?php endforeach; ?>
+                        </optgroup>
+                      <?php endif; ?>
                       <option value="__CREATE__:<?= htmlspecialchars($c, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">Create column '<?= htmlspecialchars($c, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>' (TEXT)</option>
                     </select>
                   </td>
