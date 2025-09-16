@@ -2190,11 +2190,13 @@ function handle_admin_upload_commit(): void {
       return;
     }
     $header = fgetcsv($fh) ?: [];
-    // Map header index
+    // Map header index (sanitized and normalized lowercase)
     $idx = [];
+    $idxNorm = [];
     foreach ($header as $i => $name) {
-      $name = sanitize_table_name((string)$name);
-      $idx[$name] = $i;
+      $san = sanitize_table_name((string)$name);
+      $idx[$san] = $i;
+      $idxNorm[normalize_csv_header((string)$name)] = $i;
     }
 
     if ($truncate) {
@@ -2211,21 +2213,106 @@ function handle_admin_upload_commit(): void {
       ]);
       return;
     }
+    // Special-case: importing into meetings requires minister_person_id (FK NOT NULL).
+    // If user didn't map minister_person_id, compute it from CSV (ai_first_name/import_first_name or Minister)
+    $isMeetings = (strtolower($table) === 'meetings');
+    if ($isMeetings && !in_array('minister_person_id', $dbCols, true)) {
+      $dbCols[] = 'minister_person_id';
+    }
+
+    // Prepare final SQL
     $placeholders = implode(', ', array_fill(0, count($dbCols), '?'));
     $colList = implode(', ', array_map(fn($c) => '`' . $c . '`', $dbCols));
     $sql = "INSERT IGNORE INTO `" . str_replace('`', '``', $table) . "` ($colList) VALUES ($placeholders)";
     $stmt = pdo()->prepare($sql);
 
+    // Helpers for meetings import
+    $normDate = function($v) {
+      $v = trim((string)$v);
+      if ($v === '') return null;
+      $ts = strtotime($v);
+      return $ts ? date('Y-m-d', $ts) : null;
+    };
+    $splitName = function($full) {
+      $full = trim(preg_replace('/\s+/', ' ', (string)$full));
+      if ($full === '') return [null, null];
+      $parts = explode(' ', $full);
+      if (count($parts) === 1) return [$parts[0], ''];
+      return [array_shift($parts), implode(' ', $parts)];
+    };
+
     $inserted = 0;
     while (($row = fgetcsv($fh)) !== false) {
+      // Build value list aligned to $dbCols
+      $vals = [];
+      // Pre-read commonly used CSV values for meetings helpers
+      $csv_ai_first = null;
+      $csv_ai_last  = null;
+      $csv_minister = null;
+      $csv_date     = null;
+
+      if ($isMeetings) {
+        // Case-insensitive and normalized header lookup
+        $getHdr = function($keys) use ($idx, $idxNorm, $row) {
+          foreach ((array)$keys as $k) {
+            if (array_key_exists($k, $idx)) {
+              $i = $idx[$k];
+              return ($i !== null && array_key_exists($i, $row)) ? trim((string)$row[$i]) : null;
+            }
+            $kn = normalize_csv_header((string)$k);
+            if (array_key_exists($kn, $idxNorm)) {
+              $i = $idxNorm[$kn];
+              return ($i !== null && array_key_exists($i, $row)) ? trim((string)$row[$i]) : null;
+            }
+          }
+          return null;
+        };
+        $csv_ai_first = $getHdr(['ai_first_name','import_first_name']);
+        $csv_ai_last  = $getHdr(['ai_last_name','import_last_name']);
+        $csv_minister = $getHdr('Minister') ?? $getHdr('minister');
+
+        // Helper to strip titles like "Rt Hon", "Hon", "Dr", "Sir", "Dame", "MP" from names
+        $cleanName = function($name) {
+          $name = preg_replace('/\b(Rt\.?\s*Hon\.?|Hon\.?|Dr|Sir|Dame|MP)\b/i', '', (string)$name);
+          $name = preg_replace('/[(),]/', ' ', $name);
+          return trim(preg_replace('/\s+/', ' ', $name));
+        };
+      }
       $vals = [];
       foreach ($dbCols as $dbCol) {
-        // find csv col that maps to this dbCol
+        // Find csv col that maps to this dbCol (sanitized header name)
         $csvCol = array_search($dbCol, $finalMap, true);
-        if ($csvCol === false) { $vals[] = null; continue; }
-        $i = $idx[$csvCol] ?? null;
-        $val = ($i !== null && array_key_exists($i, $row)) ? $row[$i] : null;
-        $vals[] = ($val === '') ? null : $val;
+        $i = ($csvCol !== false) ? ($idx[$csvCol] ?? null) : null;
+        $rawVal = ($i !== null && array_key_exists($i, $row)) ? $row[$i] : null;
+
+        // Special handling for meetings table
+        if ($isMeetings) {
+          if ($dbCol === 'date') {
+            // Normalize date like 5/29/2024 to YYYY-MM-DD
+            $vals[] = $normDate($rawVal);
+            continue;
+          }
+          if ($dbCol === 'minister_person_id') {
+            // Derive minister id from AI name columns or from the "Minister" field (case-insensitive header)
+            $first = $csv_ai_first;
+            $last  = $csv_ai_last;
+            if ((!$first || !$last) && $csv_minister) {
+              $mn = isset($cleanName) ? $cleanName($csv_minister) : $csv_minister;
+              [$first, $last] = $splitName($mn);
+            }
+            if ($first && $last) {
+              // Resolve or create person id
+              $vals[] = resolve_candidate_person_id($first, $last, '');
+            } else {
+              // No minister available; keep NULL so INSERT IGNORE skips, avoiding FK violation
+              $vals[] = null;
+            }
+            continue;
+          }
+        }
+
+        // Default behavior for other columns
+        $vals[] = ($rawVal === '' ? null : $rawVal);
       }
       try {
         $stmt->execute($vals);
