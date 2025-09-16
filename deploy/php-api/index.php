@@ -2231,6 +2231,22 @@ function handle_admin_upload_commit(): void {
       if (!in_array('with_text', $dbCols, true)) {
         $dbCols[] = 'with_text';
       }
+
+      // Defensive: ensure required columns actually exist on the meetings table
+      try {
+        $qt = "`" . str_replace('`', '``', $table) . "`";
+        pdo()->exec("ALTER TABLE {$qt} ADD COLUMN `with_text` TEXT NULL");
+      } catch (Throwable $e) {
+        // ignore if exists or permission denied
+      }
+      try {
+        $qt = "`" . str_replace('`', '``', $table) . "`";
+        pdo()->exec("ALTER TABLE {$qt} ADD COLUMN `start_time` TIME NULL");
+      } catch (Throwable $e) {}
+      try {
+        $qt = "`" . str_replace('`', '``', $table) . "`";
+        pdo()->exec("ALTER TABLE {$qt} ADD COLUMN `end_time` TIME NULL");
+      } catch (Throwable $e) {}
     }
 
     // Prepare final SQL
@@ -2285,8 +2301,9 @@ function handle_admin_upload_commit(): void {
         $csv_ai_first = $getHdr(['ai_first_name','import_first_name']);
         $csv_ai_last  = $getHdr(['ai_last_name','import_last_name']);
         $csv_minister = $getHdr('Minister') ?? $getHdr('minister');
-        // Attendees text (CSV header "With")
-        $csv_with = $getHdr(['With','with']);
+        // Attendees text (CSV header variants)
+        // Some diaries use "With", others "Attendees" or similar
+        $csv_with = $getHdr(['With','with','Attendees','attendees','Attendee','attendee','Who','who']);
 
         // Helper to strip titles like "Rt Hon", "Hon", "Dr", "Sir", "Dame", "MP" from names
         $cleanName = function($name) {
