@@ -153,15 +153,6 @@ const Output = ({ results, onExportCSV }) => {
     return (
         <div>
             {/* Use your shared button styles */}
-            <div className="actions">
-                <button
-                    type="button"
-                    className="export-button"
-                    onClick={() => onExportCSV(processedResults)}
-                > ⬇︎ Export to CSV
-                </button>
-            </div>
-            
             <div className="pagination-row" style={{ marginTop: '40px', marginBottom: '20px' }}>
                 <ResponsivePagination
                     current={currentPage}
