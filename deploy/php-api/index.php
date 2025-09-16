@@ -896,30 +896,39 @@ function handle_candidates_combined_search(string $year): void {
   $party = $_GET['party_name'] ?? null;
   $elect = $_GET['electorate_name'] ?? null;
 
-  $sql = "SELECT co.id, co.total_donations, co.total_expenses, co.people_id, co.party_id, co.electorate_id,
-                 co.part_a, co.part_b, co.part_c, co.part_d, co.part_f, co.part_g, co.part_h, co.year, co.year AS election_year, co.original_id
+  // Return joined names alongside IDs so the frontend doesn't need N+1 lookups
+  $sql = "SELECT 
+            co.id,
+            co.total_donations,
+            co.total_expenses,
+            co.people_id,
+            co.party_id,
+            co.electorate_id,
+            co.part_a,
+            co.part_b,
+            co.part_c,
+            co.part_d,
+            co.part_f,
+            co.part_g,
+            co.part_h,
+            co.year,
+            co.year AS election_year,
+            co.original_id,
+            p.first_name,
+            p.last_name,
+            pr.name AS party_name,
+            el.name AS electorate_name
           FROM candidate_overview co
+          LEFT JOIN people p      ON p.id = co.people_id
+          LEFT JOIN parties pr    ON pr.id = co.party_id
+          LEFT JOIN electorates el ON el.id = co.electorate_id
           WHERE co.year = ?";
   $params = [$year];
 
-  if ($first || $last) {
-    $subConds = [];
-    $subParams = [];
-    if ($first) { $subConds[] = 'UPPER(first_name) = UPPER(?)'; $subParams[] = $first; }
-    if ($last)  { $subConds[] = 'UPPER(last_name)  = UPPER(?)'; $subParams[] = $last; }
-    $sql .= ' AND co.people_id IN (SELECT id FROM people WHERE ' . implode(' AND ', $subConds) . ')';
-    $params = array_merge($params, $subParams);
-  }
-
-  if ($party) {
-    $sql .= ' AND co.party_id IN (SELECT id FROM parties WHERE name = ?)';
-    $params[] = $party;
-  }
-
-  if ($elect) {
-    $sql .= ' AND co.electorate_id IN (SELECT id FROM electorates WHERE name = ?)';
-    $params[] = $elect;
-  }
+  if ($first) { $sql .= ' AND UPPER(p.first_name) = UPPER(?)'; $params[] = $first; }
+  if ($last)  { $sql .= ' AND UPPER(p.last_name)  = UPPER(?)'; $params[] = $last; }
+  if ($party) { $sql .= ' AND UPPER(pr.name)      = UPPER(?)'; $params[] = $party; }
+  if ($elect) { $sql .= ' AND UPPER(el.name)      = UPPER(?)'; $params[] = $elect; }
 
   $stmt = pdo()->prepare($sql);
   $stmt->execute($params);

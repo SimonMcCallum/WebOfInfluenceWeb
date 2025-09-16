@@ -21,25 +21,67 @@ const partyColors = {
   "NEW ZEALAND FIRST PARTY": "rgb(0, 0, 0)", // #000000
   "Unknown": "rgb(190, 190, 190)" // #BEBEBE
 };
+// Simple in-memory caches to avoid repeated lookups and reduce network errors
+const personCache = new Map();
+const partyCache = new Map();
+
 const BarChart = ({ results, isLoading }) => {  
   const [chartData, setChartData] = useState(null);
 
-  const fetchCandidateInfo = async (people_id, party_id, year) => {
+  const fetchCandidateInfo = async (result) => {
     try {
-      const response = await fetch(`${API_BASE}/candidates/search-id?people_id=${people_id}`);
-      const data = await response.json();
-      const response2 = await fetch(`${API_BASE}/party/search-id?party_id=${party_id}`);
-      const data2 = await response2.json();
-      const party_n = data2[0]?.party_name || 'Unknown';
+      const { people_id, party_id } = result || {};
+      const year = result?.election_year ?? result?.year ?? 'Unknown';
+
+      // Prefer inline fields returned by combined API to avoid extra lookups
+      let first = (result?.first_name || '').trim() || 'Unknown';
+      let last = (result?.last_name || '').trim() || 'Unknown';
+      let partyName = (result?.party_name || '').trim() || 'Unknown';
+
+      // If inline names weren't provided, do people lookup with cache
+      if ((first === 'Unknown' && last === 'Unknown') && people_id) {
+        if (personCache.has(people_id)) {
+          [first, last] = personCache.get(people_id);
+        } else {
+          const res = await fetch(`${API_BASE}/candidates/search-id?people_id=${encodeURIComponent(people_id)}`);
+          if (res.ok) {
+            const data = await res.json();
+            const obj = Array.isArray(data) && data.length ? data[0] : (data || {});
+            first = obj?.first_name || 'Unknown';
+            last = obj?.last_name || 'Unknown';
+            personCache.set(people_id, [first, last]);
+          }
+        }
+      }
+
+      // If inline party wasn't provided, lookup with cache
+      if (partyName === 'Unknown' && party_id) {
+        if (partyCache.has(party_id)) {
+          partyName = partyCache.get(party_id);
+        } else {
+          const res2 = await fetch(`${API_BASE}/party/search-id?party_id=${encodeURIComponent(party_id)}`);
+          if (res2.ok) {
+            const data2 = await res2.json();
+            const obj2 = Array.isArray(data2) && data2.length ? data2[0] : (data2 || {});
+            partyName = obj2?.party_name || obj2?.name || 'Unknown';
+            partyCache.set(party_id, partyName);
+          }
+        }
+      }
+
+      const displayParty = Object.prototype.hasOwnProperty.call(partyColors, (partyName || '').toUpperCase())
+        ? partyName
+        : 'Other';
+
       return {
-        name: [data[0]?.first_name, data[0]?.last_name].filter(Boolean).join(' ') || 'Unknown',
-        party: Object.keys(partyColors).includes(party_n)? party_n : 'Other',
-        real_party:party_n,
+        name: [first, last].filter(Boolean).join(' ') || 'Unknown',
+        party: displayParty,
+        real_party: partyName || 'Unknown',
         year: year
       };
     } catch (error) {
       console.error('Error fetching candidate info:', error);
-      return { name: 'Unknown fetch', party: 'Unknown fetch', year: 'Unknown fetch' };
+      return { name: 'Unknown', party: 'Unknown', real_party: 'Unknown', year: result?.election_year ?? result?.year ?? 'Unknown' };
     }
   };
 
@@ -67,9 +109,7 @@ const BarChart = ({ results, isLoading }) => {
 
         // Fetch candidate info for each result
         const candidateInfo = await Promise.all(
-          sortedResults.map(result =>
-            fetchCandidateInfo(result.people_id, result.party_id, result.election_year)
-          )
+          sortedResults.map(result => fetchCandidateInfo(result))
         );
 
         // Prepare chart data

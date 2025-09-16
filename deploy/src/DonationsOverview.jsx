@@ -129,18 +129,29 @@ function DonationsOverview() {
 
         const finalFilename = filename.endsWith('.csv') ? filename : `${filename}.csv`;
 
+        const get = (obj, ...keys) => {
+            for (const k of keys) {
+                const v = obj?.[k];
+                if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+            }
+            return '';
+        };
+
         const headers = ['Name', 'Party', 'Electorate', 'Election Year', 'Total Expenses', 'Total Donations'];
 
         const csvRows = [
             headers.join(','),
-            ...processedResults.map(row => [
-                `${row.firstName} ${row.lastName}`,
-                row.party,
-                row.electorate,
-                row.election_year,
-                row.total_expenses,
-                row.total_donations
-            ].join(','))
+            ...processedResults.map(r => {
+                const first = get(r, 'firstName', 'first_name') || 'Unknown';
+                const last = get(r, 'lastName', 'last_name');
+                const name = [first, last].filter(Boolean).join(' ');
+                const party = get(r, 'party', 'party_name') || 'Unknown';
+                const electorate = get(r, 'electorate', 'electorate_name') || 'Unknown';
+                const year = get(r, 'election_year', 'year');
+                const totExp = get(r, 'total_expenses');
+                const totDon = get(r, 'total_donations');
+                return [name, party, electorate, year, totExp, totDon].join(',');
+            })
         ];
 
         const csvContent = csvRows.join('\n');
@@ -162,47 +173,72 @@ function DonationsOverview() {
             return;
         }
 
-        const safe = (v, def = 'Unknown') => (v === null || v === undefined || v === '' ? def : v);
+        const safe = (v, def = 'Unknown') => (v === null || v === undefined || String(v).trim() === '' ? def : String(v).trim());
+
+        // Simple in-memory caches to avoid duplicate lookups during export
+        const personCache = new Map();
+        const partyCache = new Map();
+        const electorateCache = new Map();
 
         const detailed = await Promise.all(results.map(async (result) => {
-            let firstName = 'Unknown';
-            let lastName = 'Unknown';
-            let party = 'Unknown';
-            let electorate = 'Unknown';
+            // Prefer inline fields from API to avoid extra calls
+            let firstName = safe(result.first_name || result.firstName || '', 'Unknown');
+            let lastName = safe(result.last_name || result.lastName || '', '');
+            let party = safe(result.party_name || result.party || '', 'Unknown');
+            let electorate = safe(result.electorate_name || result.electorate || '', 'Unknown');
 
-            // People
+            // People fallback
             try {
-                if (result?.people_id) {
-                    const res = await fetch(`${API_BASE}/candidates/search-id?people_id=${encodeURIComponent(result.people_id)}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        const d = Array.isArray(data) && data.length ? data[0] : (data || {});
-                        firstName = safe(d.first_name);
-                        lastName = safe(d.last_name);
+                if ((firstName === 'Unknown' && lastName === '') && result?.people_id) {
+                    const key = String(result.people_id);
+                    if (personCache.has(key)) {
+                        const [f, l] = personCache.get(key);
+                        firstName = f; lastName = l;
+                    } else {
+                        const res = await fetch(`${API_BASE}/candidates/search-id?people_id=${encodeURIComponent(result.people_id)}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            const d = Array.isArray(data) && data.length ? data[0] : (data || {});
+                            firstName = safe(d?.first_name, firstName);
+                            lastName = safe(d?.last_name, lastName);
+                            personCache.set(key, [firstName, lastName]);
+                        }
                     }
                 }
             } catch (_) {}
 
-            // Party
+            // Party fallback
             try {
-                if (result?.party_id) {
-                    const res = await fetch(`${API_BASE}/party/search-id?party_id=${encodeURIComponent(result.party_id)}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        const d = Array.isArray(data) && data.length ? data[0] : (data || {});
-                        party = safe(d.party_name || d.name);
+                if (party === 'Unknown' && result?.party_id) {
+                    const key = String(result.party_id);
+                    if (partyCache.has(key)) {
+                        party = partyCache.get(key);
+                    } else {
+                        const res = await fetch(`${API_BASE}/party/search-id?party_id=${encodeURIComponent(result.party_id)}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            const d = Array.isArray(data) && data.length ? data[0] : (data || {});
+                            party = safe(d?.party_name || d?.name, party);
+                            partyCache.set(key, party);
+                        }
                     }
                 }
             } catch (_) {}
 
-            // Electorate
+            // Electorate fallback
             try {
-                if (result?.electorate_id) {
-                    const res = await fetch(`${API_BASE}/electorate/search-id?electorate_id=${encodeURIComponent(result.electorate_id)}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        const d = Array.isArray(data) && data.length ? data[0] : (data || {});
-                        electorate = safe(d.electorate_name || d.name);
+                if (electorate === 'Unknown' && result?.electorate_id) {
+                    const key = String(result.electorate_id);
+                    if (electorateCache.has(key)) {
+                        electorate = electorateCache.get(key);
+                    } else {
+                        const res = await fetch(`${API_BASE}/electorate/search-id?electorate_id=${encodeURIComponent(result.electorate_id)}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            const d = Array.isArray(data) && data.length ? data[0] : (data || {});
+                            electorate = safe(d?.electorate_name || d?.name, electorate);
+                            electorateCache.set(key, electorate);
+                        }
                     }
                 }
             } catch (_) {}

@@ -26,6 +26,14 @@ const fetchAdditionalDetails = async (result) => {
     let party = "Unknown";
     let electorate = "Unknown";
 
+    // Prefer inline fields from combined API response to avoid extra lookups
+    if (result) {
+        firstName = safe(result.first_name, firstName);
+        lastName = safe(result.last_name, lastName);
+        party = safe(result.party_name, party);
+        electorate = safe(result.electorate_name, electorate);
+    }
+
     // People
     try {
         if (result?.people_id) {
