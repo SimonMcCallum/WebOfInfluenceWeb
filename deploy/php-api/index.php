@@ -578,6 +578,7 @@ function render_admin(array $ctx = []): void {
                         $isDonationsTarget = isset($ctx['map_table']) && stripos((string)$ctx['map_table'], 'donation') !== false;
                         if ($isDonationsTarget):
                           $helperTokens = [
+                            // Address pieces to build "location"
                             'address_line1',
                             'address_line2',
                             'address_city',
@@ -585,9 +586,13 @@ function render_admin(array $ctx = []): void {
                             'address_postalcode',
                             'address_country',
                             'address_countrycode',
+                            // Donor info
                             'donor_first_name',
                             'donor_last_name',
                             'donor_org_name',
+                            // Candidate linking
+                            // Map CandidateDonations2023Test_Id (or similar) -> original_id to link to candidate_overview.original_id
+                            'original_id',
                           ];
                       ?>
                         <optgroup label="Helper tokens (donations importer)">
@@ -1543,9 +1548,14 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
         // Detect common original_id columns in donations CSVs
         $originalId = $getValByDb($row, 'original_id');
         if ($originalId === null) {
-          // Try common donors CSV columns
-          $c23 = $getValByDb($row, 'candidatedonations2023test_id');
-          $pA  = $getValByDb($row, 'partadonationentry_id'); // not overview id but keep for provenance if needed
+          // Try known 2023 header directly (with mapping OR without)
+          $c23 = $getValByDb($row, 'candidatedonations2023test_id')
+             ?? $getValByCsv($row, 'candidatedonations2023test_id')
+             ?? $getValByCsv($row, 'candidate_donations_2023_test_id');
+
+          // Not used for linking but kept here for completeness/provenance if needed in future
+          $pA  = $getValByDb($row, 'partadonationentry_id') ?? $getValByCsv($row, 'partadonationentry_id');
+
           // Pattern: _2011CandidateDonations_Id -> sanitized likely "2011candidatedonations_id"
           $autoOrigKey = null;
           foreach ($header_index as $hSan => $idx) {
@@ -1555,6 +1565,17 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
             }
           }
           $origAuto = $autoOrigKey ? $getValByCsv($row, $autoOrigKey) : null;
+
+          // As a final fallback, scan for any header that looks like a "candidate donations ... id"
+          if ($c23 === null && $origAuto === null) {
+            foreach (array_keys($header_index) as $hSan) {
+              if (preg_match('/^candidate(_)?donations.*(test)?_id$/', $hSan)) {
+                $origAuto = $getValByCsv($row, $hSan);
+                if ($origAuto !== null && $origAuto !== '') break;
+              }
+            }
+          }
+
           $originalId = $c23 ?: $origAuto ?: null;
         }
 
