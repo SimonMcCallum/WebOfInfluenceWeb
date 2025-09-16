@@ -1606,17 +1606,56 @@ function handle_candidate_overview_import(string $tmpPath, string $table, bool $
     if ($idx === null) return '';
     return isset($row[$idx]) ? trim((string)$row[$idx]) : '';
   };
+  $parseMoney = function(string $s): float {
+    $s = trim($s);
+    if ($s === '') return 0.0;
+    $clean = preg_replace('/[$,]/', '', $s);
+    return is_numeric($clean) ? (float)$clean : 0.0;
+  };
+
+  // Detect year from original_id header like "2011candidatedonations_id"
+  $detectedYear = null;
+  foreach (array_keys($normIndex) as $k) {
+    if (preg_match('/^(\d{4})candidatedonations_id$/', $k, $m)) {
+      $detectedYear = $m[1];
+      break;
+    }
+  }
 
   // Resolve candidate-relevant indices with fallbacks
-  $idxFirst = $normIndex['first_name'] ?? ($normIndex['candidatename_first'] ?? null);
-  $idxLast  = $normIndex['last_name']  ?? ($normIndex['candidatename_last']  ?? null);
-  $idxElect = $normIndex['electorate'] ?? ($normIndex['electorate_name'] ?? null);
-  $idxParty = $normIndex['party']      ?? ($normIndex['party_name'] ?? null);
-  $idxYear  = $normIndex['year']       ?? null; // optional override per row
+  $idxFirst = $normIndex['candidatename_first'] ?? ($normIndex['first_name'] ?? null);
+  $idxLast  = $normIndex['candidatename_last']  ?? ($normIndex['last_name']  ?? null);
+  $idxElect = $normIndex['electorate']          ?? ($normIndex['electorate_name'] ?? null);
+  $idxParty = $normIndex['party']               ?? ($normIndex['party_name'] ?? null);
+  $idxYear  = $normIndex['year']                ?? null; // optional override per row
 
-  if ($idxFirst === null || $idxLast === null) {
+  // Totals indices
+  $idxTotalDon = $normIndex['totaldonationsacd']                 ?? null;
+  $idxPartA    = $normIndex['totalparta']                        ?? null;
+  $idxPartB    = $normIndex['totalpartb']                        ?? null;
+  $idxPartC    = $normIndex['totalpartc']                        ?? null;
+  $idxPartD    = $normIndex['totalpartd']                        ?? ($normIndex['totalpartdcalculated'] ?? ($normIndex['totalpartdcalculated2'] ?? null));
+  $idxTotalExp = $normIndex['totalcandidateexpensespartsabcd']   ?? ($normIndex['totalexpensesfg'] ?? ($normIndex['totalexpenses'] ?? null));
+
+  // original_id index (2011/2014/2017/2023 variants)
+  $idxOriginalId = null;
+  foreach (['candidatedonations2023test_id'] as $candKey) {
+    if ($idxOriginalId === null && array_key_exists($candKey, $normIndex)) {
+      $idxOriginalId = $normIndex[$candKey];
+    }
+  }
+  if ($idxOriginalId === null) {
+    foreach (array_keys($normIndex) as $k) {
+      if (preg_match('/^\d{4}candidatedonations_id$/', $k)) {
+        $idxOriginalId = $normIndex[$k];
+        break;
+      }
+    }
+  }
+
+  if ($idxFirst === null || $idxLast === null || $idxElect === null || $idxParty === null) {
     fclose($fh);
-    return ['inserted' => 0, 'errors' => ['CSV must include First Name and Last Name columns']];
+    return ['inserted' => 0, 'errors' => ['CSV must include Candidate First/Last, Electorate, and Party columns']];
   }
 
   $inserted = 0;
@@ -1634,7 +1673,10 @@ function handle_candidate_overview_import(string $tmpPath, string $table, bool $
     }
 
     pdo()->beginTransaction();
-    $sql = "INSERT IGNORE INTO `" . str_replace('`', '``', $table) . "` (people_id, party_id, electorate_id, year) VALUES (?, ?, ?, ?)";
+
+    $sql = "INSERT IGNORE INTO `" . str_replace('`', '``', $table) . "` 
+      (people_id, party_id, electorate_id, part_a, part_b, part_c, part_d, total_donations, total_expenses, year, original_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     $stmt = pdo()->prepare($sql);
 
     while (($row = fgetcsv($fh)) !== false) {
@@ -1643,8 +1685,10 @@ function handle_candidate_overview_import(string $tmpPath, string $table, bool $
         $last  = $getVal($row, $idxLast);
         $electName = $getVal($row, $idxElect);
         $partyName = $getVal($row, $idxParty);
-        $yearVal = $getVal($row, $idxYear);
-        $year = (is_numeric($yearVal) && strlen((string)$yearVal) === 4) ? (int)$yearVal : $defaultYear;
+        $yearVal   = $getVal($row, $idxYear);
+        $year = (is_numeric($yearVal) && strlen((string)$yearVal) === 4)
+          ? (string)$yearVal
+          : ($detectedYear ?: (string)$defaultYear);
 
         if ($first === '' || $last === '') {
           $errors[] = "Missing first/last name on row " . ($inserted + count($errors) + 1);
@@ -1658,7 +1702,24 @@ function handle_candidate_overview_import(string $tmpPath, string $table, bool $
         $partyId = $partyName !== '' ? get_or_create_party_id($partyName) : null;
         $electId = $electName !== '' ? get_or_create_electorate_id($electName) : null;
 
-        $stmt->execute([$peopleId, $partyId, $electId, $year]);
+        // Totals
+        $partA = $parseMoney($getVal($row, $idxPartA));
+        $partB = $parseMoney($getVal($row, $idxPartB));
+        $partC = $parseMoney($getVal($row, $idxPartC));
+        $partD = $parseMoney($getVal($row, $idxPartD));
+        $totDon = $parseMoney($getVal($row, $idxTotalDon));
+        $totExp = $parseMoney($getVal($row, $idxTotalExp));
+
+        // original_id
+        $originalId = $idxOriginalId !== null ? $getVal($row, $idxOriginalId) : null;
+
+        $stmt->execute([
+          $peopleId, $partyId, $electId,
+          $partA ?: null, $partB ?: null, $partC ?: null, $partD ?: null,
+          $totDon, $totExp,
+          $year,
+          ($originalId !== '') ? $originalId : null
+        ]);
         $inserted++;
       } catch (Throwable $e) {
         $errors[] = "Row " . ($inserted + count($errors) + 1) . ": " . $e->getMessage();
