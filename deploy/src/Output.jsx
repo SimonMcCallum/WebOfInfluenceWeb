@@ -15,37 +15,88 @@ class Entry {
 }
 
 const fetchAdditionalDetails = async (result) => {
+    const safe = (v, def = "Unknown") => (v === null || v === undefined || v === "" ? def : v);
+    const buildUrl = (pathWithQuery) => {
+        try { return `${API_BASE}${pathWithQuery}`; } catch { return null; }
+    };
+
+    // Defaults
+    let firstName = "Unknown";
+    let lastName = "Unknown";
+    let party = "Unknown";
+    let electorate = "Unknown";
+
+    // People
     try {
-        const personResponse = await fetch(`${API_BASE}/candidates/search-id?people_id=${result.people_id}`);
-        const personData = await personResponse.json();
-
-        const partyResponse = await fetch(`${API_BASE}/party/search-id?party_id=${result.party_id}`);
-        const partyData = await partyResponse.json();
-
-        const electorateResponse = await fetch(`${API_BASE}/electorate/search-id?electorate_id=${result.electorate_id}`);
-        const electorateData = await electorateResponse.json();
-
-        return {
-            firstName: personData[0]?.first_name || "Unknown",
-            lastName: personData[0]?.last_name || "Unknown",
-            party: partyData[0]?.party_name || "Unknown",
-            electorate: electorateData?.electorate_name || "Unknown",
-            total_expenses: result.total_expenses || 0,
-            total_donations: result.total_donations || 0,
-            election_year: result.election_year || "Unknown"
-        };
-    } catch (error) {
-        console.error("Error fetching additional details:", error);
-        return {
-            firstName: "Error",
-            lastName: "Error",
-            party: "Error",
-            electorate: "Error",
-            total_expenses: result.total_expenses || 0,
-            total_donations: result.total_donations || 0,
-            election_year: result.election_year || "Unknown"
-        };
+        if (result?.people_id) {
+            const url = buildUrl(`/candidates/search-id?people_id=${encodeURIComponent(result.people_id)}`);
+            if (url) {
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data) && data.length) {
+                        firstName = safe(data[0]?.first_name);
+                        lastName = safe(data[0]?.last_name);
+                    } else if (data && typeof data === "object") {
+                        firstName = safe(data.first_name);
+                        lastName = safe(data.last_name);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("people lookup failed", e);
     }
+
+    // Party
+    try {
+        if (result?.party_id) {
+            const url = buildUrl(`/party/search-id?party_id=${encodeURIComponent(result.party_id)}`);
+            if (url) {
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data) && data.length) {
+                        party = safe(data[0]?.party_name);
+                    } else if (data && typeof data === "object") {
+                        party = safe(data.party_name || data.name);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("party lookup failed", e);
+    }
+
+    // Electorate
+    try {
+        if (result?.electorate_id) {
+            const url = buildUrl(`/electorate/search-id?electorate_id=${encodeURIComponent(result.electorate_id)}`);
+            if (url) {
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (Array.isArray(data) && data.length) {
+                        electorate = safe(data[0]?.electorate_name || data[0]?.name);
+                    } else if (data && typeof data === "object") {
+                        electorate = safe(data.electorate_name || data.name);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("electorate lookup failed", e);
+    }
+
+    return {
+        firstName,
+        lastName,
+        party,
+        electorate,
+        total_expenses: result.total_expenses || 0,
+        total_donations: result.total_donations || 0,
+        election_year: result.election_year || "Unknown",
+    };
 };
 
 const Output = ({ results, onExportCSV }) => {

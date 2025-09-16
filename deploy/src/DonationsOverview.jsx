@@ -155,6 +155,72 @@ function DonationsOverview() {
         document.body.removeChild(link);
     };
 
+    // Export detailed CSV by enriching raw results with names/party/electorate
+    const exportDetailedCSV = async () => {
+        if (!Array.isArray(results) || results.length === 0) {
+            alert('No data to export');
+            return;
+        }
+
+        const safe = (v, def = 'Unknown') => (v === null || v === undefined || v === '' ? def : v);
+
+        const detailed = await Promise.all(results.map(async (result) => {
+            let firstName = 'Unknown';
+            let lastName = 'Unknown';
+            let party = 'Unknown';
+            let electorate = 'Unknown';
+
+            // People
+            try {
+                if (result?.people_id) {
+                    const res = await fetch(`${API_BASE}/candidates/search-id?people_id=${encodeURIComponent(result.people_id)}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        const d = Array.isArray(data) && data.length ? data[0] : (data || {});
+                        firstName = safe(d.first_name);
+                        lastName = safe(d.last_name);
+                    }
+                }
+            } catch (_) {}
+
+            // Party
+            try {
+                if (result?.party_id) {
+                    const res = await fetch(`${API_BASE}/party/search-id?party_id=${encodeURIComponent(result.party_id)}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        const d = Array.isArray(data) && data.length ? data[0] : (data || {});
+                        party = safe(d.party_name || d.name);
+                    }
+                }
+            } catch (_) {}
+
+            // Electorate
+            try {
+                if (result?.electorate_id) {
+                    const res = await fetch(`${API_BASE}/electorate/search-id?electorate_id=${encodeURIComponent(result.electorate_id)}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        const d = Array.isArray(data) && data.length ? data[0] : (data || {});
+                        electorate = safe(d.electorate_name || d.name);
+                    }
+                }
+            } catch (_) {}
+
+            return {
+                firstName,
+                lastName,
+                party,
+                electorate,
+                total_expenses: result.total_expenses || 0,
+                total_donations: result.total_donations || 0,
+                election_year: result.election_year || result.year || 'Unknown',
+            };
+        }));
+
+        handleExportCSV(detailed);
+    };
+
     // Processed results and setProcessedResults
     const processedResultsForChart = (results) => {
         if (results && results.length > 0 ) {
@@ -309,7 +375,7 @@ function DonationsOverview() {
                             </h2>
                             {Array.isArray(results) && results.length > 0 && (
                                 <button
-                                    onClick={() => handleExportCSV(results)}
+                                    onClick={exportDetailedCSV}
                                     className="export-button"
                                 >
                                     <span>📥</span>
