@@ -597,6 +597,7 @@ function render_admin(array $ctx = []): void {
   </body>
   </html>
   <?php
+  exit;
 }
 
 /** Route handlers */
@@ -1909,6 +1910,54 @@ Text to analyze:
   ]);
 }
 
+/** Add a new person and return their generated ID.
+ * POST /people
+ * Body (JSON or form-encoded):
+ *   - first_name (required)
+ *   - last_name  (required)
+ *   - electorate_name (optional)
+ * Behavior:
+ *   - If an exact match (case-insensitive) exists, returns that id with created=false
+ *   - Otherwise inserts a new row and returns the new id with created=true
+ */
+function handle_add_person(): void {
+  // Support JSON or form POST
+  $input = null;
+  $ct = $_SERVER['CONTENT_TYPE'] ?? '';
+  if (stripos($ct, 'application/json') !== false) {
+    $raw = file_get_contents('php://input');
+    $input = json_decode($raw ?: 'null', true);
+  }
+  $first = trim((string)($input['first_name'] ?? ($_POST['first_name'] ?? '')));
+  $last  = trim((string)($input['last_name'] ?? ($_POST['last_name'] ?? '')));
+  $elect = trim((string)($input['electorate_name'] ?? ($_POST['electorate_name'] ?? '')));
+
+  if ($first === '' || $last === '') {
+    json_response(['error' => 'first_name and last_name are required'], 400);
+  }
+
+  // Check for existing exact match (case-insensitive)
+  $stmt = pdo()->prepare('SELECT id FROM people WHERE UPPER(first_name) = UPPER(?) AND UPPER(last_name) = UPPER(?) LIMIT 1');
+  $stmt->execute([$first, $last]);
+  $row = $stmt->fetch();
+  if ($row && isset($row['id'])) {
+    json_response([
+      'id' => (int)$row['id'],
+      'created' => false
+    ], 200);
+  }
+
+  // Insert new record; assumes people.id is AUTO_INCREMENT
+  $stmt = pdo()->prepare('INSERT INTO people (first_name, last_name, electorate_name) VALUES (?, ?, ?)');
+  $stmt->execute([$first, $last, ($elect !== '' ? $elect : null)]);
+  $newId = (int)pdo()->lastInsertId();
+
+  json_response([
+    'id' => $newId,
+    'created' => true
+  ], 201);
+}
+
 /** Dispatch */
 try {
   if ($METHOD === 'GET' && $ROUTE === '/') handle_health();
@@ -1932,6 +1981,9 @@ try {
 
   // AI
   if ($METHOD === 'POST' && $ROUTE === '/ai/extract-names') handle_ai_extract_names();
+
+  // People management
+  if ($METHOD === 'POST' && $ROUTE === '/people') handle_add_person();
 
   // Admin
   if ($METHOD === 'GET' && $ROUTE === '/admin') handle_admin_get();

@@ -716,7 +716,7 @@ FROM (
 WHERE TRIM(Electorate) != '';
 
 -- Insert missing donors from donation data
-INSERT IGNORE INTO donors (first_name, last_name, org_name, normalized_name)
+INSERT INTO donors (first_name, last_name, org_name, normalized_name)
 SELECT DISTINCT 
     CASE WHEN TRIM(DonorName_First) != '' THEN TRIM(SUBSTRING_INDEX(DonorName_First, '#', 1)) ELSE NULL END as first_name,
     CASE WHEN TRIM(DonorName_Last) != '' THEN TRIM(SUBSTRING_INDEX(DonorName_Last, '#', 1)) ELSE NULL END as last_name,
