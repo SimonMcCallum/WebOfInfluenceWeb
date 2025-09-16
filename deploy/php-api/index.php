@@ -1117,35 +1117,21 @@ function handle_admin_upload_start(): void {
   render_admin($ctx);
 }
 
-/** 
- * Map candidate names to people IDs using fuzzy matching with Gemini AI
- * This function helps resolve foreign key relationships for donations import
+/**
+ * Map candidate names to people IDs (simple exact match; create if missing).
+ * Avoids assuming optional columns like electorate_name exist.
  */
 function resolve_candidate_person_id(string $firstName, string $lastName, string $electorate = ''): ?int {
-  // First try exact match
-  $stmt = pdo()->prepare(
-    'SELECT id FROM people WHERE UPPER(first_name) = UPPER(?) AND UPPER(last_name) = UPPER(?)'
-  );
+  // Exact match on first/last
+  $stmt = pdo()->prepare('SELECT id FROM people WHERE UPPER(first_name) = UPPER(?) AND UPPER(last_name) = UPPER(?) LIMIT 1');
   $stmt->execute([$firstName, $lastName]);
-  $exact = $stmt->fetch();
-  if ($exact) {
-    return (int)$exact['id'];
+  $row = $stmt->fetch();
+  if ($row && isset($row['id'])) {
+    return (int)$row['id'];
   }
-
-  // Try fuzzy matching using Gemini AI
-  $api_key = get_gemini_api_key();
-  if ($api_key) {
-    $candidates = get_candidate_suggestions_from_gemini($firstName, $lastName, $electorate, $api_key);
-    if ($candidates && count($candidates) > 0) {
-      return $candidates[0]['id']; // Return best match
-    }
-  }
-
-  // No match found - create new person entry
-  $stmt = pdo()->prepare(
-    'INSERT INTO people (first_name, last_name, electorate_name) VALUES (?, ?, ?)'
-  );
-  $stmt->execute([$firstName, $lastName, $electorate ?: null]);
+  // Insert minimal person record
+  $ins = pdo()->prepare('INSERT INTO people (first_name, last_name) VALUES (?, ?)');
+  $ins->execute([$firstName, $lastName]);
   return (int)pdo()->lastInsertId();
 }
 
@@ -1153,21 +1139,20 @@ function resolve_candidate_person_id(string $firstName, string $lastName, string
  * Get candidate suggestions using Gemini AI for name matching
  */
 function get_candidate_suggestions_from_gemini(string $firstName, string $lastName, string $electorate, string $api_key): array {
-  // Get existing people from database for comparison
-  $stmt = pdo()->query('SELECT id, first_name, last_name, electorate_name FROM people LIMIT 1000');
+  // Get existing people from database for comparison (no electorate column assumed)
+  $stmt = pdo()->query('SELECT id, first_name, last_name FROM people LIMIT 1000');
   $existing_people = $stmt->fetchAll();
-  
+
   $people_list = [];
   foreach ($existing_people as $person) {
     $people_list[] = sprintf(
-      'ID:%d - %s %s (%s)', 
-      $person['id'], 
-      $person['first_name'], 
-      $person['last_name'],
-      $person['electorate_name'] ?: 'Unknown'
+      'ID:%d - %s %s',
+      $person['id'],
+      $person['first_name'],
+      $person['last_name']
     );
   }
-  
+
   $people_text = implode("\n", array_slice($people_list, 0, 100)); // Limit for API
   
   $prompt = sprintf(
@@ -2405,8 +2390,8 @@ function handle_add_person(): void {
   }
 
   // Insert new record; assumes people.id is AUTO_INCREMENT
-  $stmt = pdo()->prepare('INSERT INTO people (first_name, last_name, electorate_name) VALUES (?, ?, ?)');
-  $stmt->execute([$first, $last, ($elect !== '' ? $elect : null)]);
+  $stmt = pdo()->prepare('INSERT INTO people (first_name, last_name) VALUES (?, ?)');
+  $stmt->execute([$first, $last]);
   $newId = (int)pdo()->lastInsertId();
 
   json_response([
