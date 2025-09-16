@@ -2227,6 +2227,10 @@ function handle_admin_upload_commit(): void {
       if (!in_array('end_time', $dbCols, true)) {
         $dbCols[] = 'end_time';
       }
+      // Ensure attendees text is captured even if not explicitly mapped
+      if (!in_array('with_text', $dbCols, true)) {
+        $dbCols[] = 'with_text';
+      }
     }
 
     // Prepare final SQL
@@ -2281,6 +2285,8 @@ function handle_admin_upload_commit(): void {
         $csv_ai_first = $getHdr(['ai_first_name','import_first_name']);
         $csv_ai_last  = $getHdr(['ai_last_name','import_last_name']);
         $csv_minister = $getHdr('Minister') ?? $getHdr('minister');
+        // Attendees text (CSV header "With")
+        $csv_with = $getHdr(['With','with']);
 
         // Helper to strip titles like "Rt Hon", "Hon", "Dr", "Sir", "Dame", "MP" from names
         $cleanName = function($name) {
@@ -2353,6 +2359,11 @@ function handle_admin_upload_commit(): void {
           }
           if ($dbCol === 'end_time') {
             $vals[] = isset($derivedEnd) ? $derivedEnd : null;
+            continue;
+          }
+          if ($dbCol === 'with_text') {
+            // Populate attendees text from "With" column if present
+            $vals[] = ($csv_with !== null && $csv_with !== '') ? $csv_with : null;
             continue;
           }
         }
