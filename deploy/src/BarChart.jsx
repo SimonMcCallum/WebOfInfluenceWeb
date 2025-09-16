@@ -21,9 +21,30 @@ const partyColors = {
   "NEW ZEALAND FIRST PARTY": "rgb(0, 0, 0)", // #000000
   "Unknown": "rgb(190, 190, 190)" // #BEBEBE
 };
-// Simple in-memory caches to avoid repeated lookups and reduce network errors
+/**
+ * Simple in-memory caches to avoid repeated lookups and reduce network errors
+ */
 const personCache = new Map();
 const partyCache = new Map();
+
+/**
+ * Helpers to normalize party names to our canonical color keys
+ * - Uppercase
+ * - Strip diacritics (e.g., Pāti → PATI)
+ * - Map common variants (e.g., ACT NEW ZEALAND → ACT)
+ */
+const stripDiacritics = (s) => (s ? s.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : '');
+const normalizePartyName = (name) => {
+  const raw = (name || '').trim();
+  const upper = stripDiacritics(raw).toUpperCase();
+  if (upper.includes('ACT')) return 'ACT';
+  if (upper.includes('NATIONAL')) return 'NATIONAL PARTY';
+  if (upper.includes('LABOUR')) return 'LABOUR PARTY';
+  if (upper.includes('GREEN')) return 'GREEN PARTY';
+  if (upper.includes('TE PATI MAORI')) return 'TE PATI MAORI'; // diacritics stripped above
+  if (upper.includes('NEW ZEALAND FIRST')) return 'NEW ZEALAND FIRST PARTY';
+  return upper;
+};
 
 const BarChart = ({ results, isLoading }) => {  
   const [chartData, setChartData] = useState(null);
@@ -187,14 +208,27 @@ const BarChart = ({ results, isLoading }) => {
         },
         labels: {
           generateLabels: function(chart) {
-            const parties = [...new Set(chartData.parties)];
-            
-            return parties.map((party) => ({
-              text: Object.keys(partyColors).includes(party) ? party.replace(/PARTY/i, '') : 'OTHER',
-              fillStyle: Object.keys(partyColors).includes(party) ? getPartyColor(party) : partyColors.Unknown,
-              strokeStyle: Object.keys(partyColors).includes(party) ? getPartyColor(party) : partyColors.Unknown,
-              hidden: false,
-            }));
+            // Normalize to uppercase to match partyColors keys
+            const uniqueNormalized = Array.from(
+              new Set((chartData.parties || []).map(p => normalizePartyName(p)))
+            );
+
+            return uniqueNormalized.map((normalized) => {
+              const isKnown = Object.prototype.hasOwnProperty.call(partyColors, normalized);
+              const color = isKnown ? partyColors[normalized] : partyColors.Unknown;
+
+              // Use a concise label for known parties (drop trailing " PARTY")
+              const labelText = isKnown
+                ? normalized.replace(/\s*PARTY$/, '')
+                : 'OTHER';
+
+              return {
+                text: labelText,
+                fillStyle: color,
+                strokeStyle: color,
+                hidden: false,
+              };
+            });
           },
         },
         
