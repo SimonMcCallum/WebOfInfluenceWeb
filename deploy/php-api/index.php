@@ -1254,7 +1254,7 @@ function get_gemini_api_key(): ?string {
  *      datereceived, donationamount, moneyorgoodsservices, otherdetail, address_line1/2, address_city, address_country,
  *      partadonationentry_id, candidatedonations2023test_id, _YYYYcandidatedonations_id (auto-detected), original_id (if present)
  */
-function handle_donations_import_with_candidate_mapping(string $tmpPath, string $table, array $mapping, bool $truncate): array {
+function handle_donations_import_with_candidate_mapping(string $tmpPath, string $table, array $mapping, bool $truncate, ?int $defaultYearHint = null, ?string $origFilename = null): array {
   // Helper: sanitize consistently with admin mapper
   $sanitize = fn(string $s) => sanitize_table_name($s);
 
@@ -1387,24 +1387,26 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
     return $ts ? date('Y-m-d', $ts) : null;
   };
 
-  $find_candidate_overview = function(?string $originalId, ?string $year, ?int $peopleIdHint = null): array {
+  $find_candidate_overview = function(?string $originalId, ?string $yearHint, ?int $peopleIdHint = null): array {
     if (!$originalId && !$peopleIdHint) return [null, null];
-    // First try by original_id (preferred)
-    if ($originalId) {
-      if ($year && preg_match('/^\d{4}$/', $year)) {
-        $stmt = pdo()->prepare('SELECT id, people_id FROM candidate_overview WHERE original_id = ? AND year = ? LIMIT 1');
-        $stmt->execute([$originalId, $year]);
-      } else {
-        $stmt = pdo()->prepare('SELECT id, people_id FROM candidate_overview WHERE original_id = ? LIMIT 1');
-        $stmt->execute([$originalId]);
-      }
+    // 1) Try by original_id with year hint (robust for placeholder dates in CSV)
+    if ($originalId && $yearHint && preg_match('/^\d{4}$/', $yearHint)) {
+      $stmt = pdo()->prepare('SELECT id, people_id FROM candidate_overview WHERE original_id = ? AND year = ? LIMIT 1');
+      $stmt->execute([$originalId, $yearHint]);
       $row = $stmt->fetch();
       if ($row) return [(int)$row['id'], (int)$row['people_id']];
     }
-    // Fallback by (people_id, year)
-    if ($peopleIdHint && $year && preg_match('/^\d{4}$/', $year)) {
+    // 2) Try by original_id without year (in case of mismatched placeholder dates)
+    if ($originalId) {
+      $stmt = pdo()->prepare('SELECT id, people_id, year FROM candidate_overview WHERE original_id = ? LIMIT 1');
+      $stmt->execute([$originalId]);
+      $row = $stmt->fetch();
+      if ($row) return [(int)$row['id'], (int)$row['people_id']];
+    }
+    // 3) Fallback by (people_id, year)
+    if ($peopleIdHint && $yearHint && preg_match('/^\d{4}$/', $yearHint)) {
       $stmt = pdo()->prepare('SELECT id, people_id FROM candidate_overview WHERE people_id = ? AND year = ? LIMIT 1');
-      $stmt->execute([$peopleIdHint, $year]);
+      $stmt->execute([$peopleIdHint, $yearHint]);
       $row = $stmt->fetch();
       if ($row) return [(int)$row['id'], (int)$row['people_id']];
     }
@@ -1417,6 +1419,21 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
   try {
     pdo()->beginTransaction();
 
+    // Deduce a reliable election year hint for this CSV (filename or header key like 2011candidatedonations_id)
+    $csvYearHint = null;
+    if ($defaultYearHint) $csvYearHint = (string)$defaultYearHint;
+    if (!$csvYearHint && is_string($origFilename) && preg_match('/\b(2011|2014|2017|2020|2023)\b/', $origFilename, $mfn)) {
+      $csvYearHint = $mfn[1];
+    }
+    if (!$csvYearHint) {
+      foreach ($header_index as $hSan => $_idx) {
+        if (preg_match('/^(\d{4})candidatedonations_id$/', $hSan, $mh)) {
+          $csvYearHint = $mh[1];
+          break;
+        }
+      }
+    }
+
     while (($row = fgetcsv($fh)) !== false) {
       try {
         // Resolve core fields via mapping or sensible defaults
@@ -1424,7 +1441,10 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
         $date    = $parse_date($dateStr);
         $year    = $getValByDb($row, 'year') ?? $getValByCsv($row, 'year');
         if (!$year && $date) $year = date('Y', strtotime($date));
-        if (!$year || !preg_match('/^\d{4}$/', (string)$year)) $year = null;
+        // If parsed year is not one of our known election years, override with csvYearHint
+        if (!$year || !preg_match('/^(2011|2014|2017|2020|2023)$/', (string)$year)) {
+          $year = $csvYearHint ?: null;
+        }
 
         $amount  = $getValByDb($row, 'amount') ?? $getValByDb($row, 'donationamount') ?? $getValByCsv($row, 'donationamount') ?? $getValByCsv($row, 'amount');
         $amountF = $parse_amount($amount);
@@ -1532,7 +1552,7 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
         }
 
         // Attempt to find candidate_overview id and/or derive people_id from it
-        [$candidateOverviewId, $coPeopleId] = $find_candidate_overview($originalId, $year, $peopleId);
+        [$candidateOverviewId, $coPeopleId] = $find_candidate_overview($originalId, $csvYearHint ?: $year, $peopleId);
         if ($peopleId === null && $coPeopleId) $peopleId = (int)$coPeopleId;
 
         if ($peopleId === null || $peopleId === 0) {
@@ -1999,7 +2019,13 @@ function handle_admin_upload_commit(): void {
   
   if ($isDonationsTable) {
     // Use the enhanced donations import function
-    $result = handle_donations_import_with_candidate_mapping($abs, $table, $finalMap, $truncate);
+    // Infer default year from filename, if present (helps link original_id when dates use placeholder years)
+    $defaultYear = null;
+    $origName = $_POST['orig_name'] ?? '';
+    if (is_string($origName) && preg_match('/\b(2011|2014|2017|2020|2023)\b/', $origName, $m)) {
+      $defaultYear = (int)$m[1];
+    }
+    $result = handle_donations_import_with_candidate_mapping($abs, $table, $finalMap, $truncate, $defaultYear, is_string($origName) ? $origName : null);
     $inserted = $result['inserted'];
     $errors = $result['errors'] ?? [];
     
