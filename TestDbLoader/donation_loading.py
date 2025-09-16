@@ -47,11 +47,11 @@ def create_donation_table(year):
     column_dict = {
         "id": "INT AUTO_INCREMENT PRIMARY KEY",
         "date": "DATE",
-        "amount": "INT",
+        "amount": "DECIMAL(12,2)",
         "MoneyOrGoodsServices": "VarChar(255)",
         "location": "VARCHAR(255)",
         "notes": "VARCHAR(255)",
-        "original_id": "INT",
+        "original_id": "VARCHAR(64)",
         "donor_id": "INT",
         "minister_donated": "INT"
     }
@@ -66,9 +66,9 @@ def create_donation_table(year):
     ld.create_tb(mycursor, f"Donations_Log_{year}", column_dict, foreign_keys)
 
 
-def load_donation(date, amount, MoneyOrGoodsServices, location, notes, donor_id, minister_donated_id, year):
+def load_donation(date, amount, MoneyOrGoodsServices, location, notes, original_id, donor_id, minister_donated_id, year):
     ld.use_db(mycursor, f"Donations_Individual")
-    ld.import_data(connection, mycursor, f"Donations_Log_{year}", ("date", "amount", "MoneyOrGoodsServices", "location", "notes", "donor_id", "minister_donated"), (date, amount, MoneyOrGoodsServices, location, notes, donor_id, minister_donated_id))
+    ld.import_data(connection, mycursor, f"Donations_Log_{year}", ("date", "amount", "MoneyOrGoodsServices", "location", "notes", "original_id", "donor_id", "minister_donated"), (date, amount, MoneyOrGoodsServices, location, notes, original_id, donor_id, minister_donated_id))
     connection.commit()
 
 def convert_to_mysql_date(date_str):
@@ -104,8 +104,18 @@ def read_donations_table(year):
         last_name = row['DonorName_Last'] if pandas.notna(row['DonorName_Last']) else ""
         donor_name_first = str(first_name).strip() if first_name else ""
         donor_name_last = str(last_name).strip() if last_name else ""
+
+        # Prefer organisation name when person name is missing
+        company = row['CompanyOrOrganisation'] if pandas.notna(row.get('CompanyOrOrganisation')) else ""
+        if not donor_name_first and not donor_name_last and company:
+            donor_name_last = str(company).strip()
+
         donor_id = check_donor_id(donor_name_first.upper(), donor_name_last.upper())
-        minister_donated_id = row[f'_{year}CandidateDonations_Id'] if pandas.notna(row[f'_{year}CandidateDonations_Id']) else ""
+
+        # Original donation entry id from CSV (e.g., PartADonationEntry_Id) for traceability
+        original_id = row['PartADonationEntry_Id'] if pandas.notna(row.get('PartADonationEntry_Id')) else None
+
+        minister_donated_id = row[f'_{year}CandidateDonations_Id'] if pandas.notna(row.get(f'_{year}CandidateDonations_Id')) else ""
         mycursor.execute(f"""
             SELECT * FROM Overviews_Candidate_Donations_By_Year.{year}_Candidate_Donation_Overview
             WHERE original_id = %s
@@ -114,7 +124,7 @@ def read_donations_table(year):
         if not result:
             continue
         minister_id = result[0][0]
-        load_donation(date, amount, MoneyOrGoodsServices, location, notes, donor_id, minister_id, year)
+        load_donation(date, amount, MoneyOrGoodsServices, location, notes, original_id, donor_id, minister_id, year)
        
 
 def read_donations_table_23():
@@ -142,8 +152,18 @@ def read_donations_table_23():
         last_name = row['DonorName_Last'] if pandas.notna(row['DonorName_Last']) else ""
         donor_name_first = str(first_name).strip() if first_name else ""
         donor_name_last = str(last_name).strip() if last_name else ""
+
+        # Prefer organisation name when person name is missing
+        company = row['CompanyOrOrganisation'] if pandas.notna(row.get('CompanyOrOrganisation')) else ""
+        if not donor_name_first and not donor_name_last and company:
+            donor_name_last = str(company).strip()
+
         donor_id = check_donor_id(donor_name_first.upper(), donor_name_last.upper())
-        minister_donated_id = row[f'CandidateDonations2023Test_Id'] if pandas.notna(row[f'CandidateDonations2023Test_Id']) else ""
+
+        # Original donation entry id from CSV if present
+        original_id = row['PartADonationEntry_Id'] if pandas.notna(row.get('PartADonationEntry_Id')) else None
+
+        minister_donated_id = row[f'CandidateDonations2023Test_Id'] if pandas.notna(row.get(f'CandidateDonations2023Test_Id')) else ""
         mycursor.execute(f"""
             SELECT * FROM Overviews_Candidate_Donations_By_Year.{year}_Candidate_Donation_Overview
             WHERE original_id = %s
@@ -152,7 +172,7 @@ def read_donations_table_23():
         if not result:
             continue
         minister_id = result[0][0]
-        load_donation(date, amount, MoneyOrGoodsServices, location, notes, donor_id, minister_id, year)
+        load_donation(date, amount, MoneyOrGoodsServices, location, notes, original_id, donor_id, minister_id, year)
        
 def check_donor_id(first_name, last_name):
     ld.use_db(mycursor, "Entities")
@@ -169,7 +189,7 @@ def create_db():
     connection.commit()
 
 def create_db_2():
-    ld.create_db(mycursor, "donations_individual")
+    ld.create_db(mycursor, "Donations_Individual")
     connection.commit()
 
 def create_donation_db_and_tables():
@@ -183,5 +203,3 @@ def create_donation_db_and_tables():
     read_donations_table("2014")
     read_donations_table("2011")
     read_donations_table_23()
-
-

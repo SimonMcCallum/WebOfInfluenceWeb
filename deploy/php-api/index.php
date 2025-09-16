@@ -1231,10 +1231,29 @@ function get_gemini_api_key(): ?string {
 
 /**
  * Enhanced function to handle donations import with proper foreign key resolution
+ * Supports:
+ *  - Using people_id directly (preferred) or resolving candidate_person_id from names or original_id
+ *  - Creating donors (people and/or organisations) and linking donor_id
+ *  - Populating woi.donations compatible columns: year, date, amount, money_or_goods_services, notes, location, donor_id, candidate_person_id, candidate_overview_id
+ * Notes:
+ *  - Mapping keys are sanitized header names (via sanitize_table_name)
+ *  - Mapping values can be either actual donations table columns OR helper tokens like:
+ *      people_id, candidate_person_id, donorname_first, donorname_last, companyororganisation,
+ *      datereceived, donationamount, moneyorgoodsservices, otherdetail, address_line1/2, address_city, address_country,
+ *      partadonationentry_id, candidatedonations2023test_id, _YYYYcandidatedonations_id (auto-detected), original_id (if present)
  */
 function handle_donations_import_with_candidate_mapping(string $tmpPath, string $table, array $mapping, bool $truncate): array {
+  // Helper: sanitize consistently with admin mapper
+  $sanitize = fn(string $s) => sanitize_table_name($s);
+
   if ($truncate) {
-    pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $table) . "`");
+    try {
+      pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $table) . "`");
+    } catch (Throwable $e) {
+      // Fallback: DELETE + reset AUTO_INCREMENT
+      pdo()->exec("DELETE FROM `" . str_replace('`', '``', $table) . "`");
+      try { pdo()->exec("ALTER TABLE `" . str_replace('`', '``', $table) . "` AUTO_INCREMENT = 1"); } catch (Throwable $ignore) {}
+    }
   }
 
   $fh = fopen($tmpPath, 'r');
@@ -1242,161 +1261,284 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
     return ['inserted' => 0, 'errors' => ['Failed to open CSV file']];
   }
 
-  $header = fgetcsv($fh);
-  if (!$header) {
+  $rawHeader = fgetcsv($fh);
+  if (!$rawHeader) {
     fclose($fh);
     return ['inserted' => 0, 'errors' => ['CSV must have header row']];
   }
 
-  // Create header index mapping
+  // Build sanitized header index
   $header_index = [];
-  foreach ($header as $i => $col) {
-    $header_index[trim($col)] = $i;
+  foreach ($rawHeader as $i => $col) {
+    $header_index[$sanitize((string)$col)] = $i;
   }
+
+  // Reverse mapping: DB column -> CSV sanitized column
+  $mapDbToCsv = [];
+  foreach ($mapping as $csvSan => $dbSan) {
+    $csvSan = $sanitize((string)$csvSan);
+    $dbSan  = $sanitize((string)$dbSan);
+    $mapDbToCsv[$dbSan] = $csvSan;
+  }
+
+  // Helpers to read a value from row
+  $getValByCsv = function(array $row, string $csvSan) use ($header_index) {
+    $i = $header_index[$csvSan] ?? null;
+    if ($i === null) return null;
+    return isset($row[$i]) ? trim((string)$row[$i]) : null;
+  };
+  $getValByDb = function(array $row, string $dbSan) use ($mapDbToCsv, $header_index, $getValByCsv) {
+    $csvSan = $mapDbToCsv[$dbSan] ?? null;
+    return $csvSan ? $getValByCsv($row, $csvSan) : null;
+  };
+
+  // Convenience: resolve/insert People and Donors
+  $get_or_create_person = function(string $first, string $last): int {
+    $first = trim($first);
+    $last  = trim($last);
+    if ($first === '' || $last === '') return 0;
+
+    $stmt = pdo()->prepare('SELECT id FROM people WHERE UPPER(first_name) = UPPER(?) AND UPPER(last_name) = UPPER(?) LIMIT 1');
+    $stmt->execute([$first, $last]);
+    $row = $stmt->fetch();
+    if ($row && isset($row['id'])) return (int)$row['id'];
+
+    try {
+      $ins = pdo()->prepare('INSERT INTO people (first_name, last_name) VALUES (?, ?)');
+      $ins->execute([$first, $last]);
+      return (int)pdo()->lastInsertId();
+    } catch (Throwable $e) {
+      // Unique constraint race; re-select
+      $stmt = pdo()->prepare('SELECT id FROM people WHERE UPPER(first_name) = UPPER(?) AND UPPER(last_name) = UPPER(?) LIMIT 1');
+      $stmt->execute([$first, $last]);
+      $row = $stmt->fetch();
+      return $row && isset($row['id']) ? (int)$row['id'] : 0;
+    }
+  };
+
+  $get_or_create_donor = function(?string $first, ?string $last, ?string $org) {
+    $first = trim((string)$first);
+    $last  = trim((string)$last);
+    $org   = trim((string)$org);
+    $normalized = '';
+    if ($org !== '') {
+      $normalized = mb_strtoupper($org, 'UTF-8');
+    } elseif ($first !== '' || $last !== '') {
+      $normalized = mb_strtoupper(trim($first . ' ' . $last), 'UTF-8');
+    }
+
+    // Try find by normalized_name if present
+    if ($normalized !== '') {
+      $stmt = pdo()->prepare('SELECT id FROM donors WHERE normalized_name = ? LIMIT 1');
+      $stmt->execute([$normalized]);
+      $row = $stmt->fetch();
+      if ($row && isset($row['id'])) return (int)$row['id'];
+    } else {
+      // Fallback: look for exact first/last/org (weak)
+      $stmt = pdo()->prepare('SELECT id FROM donors WHERE COALESCE(first_name,"") = ? AND COALESCE(last_name,"") = ? AND COALESCE(org_name,"") = ? LIMIT 1');
+      $stmt->execute([$first, $last, $org]);
+      $row = $stmt->fetch();
+      if ($row && isset($row['id'])) return (int)$row['id'];
+    }
+
+    // Insert new donor
+    try {
+      $ins = pdo()->prepare('INSERT INTO donors (first_name, last_name, org_name, normalized_name) VALUES (?, ?, ?, ?)');
+      $ins->execute([$first !== '' ? $first : null, $last !== '' ? $last : null, $org !== '' ? $org : null, $normalized !== '' ? $normalized : null]);
+      return (int)pdo()->lastInsertId();
+    } catch (Throwable $e) {
+      // If unique normalized_name constraint hit, re-select
+      if ($normalized !== '') {
+        $stmt = pdo()->prepare('SELECT id FROM donors WHERE normalized_name = ? LIMIT 1');
+        $stmt->execute([$normalized]);
+        $row = $stmt->fetch();
+        if ($row && isset($row['id'])) return (int)$row['id'];
+      }
+      return 0;
+    }
+  };
+
+  $parse_amount = function($v): float {
+    if ($v === null || $v === '') return 0.0;
+    $clean = preg_replace('/[$,]/', '', (string)$v);
+    return is_numeric($clean) ? (float)$clean : 0.0;
+  };
+
+  $parse_date = function($v): ?string {
+    if (!$v) return null;
+    $candidates = ['Y-m-d', 'd/m/Y', 'm/d/Y', 'd-m-Y', 'm-d-Y'];
+    foreach ($candidates as $fmt) {
+      $dt = DateTime::createFromFormat($fmt, $v);
+      if ($dt !== false) return $dt->format('Y-m-d');
+    }
+    $ts = strtotime($v);
+    return $ts ? date('Y-m-d', $ts) : null;
+  };
+
+  $find_candidate_overview = function(?string $originalId, ?string $year, ?int $peopleIdHint = null): array {
+    if (!$originalId && !$peopleIdHint) return [null, null];
+    // First try by original_id (preferred)
+    if ($originalId) {
+      if ($year && preg_match('/^\d{4}$/', $year)) {
+        $stmt = pdo()->prepare('SELECT id, people_id FROM candidate_overview WHERE original_id = ? AND year = ? LIMIT 1');
+        $stmt->execute([$originalId, $year]);
+      } else {
+        $stmt = pdo()->prepare('SELECT id, people_id FROM candidate_overview WHERE original_id = ? LIMIT 1');
+        $stmt->execute([$originalId]);
+      }
+      $row = $stmt->fetch();
+      if ($row) return [(int)$row['id'], (int)$row['people_id']];
+    }
+    // Fallback by (people_id, year)
+    if ($peopleIdHint && $year && preg_match('/^\d{4}$/', $year)) {
+      $stmt = pdo()->prepare('SELECT id, people_id FROM candidate_overview WHERE people_id = ? AND year = ? LIMIT 1');
+      $stmt->execute([$peopleIdHint, $year]);
+      $row = $stmt->fetch();
+      if ($row) return [(int)$row['id'], (int)$row['people_id']];
+    }
+    return [null, $peopleIdHint];
+  };
 
   $inserted = 0;
   $errors = [];
-  $candidate_cache = []; // Cache resolved candidates
 
   try {
     pdo()->beginTransaction();
 
     while (($row = fgetcsv($fh)) !== false) {
       try {
-        $donation_data = [];
-        $candidate_person_id = null;
+        // Resolve core fields via mapping or sensible defaults
+        $dateStr = $getValByDb($row, 'date') ?? $getValByDb($row, 'datereceived') ?? $getValByCsv($row, 'date') ?? $getValByCsv($row, 'datereceived');
+        $date    = $parse_date($dateStr);
+        $year    = $getValByDb($row, 'year') ?? $getValByCsv($row, 'year');
+        if (!$year && $date) $year = date('Y', strtotime($date));
+        if (!$year || !preg_match('/^\d{4}$/', (string)$year)) $year = null;
 
-        // Process each mapped field
-        foreach ($mapping as $csv_col => $db_col) {
-          if (!$db_col || $db_col === 'ignore') continue;
+        $amount  = $getValByDb($row, 'amount') ?? $getValByDb($row, 'donationamount') ?? $getValByCsv($row, 'donationamount') ?? $getValByCsv($row, 'amount');
+        $amountF = $parse_amount($amount);
 
-          $csv_index = $header_index[$csv_col] ?? null;
-          $value = ($csv_index !== null && isset($row[$csv_index])) ? trim($row[$csv_index]) : null;
+        $mos     = $getValByDb($row, 'money_or_goods_services') ?? $getValByDb($row, 'moneyorgoodsservices') ?? $getValByCsv($row, 'money_or_goods_services') ?? $getValByCsv($row, 'moneyorgoodsservices');
+        $notes   = $getValByDb($row, 'notes') ?? $getValByDb($row, 'otherdetail') ?? $getValByCsv($row, 'notes') ?? $getValByCsv($row, 'otherdetail');
 
-          // Handle special cases for donations
-          if ($db_col === 'candidate_person_id') {
-            // Extract candidate name from CSV - this might be in separate first/last name columns
-            // or we might need to parse from a full name column
-            $first_name = '';
-            $last_name = '';
-            $electorate = '';
+        // Build location if not provided
+        $location = $getValByDb($row, 'location') ?? $getValByCsv($row, 'location');
+        if ($location === null) {
+          $addr1 = $getValByDb($row, 'address_line1') ?? $getValByCsv($row, 'address_line1');
+          $addr2 = $getValByDb($row, 'address_line2') ?? $getValByCsv($row, 'address_line2');
+          $city  = $getValByDb($row, 'address_city')  ?? $getValByCsv($row, 'address_city');
+          $cntry = $getValByDb($row, 'address_country') ?? $getValByCsv($row, 'address_country');
+          $parts = array_values(array_filter([$addr1, $addr2, $city, $cntry], fn($x) => ($x !== null && $x !== '')));
+          $location = empty($parts) ? null : implode(', ', $parts);
+        }
 
-            // Try to get first name, last name, and electorate from various possible columns
-            if (isset($header_index['CandidateName_First'])) {
-              $first_name = trim($row[$header_index['CandidateName_First']] ?? '');
-            }
-            if (isset($header_index['CandidateName_Last'])) {
-              $last_name = trim($row[$header_index['CandidateName_Last']] ?? '');
-            }
-            if (isset($header_index['Electorate'])) {
-              $electorate = trim($row[$header_index['Electorate']] ?? '');
-            }
+        // Donor info (person or org)
+        // Accept mapping names or raw CSV headers (sanitized) if user didn't explicitly map
+        $donorFirst = $getValByDb($row, 'donor_first_name') ?? $getValByDb($row, 'donorname_first') ?? $getValByCsv($row, 'donorname_first');
+        $donorLast  = $getValByDb($row, 'donor_last_name')  ?? $getValByDb($row, 'donorname_last')  ?? $getValByCsv($row, 'donorname_last');
+        $donorOrg   = $getValByDb($row, 'donor_org_name')   ?? $getValByDb($row, 'companyororganisation') ?? $getValByCsv($row, 'companyororganisation');
 
-            // Alternative column names that might exist
-            if (!$first_name && isset($header_index['first_name'])) {
-              $first_name = trim($row[$header_index['first_name']] ?? '');
-            }
-            if (!$last_name && isset($header_index['last_name'])) {
-              $last_name = trim($row[$header_index['last_name']] ?? '');
-            }
+        // Create donor in donors and, if personal name present, also add as person
+        $donorId = $get_or_create_donor($donorFirst, $donorLast, $donorOrg);
+        if ($donorFirst || $donorLast) {
+          $get_or_create_person($donorFirst ?: '', $donorLast ?: '');
+        }
 
-            if ($first_name && $last_name) {
-              $cache_key = strtolower($first_name . '|' . $last_name . '|' . $electorate);
-              
-              if (isset($candidate_cache[$cache_key])) {
-                $candidate_person_id = $candidate_cache[$cache_key];
-              } else {
-                $candidate_person_id = resolve_candidate_person_id($first_name, $last_name, $electorate);
-                $candidate_cache[$cache_key] = $candidate_person_id;
-              }
-              
-              $donation_data[$db_col] = $candidate_person_id;
-            }
-          } elseif ($db_col === 'amount') {
-            // Clean monetary amounts - remove $ and commas
-            if ($value) {
-              $clean_amount = preg_replace('/[$,]/', '', $value);
-              $donation_data[$db_col] = is_numeric($clean_amount) ? (float)$clean_amount : 0;
-            } else {
-              $donation_data[$db_col] = 0;
-            }
-          } elseif ($db_col === 'date') {
-            // Handle date parsing - try multiple formats
-            if ($value) {
-              $parsed_date = null;
-              $formats = ['Y-m-d', 'd/m/Y', 'm/d/Y', 'd-m-Y', 'm-d-Y'];
-              
-              foreach ($formats as $format) {
-                $date_obj = DateTime::createFromFormat($format, $value);
-                if ($date_obj !== false) {
-                  $parsed_date = $date_obj->format('Y-m-d');
-                  break;
-                }
-              }
-              
-              $donation_data[$db_col] = $parsed_date;
-            } else {
-              $donation_data[$db_col] = null;
-            }
-          } elseif ($db_col === 'year') {
-            // Extract year from various sources
-            if ($value) {
-              if (is_numeric($value) && strlen($value) === 4) {
-                $donation_data[$db_col] = $value;
-              } else {
-                // Try to extract year from date
-                $year = date('Y', strtotime($value));
-                $donation_data[$db_col] = $year ?: null;
-              }
-            } else {
-              $donation_data[$db_col] = null;
-            }
-          } else {
-            // Handle other fields normally
-            $donation_data[$db_col] = ($value === '') ? null : $value;
+        // Candidate resolution (priority order):
+        // 1) Explicit people_id mapping (user-provided)
+        // 2) Explicit candidate_person_id mapping
+        // 3) Candidate names mapping
+        // 4) candidate_overview.original_id via CSV columns like _YYYYCandidateDonations_Id or CandidateDonations2023Test_Id
+        $peopleId = null;
+
+        // (1) people_id provided
+        $peopleIdVal = $getValByDb($row, 'people_id') ?? $getValByCsv($row, 'people_id');
+        if ($peopleIdVal && is_numeric($peopleIdVal)) {
+          $peopleId = (int)$peopleIdVal;
+        }
+
+        // (2) candidate_person_id provided
+        if ($peopleId === null) {
+          $candIdVal = $getValByDb($row, 'candidate_person_id');
+          if ($candIdVal && is_numeric($candIdVal)) {
+            $peopleId = (int)$candIdVal;
           }
         }
 
-        // Ensure required fields are present
-        if (!isset($donation_data['candidate_person_id']) || !$donation_data['candidate_person_id']) {
-          $errors[] = "Row " . ($inserted + 1) . ": Missing or invalid candidate information";
+        // (3) Resolve from candidate names
+        if ($peopleId === null) {
+          $candFirst = $getValByDb($row, 'candidatename_first') ?? $getValByDb($row, 'first_name') ?? $getValByCsv($row, 'candidatename_first') ?? $getValByCsv($row, 'candidate_name_first') ?? $getValByCsv($row, 'first_name');
+          $candLast  = $getValByDb($row, 'candidatename_last')  ?? $getValByDb($row, 'last_name')  ?? $getValByCsv($row, 'candidatename_last')  ?? $getValByCsv($row, 'candidate_name_last')  ?? $getValByCsv($row, 'last_name');
+          $electName = $getValByDb($row, 'electorate')          ?? $getValByDb($row, 'electorate_name') ?? $getValByCsv($row, 'electorate') ?? $getValByCsv($row, 'electorate_name');
+          if ($candFirst && $candLast) {
+            $peopleId = $get_or_create_person($candFirst, $candLast); // exact-create; avoids AI for admin imports
+          }
+        }
+
+        // (4) Resolve via candidate_overview original_id if present in row
+        // Detect common original_id columns in donations CSVs
+        $originalId = $getValByDb($row, 'original_id');
+        if ($originalId === null) {
+          // Try common donors CSV columns
+          $c23 = $getValByDb($row, 'candidatedonations2023test_id');
+          $pA  = $getValByDb($row, 'partadonationentry_id'); // not overview id but keep for provenance if needed
+          // Pattern: _2011CandidateDonations_Id -> sanitized likely "2011candidatedonations_id"
+          $autoOrigKey = null;
+          foreach ($header_index as $hSan => $idx) {
+            if (preg_match('/^\d{4}candidatedonations_id$/', $hSan)) {
+              $autoOrigKey = $hSan;
+              break;
+            }
+          }
+          $origAuto = $autoOrigKey ? $getValByCsv($row, $autoOrigKey) : null;
+          $originalId = $c23 ?: $origAuto ?: null;
+        }
+
+        // Attempt to find candidate_overview id and/or derive people_id from it
+        [$candidateOverviewId, $coPeopleId] = $find_candidate_overview($originalId, $year, $peopleId);
+        if ($peopleId === null && $coPeopleId) $peopleId = (int)$coPeopleId;
+
+        if ($peopleId === null || $peopleId === 0) {
+          $errors[] = "Row " . ($inserted + 1) . ": Unable to resolve candidate (people_id) from provided mapping.";
           continue;
         }
 
-        if (!isset($donation_data['amount'])) {
-          $donation_data['amount'] = 0;
-        }
+        // Final insert payload
+        $cols = ['year','date','amount','money_or_goods_services','location','notes','donor_id','candidate_person_id','candidate_overview_id'];
+        $vals = [
+          $year,
+          $date,
+          $amountF,
+          ($mos !== null && $mos !== '') ? $mos : null,
+          $location,
+          $notes,
+          $donorId ?: null,
+          $peopleId,
+          $candidateOverviewId ?: null
+        ];
 
-        if (!isset($donation_data['year']) && isset($donation_data['date'])) {
-          // Extract year from date if not provided
-          $donation_data['year'] = date('Y', strtotime($donation_data['date']));
-        }
-
-        // Build and execute insert query
-        $columns = array_keys($donation_data);
-        $placeholders = implode(',', array_fill(0, count($columns), '?'));
-        $column_list = implode(',', array_map(fn($c) => "`$c`", $columns));
-        
-        $sql = "INSERT INTO `" . str_replace('`', '``', $table) . "` ($column_list) VALUES ($placeholders)";
-        $stmt = pdo()->prepare($sql);
-        $stmt->execute(array_values($donation_data));
-        
+        $colList = implode(',', array_map(fn($c) => "`$c`", $cols));
+        $ph      = implode(',', array_fill(0, count($cols), '?'));
+        $sql     = "INSERT INTO `" . str_replace('`', '``', $table) . "` ($colList) VALUES ($ph)";
+        $stmt    = pdo()->prepare($sql);
+        $stmt->execute($vals);
         $inserted++;
-
-      } catch (Exception $e) {
+      } catch (Throwable $e) {
         $errors[] = "Row " . ($inserted + 1) . ": " . $e->getMessage();
+        if (count($errors) >= 50) {
+          // prevent flooding
+          break;
+        }
       }
     }
 
     pdo()->commit();
-
-  } catch (Exception $e) {
+  } catch (Throwable $e) {
     pdo()->rollBack();
     $errors[] = "Transaction failed: " . $e->getMessage();
+  } finally {
+    fclose($fh);
   }
 
-  fclose($fh);
-  
   return [
     'inserted' => $inserted,
     'errors' => $errors
