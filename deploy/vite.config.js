@@ -21,6 +21,14 @@ export default defineConfig({
     // Configure dev server to serve static files
     fs: {
       allow: ['..']
+    },
+    // Proxy API calls during `npm run dev` to the live PHP API
+    proxy: {
+      '/webofinfluence/php-api': {
+        target: 'https://www.ludogogy.co.nz',
+        changeOrigin: true,
+        secure: true
+      }
     }
   }
 })
