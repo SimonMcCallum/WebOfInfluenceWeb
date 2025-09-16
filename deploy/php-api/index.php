@@ -361,15 +361,23 @@ function truncate_table_cascade(string $table): array {
   $order = [];
   truncate_cascade_internal($table, $visited, $order);
 
-  // Disable FK checks to allow TRUNCATE on referenced tables
-  try {
-    pdo()->exec('SET FOREIGN_KEY_CHECKS=0');
-    foreach ($order as $t) {
-      pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $t) . "`");
+  // Clear tables in dependency order.
+  // Use TRUNCATE only for tables that are not referenced by any FKs.
+  // For tables that ARE referenced by any FK (even if children are empty), MySQL forbids TRUNCATE (error 1701),
+  // so we fallback to DELETE + AUTO_INCREMENT reset.
+  foreach ($order as $t) {
+    $isReferenced = !empty(find_referencing_tables($t));
+    $qt = "`" . str_replace('`', '``', $t) . "`";
+    if ($isReferenced) {
+      pdo()->exec("DELETE FROM {$qt}");
+      try {
+        pdo()->exec("ALTER TABLE {$qt} AUTO_INCREMENT = 1");
+      } catch (Throwable $e) {
+        // Ignore if table has no AUTO_INCREMENT or ALTER not applicable
+      }
+    } else {
+      pdo()->exec("TRUNCATE TABLE {$qt}");
     }
-  } finally {
-    // Always re-enable
-    pdo()->exec('SET FOREIGN_KEY_CHECKS=1');
   }
 
   return [$order, ''];
