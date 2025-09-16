@@ -19,4 +19,9 @@ return [
   // When set to true, ALL endpoints require the token (except GET / health).
   // When false, only /admin actions require the token.
   'API_PROTECT_ALL' => false,
+
+  // AI (Gemini) — preferred way to persist the API key on shared hosting
+  // Add this key in config.php so it survives deployments and file manager cleanups.
+  // Alternatively set an environment variable GEMINI_API_KEY in your hosting control panel.
+  'GEMINI_API_KEY' => 'changeme-gemini-key',
 ];

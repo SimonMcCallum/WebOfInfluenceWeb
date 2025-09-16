@@ -66,7 +66,7 @@
       </div>
 
       <!-- New: Unclean CSV Mapping Prep -->
-      <div class="dashboard-card" style="grid-column:1">
+      <div class="dashboard-card" style="grid-column:1 / -1">
         <div class="card-header">
           <div class="card-icon">🧹</div>
           <h2 class="card-title">Unclean CSV Mapping Prep</h2>
@@ -522,11 +522,24 @@
 
       // Download prepared CSV
       html += '<div style="margin-top: 1rem; display:flex; gap:.5rem; flex-wrap:wrap;">';
-      html += `<button class="dashboard-button" onclick='downloadPreparedCSV(${JSON.stringify(headers).replace(/"/g, '"')}, ${JSON.stringify(rows).replace(/"/g, '"')})'><span>📥 Download Prepared CSV</span><span class="button-arrow">→</span></button>`;
+      html += '<button class="dashboard-button" id="downloadPreparedBtn"><span>📥 Download Prepared CSV</span><span class="button-arrow">→</span></button>';
       html += '</div>';
 
       html += '</div>';
       mappingResults.innerHTML = html;
+
+      // Persist prepared data and wire up click (avoids huge inline JSON in onclick)
+      try {
+        window._preparedMapping = { headers, rows };
+        var dlBtn = document.getElementById('downloadPreparedBtn');
+        if (dlBtn) {
+          dlBtn.addEventListener('click', function () {
+            downloadPreparedCSVFromStore();
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to initialize download button:', e);
+      }
     }
 
     function buildCSV(headers, rows) {
@@ -550,6 +563,22 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    }
+
+    function downloadPreparedCSVFromStore() {
+      try {
+        const store = window._preparedMapping || {};
+        const headers = Array.isArray(store.headers) ? store.headers : [];
+        const rows = Array.isArray(store.rows) ? store.rows : [];
+        if (!headers.length || !rows.length) {
+          alert('No prepared data to download. Please run "Prepare Mapping CSV" first.');
+          return;
+        }
+        downloadPreparedCSV(headers, rows);
+      } catch (e) {
+        console.error('Download error:', e);
+        alert('Failed to download prepared CSV.');
+      }
     }
 
     // Display configuration

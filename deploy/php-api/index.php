@@ -1263,6 +1263,14 @@ function get_gemini_api_key(): ?string {
     return trim($env);
   }
 
+  // Next, allow config.php to hold the key so it persists across deployments
+  if (isset($GLOBALS['CONFIG']) && is_array($GLOBALS['CONFIG'])) {
+    $cfgKey = $GLOBALS['CONFIG']['GEMINI_API_KEY'] ?? null;
+    if (is_string($cfgKey) && trim($cfgKey) !== '') {
+      return trim($cfgKey);
+    }
+  }
+
   // Fallback to a file in the PHP API directory
   $api_key_file = __DIR__ . '/gemini_api_key.txt';
   if (!file_exists($api_key_file)) {
@@ -1273,6 +1281,39 @@ function get_gemini_api_key(): ?string {
     return trim(file_get_contents($api_key_file));
   }
   return null;
+}
+
+/** AI key debug utilities */
+function get_gemini_key_status(): array {
+  $env = getenv('GEMINI_API_KEY');
+  $hasEnv = ($env !== false && trim((string)$env) !== '');
+
+  $filePath1 = __DIR__ . '/gemini_api_key.txt';
+  $filePath2 = __DIR__ . '/../api/gemini_api_key.txt';
+  $exists1 = is_file($filePath1);
+  $exists2 = is_file($filePath2);
+
+  $source = null;
+  $path = null;
+  if ($hasEnv) {
+    $source = 'env';
+  } elseif ($exists1) {
+    $source = 'file';
+    $path = realpath($filePath1) ?: $filePath1;
+  } elseif ($exists2) {
+    $source = 'file';
+    $path = realpath($filePath2) ?: $filePath2;
+  }
+  return [
+    'present' => (bool)($hasEnv || $exists1 || $exists2),
+    'source' => $source,
+    'file_path' => $path
+  ];
+}
+
+/** GET /ai/key-status — return whether GEMINI_API_KEY is visible to the PHP API */
+function handle_ai_key_status(): void {
+  json_response(get_gemini_key_status());
 }
 
 /**
@@ -2620,9 +2661,8 @@ function handle_ai_extract_names(): void {
     json_response(['error' => 'File too large (max 1MB)'], 400);
   }
 
-  // Get Gemini API key
-  $apiKeyFile = __DIR__ . '/../api/gemini_api_key.txt';
-  $apiKey = file_exists($apiKeyFile) ? trim(file_get_contents($apiKeyFile)) : null;
+  // Get Gemini API key (env var, config.php, or key file)
+  $apiKey = get_gemini_api_key();
   if (!$apiKey) {
     json_response(['error' => 'Gemini API key not found'], 500);
   }
@@ -3253,6 +3293,7 @@ try {
   if ($METHOD === 'POST' && $ROUTE === '/ai/extract-names') handle_ai_extract_names();
   if ($METHOD === 'POST' && $ROUTE === '/ai/extract-names-diaries') handle_ai_extract_names_diaries();
   if ($METHOD === 'POST' && $ROUTE === '/ai/prepare-mapping-csv') handle_ai_prepare_mapping_csv();
+  if ($METHOD === 'GET'  && $ROUTE === '/ai/key-status') handle_ai_key_status();
 
   // People management
   if ($METHOD === 'POST' && $ROUTE === '/people') handle_add_person();
