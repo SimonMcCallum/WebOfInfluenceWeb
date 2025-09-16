@@ -1674,6 +1674,55 @@ function handle_candidate_overview_import(string $tmpPath, string $table, bool $
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     $stmt = pdo()->prepare($sql);
 
+    // Carry-forward context for rows that omit candidate details
+    $carryFirst = '';
+    $carryLast  = '';
+    $carryParty = '';
+    $carryElect = '';
+
+    // Optional Gemini fallback to extract names from row text
+    $geminiKey = get_gemini_api_key();
+    $aiCalls = 0;
+    $aiLimit = 50; // protect against overuse
+    $aiExtractFirstLast = function(string $text) use ($geminiKey, &$aiCalls, $aiLimit): array {
+      if (!$geminiKey || $aiCalls >= $aiLimit) return [null, null];
+      $prompt = "Extract a candidate person's first and last name from the following CSV row. "
+              . "Return exactly this JSON: {\"first_name\":\"\",\"last_name\":\"\"}. "
+              . "If you cannot find a clear person name, return both fields empty. "
+              . "Do not return organisation or address strings.\n\nRow: " . $text;
+
+      try {
+        $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$geminiKey}";
+        $payload = json_encode([
+          'contents' => [[ 'parts' => [[ 'text' => $prompt ]]]]
+        ]);
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        $aiCalls++;
+        if ($code === 200 && $resp) {
+          $res = json_decode($resp, true);
+          $textOut = $res['candidates'][0]['content']['parts'][0]['text'] ?? '';
+          $textOut = preg_replace('/```\w*\n?/', '', $textOut);
+          $data = json_decode(trim($textOut), true);
+          if (is_array($data)) {
+            $fn = isset($data['first_name']) ? trim((string)$data['first_name']) : '';
+            $ln = isset($data['last_name']) ? trim((string)$data['last_name']) : '';
+            return [$fn !== '' ? $fn : null, $ln !== '' ? $ln : null];
+          }
+        }
+      } catch (Throwable $e) {
+        // ignore
+      }
+      return [null, null];
+    };
+
     while (($row = fgetcsv($fh)) !== false) {
       try {
         $first = $getVal($row, $idxFirst);
@@ -1684,6 +1733,20 @@ function handle_candidate_overview_import(string $tmpPath, string $table, bool $
         $year = (is_numeric($yearVal) && strlen((string)$yearVal) === 4)
           ? (string)$yearVal
           : ($detectedYear ?: (string)$defaultYear);
+
+        // Carry-forward values from previous candidate row (common pattern in these CSVs)
+        if ($first === '' && $carryFirst !== '') $first = $carryFirst;
+        if ($last  === '' && $carryLast  !== '') $last  = $carryLast;
+        if ($partyName === '' && $carryParty !== '') $partyName = $carryParty;
+        if ($electName === '' && $carryElect !== '') $electName = $carryElect;
+
+        // If still missing first/last, try AI fallback to extract from the row text
+        if ($first === '' || $last === '') {
+          $rowText = implode(', ', array_map(static fn($c) => (string)$c, $row));
+          [$aiFirst, $aiLast] = $aiExtractFirstLast($rowText);
+          if ($first === '' && $aiFirst) $first = $aiFirst;
+          if ($last  === '' && $aiLast)  $last  = $aiLast;
+        }
 
         if ($first === '' || $last === '') {
           $errors[] = "Missing first/last name on row " . ($inserted + count($errors) + 1);
@@ -1716,6 +1779,12 @@ function handle_candidate_overview_import(string $tmpPath, string $table, bool $
           ($originalId !== '') ? $originalId : null
         ]);
         $inserted++;
+
+        // Update carry-forward context using the most recent resolved candidate
+        $carryFirst = $first;
+        $carryLast  = $last;
+        if ($partyName !== '') $carryParty = $partyName;
+        if ($electName !== '') $carryElect = $electName;
       } catch (Throwable $e) {
         $errors[] = "Row " . ($inserted + count($errors) + 1) . ": " . $e->getMessage();
         if (count($errors) >= 50) {
