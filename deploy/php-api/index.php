@@ -688,6 +688,19 @@ function render_admin(array $ctx = []): void {
       </div>
     </div>
 
+    <div class="row">
+      <div>
+        <h2>Maintenance</h2>
+        <form action="index.php?route=/admin/backfill-2023-original" method="post" style="margin-bottom: .75rem;">
+          <button type="submit">Backfill 2023 original_id from stg_overview_2023</button>
+          <p class="note">Requires you to import candidate_csv/2023_candidate_donations.csv into table "stg_overview_2023" via "Import CSVs from Server". You can re-run safely; this shows before/after counts.</p>
+        </form>
+        <?php if (!empty($ctx['table_action_msg'])): ?>
+          <div class="<?= !empty($ctx['table_action_err']) ? 'err' : 'ok' ?>"><?= htmlspecialchars($ctx['table_action_msg'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
+        <?php endif; ?>
+      </div>
+    </div>
+
     <p class="note">Security: Query tool only permits SELECT and blocks semicolons. Upload validates identifiers and uses prepared statements.</p>
   </body>
   </html>
@@ -2260,6 +2273,120 @@ function handle_admin_import_server_batch(): void {
   render_admin($ctx);
 }
 
+function handle_admin_backfill_2023(): void {
+  require_token_admin();
+  try {
+    // Ensure staging table exists
+    $exists = false;
+    try {
+      $stmt = pdo()->query("SHOW TABLES LIKE 'stg_overview_2023'");
+      $exists = (bool)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+      // ignore
+    }
+    if (!$exists) {
+      render_admin([
+        'tables' => list_tables_with_counts(),
+        'server_csvs' => find_server_csvs(),
+        'table_action_msg' => "stg_overview_2023 not found. Import candidate_csv/2023_candidate_donations.csv into table 'stg_overview_2023' first (via Import CSVs from Server).",
+        'table_action_err' => 1,
+      ]);
+      return;
+    }
+
+    $qCount = "SELECT COUNT(*) AS total, SUM(original_id IS NOT NULL) AS with_orig FROM candidate_overview WHERE year = 2023";
+    $before = pdo()->query($qCount)->fetch();
+    $bTotal = (int)($before['total'] ?? 0);
+    $bWith  = (int)($before['with_orig'] ?? 0);
+
+    $notes = [];
+
+    // 1) Name + Party + Electorate (using sanitized staging column names)
+    $sql1 = "UPDATE candidate_overview co
+      JOIN people p      ON p.id = co.people_id
+      JOIN parties pr    ON pr.id = co.party_id
+      JOIN electorates el ON el.id = co.electorate_id
+      JOIN stg_overview_2023 s
+        ON UPPER(p.first_name) = UPPER(s.candidatename_first)
+       AND UPPER(p.last_name)  = UPPER(s.candidatename_last)
+       AND UPPER(pr.name)      = UPPER(s.party)
+       AND UPPER(el.name)      = UPPER(s.electorate)
+      SET co.original_id = s.candidatedonations2023test_id
+      WHERE co.year = 2023
+        AND co.original_id IS NULL
+        AND s.candidatedonations2023test_id IS NOT NULL";
+    $a1 = 0;
+    try { $a1 = (int)pdo()->exec($sql1); } catch (Throwable $e) { $notes[] = "Step1: ".$e->getMessage(); }
+
+    // 2) Names + Electorate
+    $sql2 = "UPDATE candidate_overview co
+      JOIN people p      ON p.id = co.people_id
+      JOIN electorates el ON el.id = co.electorate_id
+      JOIN stg_overview_2023 s
+        ON UPPER(p.first_name) = UPPER(s.candidatename_first)
+       AND UPPER(p.last_name)  = UPPER(s.candidatename_last)
+       AND UPPER(el.name)      = UPPER(s.electorate)
+      SET co.original_id = s.candidatedonations2023test_id
+      WHERE co.year = 2023
+        AND co.original_id IS NULL
+        AND s.candidatedonations2023test_id IS NOT NULL";
+    $a2 = 0;
+    try { $a2 = (int)pdo()->exec($sql2); } catch (Throwable $e) { $notes[] = "Step2: ".$e->getMessage(); }
+
+    // 3) Names + Party
+    $sql3 = "UPDATE candidate_overview co
+      JOIN people p   ON p.id = co.people_id
+      JOIN parties pr ON pr.id = co.party_id
+      JOIN stg_overview_2023 s
+        ON UPPER(p.first_name) = UPPER(s.candidatename_first)
+       AND UPPER(p.last_name)  = UPPER(s.candidatename_last)
+       AND UPPER(pr.name)      = UPPER(s.party)
+      SET co.original_id = s.candidatedonations2023test_id
+      WHERE co.year = 2023
+        AND co.original_id IS NULL
+        AND s.candidatedonations2023test_id IS NOT NULL";
+    $a3 = 0;
+    try { $a3 = (int)pdo()->exec($sql3); } catch (Throwable $e) { $notes[] = "Step3: ".$e->getMessage(); }
+
+    // 4) Names only (fallback)
+    $sql4 = "UPDATE candidate_overview co
+      JOIN people p ON p.id = co.people_id
+      JOIN stg_overview_2023 s
+        ON UPPER(p.first_name) = UPPER(s.candidatename_first)
+       AND UPPER(p.last_name)  = UPPER(s.candidatename_last)
+      SET co.original_id = s.candidatedonations2023test_id
+      WHERE co.year = 2023
+        AND co.original_id IS NULL
+        AND s.candidatedonations2023test_id IS NOT NULL";
+    $a4 = 0;
+    try { $a4 = (int)pdo()->exec($sql4); } catch (Throwable $e) { $notes[] = "Step4: ".$e->getMessage(); }
+
+    $after = pdo()->query($qCount)->fetch();
+    $aWith = (int)($after['with_orig'] ?? 0);
+
+    $msg = "Backfill 2023 original_id complete. Before with_orig={$bWith}/{$bTotal}. "
+         . "Steps updated rows: [{$a1}, {$a2}, {$a3}, {$a4}]. "
+         . "After with_orig={$aWith}/{$bTotal}.";
+    if (!empty($notes)) {
+      $msg .= " Notes: " . implode(' | ', $notes);
+    }
+
+    render_admin([
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+      'table_action_msg' => $msg,
+      'table_action_err' => 0,
+    ]);
+  } catch (Throwable $e) {
+    render_admin([
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+      'table_action_msg' => "Backfill failed: " . $e->getMessage(),
+      'table_action_err' => 1,
+    ]);
+  }
+}
+
 /** CSV Import API Functions (for frontend) */
 function handle_csv_upload_api(): void {
   if (!isset($_FILES['file']) || !is_uploaded_file($_FILES['file']['tmp_name'])) {
@@ -2609,6 +2736,7 @@ try {
   if ($METHOD === 'POST' && $ROUTE === '/admin/table-action') handle_admin_table_action();
   if ($METHOD === 'POST' && $ROUTE === '/admin/import-server') handle_admin_import_server();
   if ($METHOD === 'POST' && $ROUTE === '/admin/import-server-batch') handle_admin_import_server_batch();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/backfill-2023-original') handle_admin_backfill_2023();
 
   // CSV Import API endpoints (for frontend integration)
   if ($METHOD === 'POST' && $ROUTE === '/api/import/csv/upload') handle_csv_upload_api();
