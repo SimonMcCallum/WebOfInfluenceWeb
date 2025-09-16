@@ -44,6 +44,7 @@ const MeetingsTable = ({ meetings }) => {
             >
               Date
             </th>
+            <th className="py-2 px-4 border">Minister</th>
             <th className="py-2 px-4 border">Start Time</th>
             <th className="py-2 px-4 border">End Time</th>
             <th className="py-2 px-4 border">Title</th>
@@ -59,6 +60,14 @@ const MeetingsTable = ({ meetings }) => {
             <tr key={index} className="hover:bg-gray-50">
               <td className="py-2 px-4 border">
                 {new Date(meeting.date).toLocaleDateString()}
+              </td>
+              <td className="py-2 px-4 border">
+                {(() => {
+                  const fn = meeting.minister_first_name || "";
+                  const ln = meeting.minister_last_name || "";
+                  const name = `${fn} ${ln}`.trim();
+                  return name || "N/A";
+                })()}
               </td>
               <td className="py-2 px-4 border">
                 {formatTime(meeting.start_time) || "N/A"}

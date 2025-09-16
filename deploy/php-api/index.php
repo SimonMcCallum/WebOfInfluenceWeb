@@ -957,23 +957,25 @@ function handle_ministerial_diaries_search(): void {
   if (!$person) json_response(['error' => 'Candidate not found'], 404);
   $people_id = (int)$person['id'];
 
-  $sql = 'SELECT id, date, start_time, end_time, location, notes, type, portfolio, title, minister_person_id, with_text
-          FROM meetings WHERE minister_person_id = ?';
+  $sql = 'SELECT m.id, m.date, m.start_time, m.end_time, m.location, m.notes, m.type, m.portfolio, m.title, m.minister_person_id, m.with_text, p.first_name AS minister_first_name, p.last_name AS minister_last_name
+          FROM meetings m
+          LEFT JOIN people p ON p.id = m.minister_person_id
+          WHERE m.minister_person_id = ?';
   $params = [$people_id];
 
   if ($start && $end) {
-    $sql .= ' AND (date BETWEEN ? AND ?)';
+    $sql .= ' AND (m.date BETWEEN ? AND ?)';
     $params[] = $start; $params[] = $end;
   } elseif ($start) {
-    $sql .= ' AND date >= ?';
+    $sql .= ' AND m.date >= ?';
     $params[] = $start;
   } elseif ($end) {
-    $sql .= ' AND date <= ?';
+    $sql .= ' AND m.date <= ?';
     $params[] = $end;
   }
 
   if ($portfolio) {
-    $sql .= ' AND portfolio LIKE ?';
+    $sql .= ' AND m.portfolio LIKE ?';
     $params[] = '%' . $portfolio . '%';
   }
 
@@ -2304,6 +2306,8 @@ function handle_admin_upload_commit(): void {
         // Attendees text (CSV header variants)
         // Some diaries use "With", others "Attendees" or similar
         $csv_with = $getHdr(['With','with','Attendees','attendees','Attendee','attendee','Who','who']);
+        // Optional AI names column produced by AI Name Finder "diaries" or Mapping Prep
+        $csv_ai_attendees = $getHdr(['ai_person_names','attendees_names','ai_names']);
 
         // Helper to strip titles like "Rt Hon", "Hon", "Dr", "Sir", "Dame", "MP" from names
         $cleanName = function($name) {
@@ -2381,6 +2385,23 @@ function handle_admin_upload_commit(): void {
           if ($dbCol === 'with_text') {
             // Populate attendees text from "With" column if present
             $vals[] = ($csv_with !== null && $csv_with !== '') ? $csv_with : null;
+            // If AI attendees provided, opportunistically upsert people records for each name
+            if ($csv_ai_attendees) {
+              $names = preg_split('/[;,&]/', (string)$csv_ai_attendees);
+              foreach ($names as $nm) {
+                $nm = trim($nm);
+                if ($nm === '' || preg_match('/^(attendees?|officials|event attendees)$/i', $nm)) continue;
+                // Split "First Last" (fallback: first token as first, remainder as last)
+                $parts = preg_split('/\s+/', $nm);
+                if (!$parts || count($parts) === 0) continue;
+                $first = array_shift($parts);
+                $last  = implode(' ', $parts);
+                if ($first !== '' && $last !== '') {
+                  // Create if missing
+                  try { resolve_candidate_person_id($first, $last, ''); } catch (Throwable $e) {}
+                }
+              }
+            }
             continue;
           }
         }
