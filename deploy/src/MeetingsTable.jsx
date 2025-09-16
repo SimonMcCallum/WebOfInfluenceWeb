@@ -1,5 +1,18 @@
 import React, { useState } from "react";
 
+const formatTime = (t) => {
+  if (!t) return null;
+  // Accept "HH:MM:SS" or "HH:MM"
+  const m = String(t).match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return t; // fallback to raw if unexpected
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12;
+  if (h === 0) h = 12;
+  return `${h}:${min} ${ampm}`;
+};
+
 const MeetingsTable = ({ meetings }) => {
   const [sortOrder, setSortOrder] = useState("asc");
 
@@ -47,17 +60,19 @@ const MeetingsTable = ({ meetings }) => {
               <td className="py-2 px-4 border">
                 {new Date(meeting.date).toLocaleDateString()}
               </td>
-              <td className="py-2 px-4 border">{meeting.start_time || "N/A"}</td>
-              <td className="py-2 px-4 border">{meeting.end_time || "N/A"}</td>
+              <td className="py-2 px-4 border">
+                {formatTime(meeting.start_time) || "N/A"}
+              </td>
+              <td className="py-2 px-4 border">
+                {formatTime(meeting.end_time) || "N/A"}
+              </td>
               <td className="py-2 px-4 border">{meeting.title}</td>
               <td className="py-2 px-4 border">{meeting.type}</td>
               <td className="py-2 px-4 border">{meeting.portfolio || "N/A"}</td>
               <td className="py-2 px-4 border">{meeting.location || "N/A"}</td>
               <td className="py-2 px-4 border">{meeting.notes || "N/A"}</td>
               <td className="py-2 px-4 border">
-                {Array.isArray(meeting.attendees)
-                  ? meeting.attendees.join(", ")
-                  : meeting.attendees || "N/A"}
+                {meeting.with_text ? String(meeting.with_text) : "N/A"}
               </td>
             </tr>
           ))}

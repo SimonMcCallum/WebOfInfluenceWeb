@@ -2216,8 +2216,17 @@ function handle_admin_upload_commit(): void {
     // Special-case: importing into meetings requires minister_person_id (FK NOT NULL).
     // If user didn't map minister_person_id, compute it from CSV (ai_first_name/import_first_name or Minister)
     $isMeetings = (strtolower($table) === 'meetings');
-    if ($isMeetings && !in_array('minister_person_id', $dbCols, true)) {
-      $dbCols[] = 'minister_person_id';
+    if ($isMeetings) {
+      if (!in_array('minister_person_id', $dbCols, true)) {
+        $dbCols[] = 'minister_person_id';
+      }
+      // Ensure time columns exist; values will be derived from Schedule Time if not explicitly mapped
+      if (!in_array('start_time', $dbCols, true)) {
+        $dbCols[] = 'start_time';
+      }
+      if (!in_array('end_time', $dbCols, true)) {
+        $dbCols[] = 'end_time';
+      }
     }
 
     // Prepare final SQL
@@ -2250,6 +2259,8 @@ function handle_admin_upload_commit(): void {
       $csv_ai_last  = null;
       $csv_minister = null;
       $csv_date     = null;
+      $derivedStart = null;
+      $derivedEnd = null;
 
       if ($isMeetings) {
         // Case-insensitive and normalized header lookup
@@ -2277,6 +2288,32 @@ function handle_admin_upload_commit(): void {
           $name = preg_replace('/[(),]/', ' ', $name);
           return trim(preg_replace('/\s+/', ' ', $name));
         };
+
+        // Parse "Schedule Time" into derived start/end times (e.g., "9:30 AM - 10:00 AM")
+        $csv_schedule = $getHdr(['Schedule_Time','schedule_time','schedule time','time']);
+        if ($csv_schedule) {
+          // Normalize separators and whitespace (collapse newlines/tabs etc. inside the field)
+          $csv_schedule = preg_replace('/\s+/u', ' ', (string)$csv_schedule);
+          $rangeParts = preg_split('/\s*(?:-|–|—|to)\s*/i', trim($csv_schedule));
+          $normalizeTime = function($t) {
+            $t = trim((string)$t);
+            if ($t === '') return null;
+            // Accept formats like "9:30", "9.30", "9:30 AM"
+            $t = preg_replace('/\./', ':', $t);
+            if (!preg_match('/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM|am|pm)?$/', $t, $m)) {
+              return null;
+            }
+            $h = (int)($m[1] ?? 0);
+            $min = (int)($m[2] ?? 0);
+            $ampm = isset($m[3]) ? strtolower($m[3]) : null;
+            if ($ampm === 'pm' && $h < 12) $h += 12;
+            if ($ampm === 'am' && $h === 12) $h = 0;
+            if ($h < 0 || $h > 23 || $min < 0 || $min > 59) return null;
+            return sprintf('%02d:%02d:00', $h, $min);
+          };
+          if (count($rangeParts) >= 1) $derivedStart = $normalizeTime($rangeParts[0]);
+          if (count($rangeParts) >= 2) $derivedEnd   = $normalizeTime($rangeParts[1]);
+        }
       }
       $vals = [];
       foreach ($dbCols as $dbCol) {
@@ -2307,6 +2344,15 @@ function handle_admin_upload_commit(): void {
               // No minister available; keep NULL so INSERT IGNORE skips, avoiding FK violation
               $vals[] = null;
             }
+            continue;
+          }
+          if ($dbCol === 'start_time') {
+            // Prefer time parsed from "Schedule Time"
+            $vals[] = isset($derivedStart) ? $derivedStart : null;
+            continue;
+          }
+          if ($dbCol === 'end_time') {
+            $vals[] = isset($derivedEnd) ? $derivedEnd : null;
             continue;
           }
         }

@@ -6,6 +6,19 @@ import { useNavigate } from 'react-router-dom';
 import ResponsivePagination from 'react-responsive-pagination';
 import 'react-responsive-pagination/themes/bootstrap.css';
 
+// Format "HH:MM[:SS]" into "h:MM AM/PM"
+const formatTime = (t) => {
+  if (!t) return null;
+  const m = String(t).match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!m) return t;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12;
+  if (h === 0) h = 12;
+  return `${h}:${min} ${ampm}`;
+};
+
 const MeetingsSearch = () => {
   const [searchQuery, setSearchQuery] = useState({
     firstName: '',
@@ -115,14 +128,14 @@ const MeetingsSearch = () => {
       headers.join(','),
       ...meetings.map(meeting => [
         new Date(meeting.date).toLocaleDateString(),
-        meeting.start_time || 'N/A',
-        meeting.end_time || 'N/A',
+        formatTime(meeting.start_time) || 'N/A',
+        formatTime(meeting.end_time) || 'N/A',
         `"${meeting.title || 'N/A'}"`,
         meeting.type || 'N/A',
         meeting.portfolio || 'N/A',
         `"${meeting.location || 'N/A'}"`,
         `"${meeting.notes || 'N/A'}"`,
-        `"${Array.isArray(meeting.attendees) ? meeting.attendees.join(', ') : meeting.attendees || 'N/A'}"`
+        `"${(meeting.with_text ? String(meeting.with_text) : 'N/A').replaceAll('"', '""')}"`
       ].join(','))
     ];
 
