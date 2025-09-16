@@ -556,6 +556,9 @@ function render_admin(array $ctx = []): void {
       <form action="index.php?route=/admin/upload-commit" method="post">
         <input type="hidden" name="tmp_file" value="<?= htmlspecialchars((string)($ctx['tmp_file'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
         <input type="hidden" name="table" value="<?= htmlspecialchars((string)($ctx['map_table'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+        <?php if (!empty($ctx['orig_name'])): ?>
+          <input type="hidden" name="orig_name" value="<?= htmlspecialchars((string)($ctx['orig_name']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+        <?php endif; ?>
         <div class="row">
           <div class="col-12">
             <table>
@@ -1109,6 +1112,7 @@ function handle_admin_upload_start(): void {
     'map_table' => $table,
     'csv_columns' => $csvColumns,
     'db_columns' => array_values(array_filter($dbCols, static fn($c) => strtolower($c) !== 'id')),
+    'orig_name' => basename($_FILES['file']['name'] ?? '')
   ];
   render_admin($ctx);
 }
@@ -1622,20 +1626,26 @@ function handle_candidate_overview_import(string $tmpPath, string $table, bool $
     }
   }
 
-  // Resolve candidate-relevant indices with fallbacks
-  $idxFirst = $normIndex['candidatename_first'] ?? ($normIndex['first_name'] ?? null);
-  $idxLast  = $normIndex['candidatename_last']  ?? ($normIndex['last_name']  ?? null);
-  $idxElect = $normIndex['electorate']          ?? ($normIndex['electorate_name'] ?? null);
-  $idxParty = $normIndex['party']               ?? ($normIndex['party_name'] ?? null);
+  // Resolve candidate-relevant indices with broad alias support (handles e.g. SURNAME, FIRST NAME(S))
+  $resolveIndex = function(array $aliases) use ($normIndex) {
+    foreach ($aliases as $a) {
+      if (array_key_exists($a, $normIndex)) return $normIndex[$a];
+    }
+    return null;
+  };
+  $idxFirst = $resolveIndex(['candidatename_first','first_name','first','first_names','first_name_s','firstname','given_name','given_names']);
+  $idxLast  = $resolveIndex(['candidatename_last','last_name','surname','last','last_names','lastname','family_name']);
+  $idxElect = $resolveIndex(['electorate','electorate_name']);
+  $idxParty = $resolveIndex(['party','party_name']);
   $idxYear  = $normIndex['year']                ?? null; // optional override per row
 
-  // Totals indices
-  $idxTotalDon = $normIndex['totaldonationsacd']                 ?? null;
+  // Totals indices (support multiple header variants e.g. "TOTAL DONATIONS", "TOTAL EXPENSES")
+  $idxTotalDon = $normIndex['totaldonationsacd']                 ?? ($normIndex['total_donations'] ?? ($normIndex['totaldonations'] ?? null));
   $idxPartA    = $normIndex['totalparta']                        ?? null;
   $idxPartB    = $normIndex['totalpartb']                        ?? null;
   $idxPartC    = $normIndex['totalpartc']                        ?? null;
   $idxPartD    = $normIndex['totalpartd']                        ?? ($normIndex['totalpartdcalculated'] ?? ($normIndex['totalpartdcalculated2'] ?? null));
-  $idxTotalExp = $normIndex['totalcandidateexpensespartsabcd']   ?? ($normIndex['totalexpensesfg'] ?? ($normIndex['totalexpenses'] ?? null));
+  $idxTotalExp = $normIndex['totalcandidateexpensespartsabcd']   ?? ($normIndex['totalexpensesfg'] ?? ($normIndex['totalexpenses'] ?? ($normIndex['total_expenses'] ?? null)));
 
   // original_id index (2011/2014/2017/2023 variants)
   $idxOriginalId = null;
@@ -1805,7 +1815,13 @@ function handle_admin_upload_commit(): void {
   // Special handling for candidate_overview import using name-to-ID resolution
   $isCandidateOverview = (stripos($table, 'candidate_overview') !== false);
   if ($isCandidateOverview) {
-    $result = handle_candidate_overview_import($abs, $table, $truncate, 2023);
+    // Infer default year from original filename if possible (e.g., "...2011...csv")
+    $defaultYear = 2023;
+    $origName = $_POST['orig_name'] ?? '';
+    if (is_string($origName) && preg_match('/\b(2011|2014|2017|2020|2023)\b/', $origName, $m)) {
+      $defaultYear = (int)$m[1];
+    }
+    $result = handle_candidate_overview_import($abs, $table, $truncate, $defaultYear);
     // Cleanup tmp
     @unlink($abs);
 
