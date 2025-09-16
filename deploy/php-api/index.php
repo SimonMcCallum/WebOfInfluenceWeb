@@ -1279,10 +1279,14 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
     return ['inserted' => 0, 'errors' => ['CSV must have header row']];
   }
 
-  // Build sanitized header index
+  // Build header index with both sanitized and normalized keys
   $header_index = [];
   foreach ($rawHeader as $i => $col) {
-    $header_index[$sanitize((string)$col)] = $i;
+    $raw  = (string)$col;
+    $san  = $sanitize($raw);               // preserves case, trims non-word chars
+    $norm = normalize_csv_header($raw);    // lowercase + underscores
+    $header_index[$san]  = $i;
+    $header_index[$norm] = $i;
   }
 
   // Reverse mapping: DB column -> CSV sanitized column
@@ -1295,7 +1299,10 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
 
   // Helpers to read a value from row
   $getValByCsv = function(array $row, string $csvSan) use ($header_index) {
-    $i = $header_index[$csvSan] ?? null;
+    // Try direct, then normalized fallback (handles headers like _2011CandidateDonations_Id)
+    $i = $header_index[$csvSan]
+      ?? $header_index[normalize_csv_header($csvSan)]
+      ?? null;
     if ($i === null) return null;
     return isset($row[$i]) ? trim((string)$row[$i]) : null;
   };
