@@ -1413,29 +1413,29 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
   };
 
   $find_candidate_overview = function(?string $originalId, ?string $yearHint, ?int $peopleIdHint = null): array {
-    if (!$originalId && !$peopleIdHint) return [null, null];
+    if (!$originalId && !$peopleIdHint) return [null, null, null];
     // 1) Try by original_id with year hint (robust for placeholder dates in CSV)
     if ($originalId && $yearHint && preg_match('/^\d{4}$/', $yearHint)) {
-      $stmt = pdo()->prepare('SELECT id, people_id FROM candidate_overview WHERE original_id = ? AND year = ? LIMIT 1');
+      $stmt = pdo()->prepare('SELECT id, people_id, year FROM candidate_overview WHERE original_id = ? AND year = ? LIMIT 1');
       $stmt->execute([$originalId, $yearHint]);
       $row = $stmt->fetch();
-      if ($row) return [(int)$row['id'], (int)$row['people_id']];
+      if ($row) return [(int)$row['id'], (int)$row['people_id'], (int)$row['year']];
     }
     // 2) Try by original_id without year (in case of mismatched placeholder dates)
     if ($originalId) {
       $stmt = pdo()->prepare('SELECT id, people_id, year FROM candidate_overview WHERE original_id = ? LIMIT 1');
       $stmt->execute([$originalId]);
       $row = $stmt->fetch();
-      if ($row) return [(int)$row['id'], (int)$row['people_id']];
+      if ($row) return [(int)$row['id'], (int)$row['people_id'], (int)$row['year']];
     }
     // 3) Fallback by (people_id, year)
     if ($peopleIdHint && $yearHint && preg_match('/^\d{4}$/', $yearHint)) {
-      $stmt = pdo()->prepare('SELECT id, people_id FROM candidate_overview WHERE people_id = ? AND year = ? LIMIT 1');
+      $stmt = pdo()->prepare('SELECT id, people_id, year FROM candidate_overview WHERE people_id = ? AND year = ? LIMIT 1');
       $stmt->execute([$peopleIdHint, $yearHint]);
       $row = $stmt->fetch();
-      if ($row) return [(int)$row['id'], (int)$row['people_id']];
+      if ($row) return [(int)$row['id'], (int)$row['people_id'], (int)$row['year']];
     }
-    return [null, $peopleIdHint];
+    return [null, $peopleIdHint, null];
   };
 
   $inserted = 0;
@@ -1444,16 +1444,37 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
   try {
     pdo()->beginTransaction();
 
-    // Deduce a reliable election year hint for this CSV (filename or header key like 2011candidatedonations_id)
+    // Deduce a reliable election year hint for this CSV (filename or header key)
     $csvYearHint = null;
     if ($defaultYearHint) $csvYearHint = (string)$defaultYearHint;
+
+    // 1) From original filename if present (e.g., ...2023...)
     if (!$csvYearHint && is_string($origFilename) && preg_match('/\b(2011|2014|2017|2020|2023)\b/', $origFilename, $mfn)) {
       $csvYearHint = $mfn[1];
     }
+
+    // 2) From header keys like "2011candidatedonations_id" (appears in some year-specific CSVs)
     if (!$csvYearHint) {
       foreach ($header_index as $hSan => $_idx) {
         if (preg_match('/^(\d{4})candidatedonations_id$/', $hSan, $mh)) {
           $csvYearHint = $mh[1];
+          break;
+        }
+      }
+    }
+
+    // 3) From donor CSV header variants that embed the year e.g. "CandidateDonations2023Test_Id",
+    //    or normalized "candidatedonations2023test_id"
+    if (!$csvYearHint) {
+      foreach (array_keys($header_index) as $key) {
+        // generic: "candidate...<year>...donations"
+        if (preg_match('/candidate.*(2011|2014|2017|2020|2023).*donations/i', $key, $m2)) {
+          $csvYearHint = $m2[1];
+          break;
+        }
+        // specific: "candidatedonations<year>(test)?_id"
+        if (preg_match('/candidatedonations(2011|2014|2017|2020|2023)(?:test)?_id/i', $key, $m3)) {
+          $csvYearHint = $m3[1];
           break;
         }
       }
@@ -1593,8 +1614,19 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
         }
 
         // Attempt to find candidate_overview id and/or derive people_id from it
-        [$candidateOverviewId, $coPeopleId] = $find_candidate_overview($originalId, $csvYearHint ?: $year, $peopleId);
+        [$candidateOverviewId, $coPeopleId, $coYear] = $find_candidate_overview($originalId, $csvYearHint ?: $year, $peopleId);
         if ($peopleId === null && $coPeopleId) $peopleId = (int)$coPeopleId;
+        // Ensure year is populated: prefer parsed year; else coYear; else csvYearHint, otherwise skip row
+        if (!$year || !preg_match('/^(2011|2014|2017|2020|2023)$/', (string)$year)) {
+          if (!empty($coYear)) {
+            $year = (string)$coYear;
+          } elseif (!empty($csvYearHint)) {
+            $year = (string)$csvYearHint;
+          } else {
+            $errors[] = "Row " . ($inserted + 1) . ": Missing year and unable to infer from filename or candidate_overview.";
+            continue;
+          }
+        }
 
         if ($peopleId === null || $peopleId === 0) {
           $errors[] = "Row " . ($inserted + 1) . ": Unable to resolve candidate (people_id) from provided mapping.";
