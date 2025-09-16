@@ -65,6 +65,47 @@
         </div>
       </div>
 
+      <!-- New: Unclean CSV Mapping Prep -->
+      <div class="dashboard-card">
+        <div class="card-header">
+          <div class="card-icon">🧹</div>
+          <h2 class="card-title">Unclean CSV Mapping Prep</h2>
+        </div>
+
+        <div class="upload-area" id="mappingUploadArea">
+          <div>
+            <h3>Upload any CSV to prepare for Admin → Add Data</h3>
+            <p>AI will add helper columns: ai_first_name, ai_last_name, ai_org_name, ai_person_names, ai_orgs</p>
+            <input type="file" id="mappingFileInput" class="file-input" accept=".csv">
+            <button class="upload-button" onclick="document.getElementById('mappingFileInput').click()">
+              Choose CSV
+            </button>
+          </div>
+        </div>
+
+        <div id="mappingFileInfo" style="display: none;">
+          <p><strong>Selected file:</strong> <span id="mappingFileName"></span></p>
+          <p><strong>Size:</strong> <span id="mappingFileSize"></span></p>
+          <button class="dashboard-button" onclick="processMappingFile()" id="mappingProcessBtn">
+            <span>🧠 Prepare Mapping CSV</span>
+            <span class="button-arrow">→</span>
+          </button>
+        </div>
+
+        <div id="mappingResults"></div>
+      </div>
+
+      <!-- Placeholder: Address Cleaner (implement later) -->
+      <div class="dashboard-card">
+        <div class="card-header">
+          <div class="card-icon">🏷️</div>
+          <h2 class="card-title">Address Cleaner</h2>
+        </div>
+        <div style="padding:.5rem 0 0 0; color:#6b7280;">
+          Placeholder for future address parsing/standardization. Implementation to be added later.
+        </div>
+      </div>
+
       <div class="dashboard-card">
         <div class="card-header">
           <div class="card-icon">📊</div>
@@ -96,6 +137,44 @@
     const fileName = document.getElementById('fileName');
     const fileSize = document.getElementById('fileSize');
     const resultsContent = document.getElementById('resultsContent');
+
+    // Mapping prep elements
+    let selectedMappingFile = null;
+    const mappingUploadArea = document.getElementById('mappingUploadArea');
+    const mappingFileInput = document.getElementById('mappingFileInput');
+    const mappingFileInfo = document.getElementById('mappingFileInfo');
+    const mappingFileName = document.getElementById('mappingFileName');
+    const mappingFileSize = document.getElementById('mappingFileSize');
+    const mappingResults = document.getElementById('mappingResults');
+
+    // Mapping Upload: click to browse
+    if (mappingUploadArea) {
+      mappingUploadArea.addEventListener('click', () => {
+        mappingFileInput.click();
+      });
+      mappingUploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        mappingUploadArea.classList.add('dragover');
+      });
+      mappingUploadArea.addEventListener('dragleave', () => {
+        mappingUploadArea.classList.remove('dragover');
+      });
+      mappingUploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        mappingUploadArea.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+          handleMappingFileSelect(files[0]);
+        }
+      });
+    }
+    if (mappingFileInput) {
+      mappingFileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+          handleMappingFileSelect(e.target.files[0]);
+        }
+      });
+    }
 
     function getSelectedMode() {
       const r = document.querySelector('input[name="mode"]:checked');
@@ -361,6 +440,116 @@
         return '"' + s.replace(/"/g, '""') + '"';
       }
       return s;
+    }
+
+    // Mapping Prep functions
+    function handleMappingFileSelect(file) {
+      selectedMappingFile = file;
+      mappingFileName.textContent = file.name;
+      mappingFileSize.textContent = formatFileSize(file.size);
+      mappingFileInfo.style.display = 'block';
+      mappingUploadArea.style.display = 'none';
+      mappingResults.innerHTML = '';
+    }
+
+    async function processMappingFile() {
+      if (!selectedMappingFile) {
+        mappingResults.innerHTML = '<div class="error-message">❌ Error: No CSV selected</div>';
+        return;
+      }
+      const btn = document.getElementById('mappingProcessBtn');
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<span class="loading"></span>Processing...';
+      btn.disabled = true;
+      try {
+        const formData = new FormData();
+        formData.append('file', selectedMappingFile);
+        const base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
+        const response = await fetch(base + '/ai/prepare-mapping-csv', {
+          method: 'POST',
+          body: formData
+        });
+        const result = await response.json();
+        if (!response.ok) {
+          mappingResults.innerHTML = `<div class="error-message">❌ Error: ${escapeHtml(result.error || 'Request failed')}</div>`;
+          return;
+        }
+        displayMappingResults(result);
+      } catch (e) {
+        mappingResults.innerHTML = `<div class="error-message">❌ Error: ${escapeHtml(e.message)}</div>`;
+      } finally {
+        btn.innerHTML = orig;
+        btn.disabled = false;
+      }
+    }
+
+    function displayMappingResults(result) {
+      const headers = Array.isArray(result.headers_out) ? result.headers_out : [];
+      const rows = Array.isArray(result.rows_out) ? result.rows_out : [];
+      let html = '<div class="results-section">';
+      html += '<div class="success-message">';
+      html += `<strong>✅ Prepared!</strong> ${rows.length} rows with AI helper columns appended.`;
+      if (result.warning) {
+        html += `<div style="margin-top:.25rem; color:#a16207;">⚠️ ${escapeHtml(result.warning)}</div>`;
+      }
+      html += '</div>';
+
+      // Preview (first 15 rows)
+      const previewCount = Math.min(rows.length, 15);
+      if (headers.length && rows.length) {
+        html += '<div class="table-responsive" style="overflow:auto; max-height:420px; border:1px solid #e5e7eb; border-radius:8px; margin-top:.75rem;">';
+        html += '<table class="data-table" style="width:100%; border-collapse:collapse; font-size:.9rem;">';
+        html += '<thead><tr>';
+        headers.forEach(h => {
+          html += `<th style="position:sticky; top:0; background:#f9fafb; border-bottom:1px solid #e5e7eb; text-align:left; padding:.5rem .6rem;">${escapeHtml(h)}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+        for (let i = 0; i < previewCount; i++) {
+          html += '<tr>';
+          const r = rows[i] || [];
+          for (let j = 0; j < headers.length; j++) {
+            html += `<td style="border-top:1px solid #f1f5f9; padding:.45rem .6rem;">${escapeHtml(r[j] ?? '')}</td>`;
+          }
+          html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+        if (rows.length > previewCount) {
+          html += `<div style="margin-top:.4rem; color:#6b7280;">Showing first ${previewCount} of ${rows.length} rows.</div>`;
+        }
+      } else {
+        html += '<p>No data returned.</p>';
+      }
+
+      // Download prepared CSV
+      html += '<div style="margin-top: 1rem; display:flex; gap:.5rem; flex-wrap:wrap;">';
+      html += `<button class="dashboard-button" onclick='downloadPreparedCSV(${JSON.stringify(headers).replace(/"/g, '"')}, ${JSON.stringify(rows).replace(/"/g, '"')})'><span>📥 Download Prepared CSV</span><span class="button-arrow">→</span></button>`;
+      html += '</div>';
+
+      html += '</div>';
+      mappingResults.innerHTML = html;
+    }
+
+    function buildCSV(headers, rows) {
+      const out = [];
+      out.push(headers.map(csvEscape).join(','));
+      for (const r of rows) {
+        const vals = (headers || []).map((_, i) => csvEscape(r[i] ?? ''));
+        out.push(vals.join(','));
+      }
+      return out.join('\n');
+    }
+
+    function downloadPreparedCSV(headers, rows) {
+      const csv = buildCSV(headers, rows);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'prepared_mapping.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     }
 
     // Display configuration

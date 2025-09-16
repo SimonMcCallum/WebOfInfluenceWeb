@@ -2952,6 +2952,237 @@ function handle_ai_extract_names_diaries(): void {
   ]);
 }
 
+/** AI Mapping Prep for arbitrary "unclean" CSVs
+ * POST /ai/prepare-mapping-csv
+ * Upload any CSV; AI will flag likely person names and organizations for easy mapping.
+ * Output JSON contains headers_out (original headers + AI columns) and rows_out (array-of-arrays),
+ * so the frontend can generate a prepared CSV to upload into Admin → Add Data and map columns.
+ *
+ * Appended columns:
+ *   - ai_first_name
+ *   - ai_last_name
+ *   - ai_org_name
+ *   - ai_person_names   (semicolon-separated list)
+ *   - ai_orgs           (semicolon-separated list)
+ */
+function handle_ai_prepare_mapping_csv(): void {
+  if (!isset($_FILES['file']) || !is_uploaded_file($_FILES['file']['tmp_name'])) {
+    json_response(['error' => 'No file uploaded'], 400);
+  }
+
+  $content = file_get_contents($_FILES['file']['tmp_name']);
+  if ($content === false) {
+    json_response(['error' => 'Error reading file'], 400);
+  }
+
+  if (strlen($content) > 1024 * 1024) {
+    json_response(['error' => 'File too large (max 1MB)'], 400);
+  }
+
+  // Parse CSV to header + rows
+  $mem = fopen('php://memory', 'r+');
+  fwrite($mem, $content);
+  rewind($mem);
+
+  $header = fgetcsv($mem);
+  if (!$header) {
+    fclose($mem);
+    json_response(['error' => 'CSV must include a header row'], 400);
+  }
+
+  $rows_raw = [];
+  while (($row = fgetcsv($mem)) !== false) {
+    $rows_raw[] = $row;
+  }
+  fclose($mem);
+
+  $appendCols = ['ai_first_name', 'ai_last_name', 'ai_org_name', 'ai_person_names', 'ai_orgs'];
+  $headers_out = array_merge($header, $appendCols);
+
+  // If no AI key, return passthrough with empty AI columns
+  $apiKey = get_gemini_api_key();
+  if (!$apiKey) {
+    $rows_out = [];
+    foreach ($rows_raw as $r) {
+      $rows_out[] = array_merge($r, ['', '', '', '', '']);
+    }
+    json_response([
+      'file_name' => $_FILES['file']['name'],
+      'count_rows' => count($rows_out),
+      'headers_out' => $headers_out,
+      'rows_out' => $rows_out,
+      'warning' => 'Gemini API key not found; AI columns left empty.'
+    ]);
+  }
+
+  // Build AI items (id + concatenated row text)
+  $ai_items = []; // [ [id, text], ... ]
+  foreach ($rows_raw as $i => $r) {
+    // Join all field values; collapse whitespace
+    $joined = trim(preg_replace('/\s+/u', ' ', implode(', ', array_map(static fn($v) => (string)$v, $r))));
+    $ai_items[] = [$i, $joined];
+  }
+
+  // Chunk rows to keep prompt size reasonable
+  $chunks = [];
+  $current = [];
+  $curLen = 0;
+  foreach ($ai_items as [$rid, $text]) {
+    $tlen = strlen($text);
+    if (!empty($current) && ($curLen + $tlen) > 8000) {
+      $chunks[] = $current;
+      $current = [];
+      $curLen = 0;
+    }
+    $current[] = [$rid, $text];
+    $curLen += $tlen;
+  }
+  if (!empty($current)) $chunks[] = $current;
+
+  $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}";
+
+  $call_chunk = function(array $chunk) use ($endpoint) {
+    // Prepare payload rows
+    $payloadRows = [];
+    foreach ($chunk as [$rid, $text]) {
+      $payloadRows[] = ['id' => $rid, 'text' => $text];
+    }
+
+    $instruction = "You are given a JSON object with an array named 'rows'. Each item has 'id' and 'text' fields "
+      . "(from an arbitrary CSV row concatenated into one string). "
+      . "For EACH item, extract the following fields and return STRICTLY VALID JSON with NO extra text/markdown:\n"
+      . "{\"results\":[{\"id\": <id>, \"top_person_first\":\"\", \"top_person_last\":\"\", \"org\":\"\", \"names\": [\"First Last\", ...], \"orgs\": [\"...\"]}, ...]}\n"
+      . "Rules:\n"
+      . "- names: ONLY human person names (exclude ministries, departments, committees, companies, acronyms, roles like 'Officials', 'Attendees').\n"
+      . "- top_person_first/last: best single person from the row, split into first and last name. Leave empty strings if none.\n"
+      . "- org/orgs: Companies/organizations mentioned (no people). Leave empty string / empty array if none.\n"
+      . "- Keep original spelling as best as possible.\n"
+      . "rows:\n"
+      . json_encode(['rows' => $payloadRows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+    $body = json_encode([
+      'contents' => [
+        [
+          'parts' => [
+            ['text' => $instruction]
+          ]
+        ]
+      ]
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+    $ch = curl_init($endpoint);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    $default = [];
+    foreach ($chunk as [$rid, $_]) {
+      $default[$rid] = [
+        'top_person_first' => '',
+        'top_person_last' => '',
+        'org' => '',
+        'names' => [],
+        'orgs' => []
+      ];
+    }
+
+    if ($code !== 200 || !$resp) return $default;
+
+    $result = json_decode($resp, true);
+    if (!is_array($result) || empty($result['candidates'][0]['content']['parts'][0]['text'])) {
+      return $default;
+    }
+
+    $text = $result['candidates'][0]['content']['parts'][0]['text'];
+    // Clean markdown code blocks
+    $text = preg_replace('/```\w*\n?/', '', (string)$text);
+    $text = trim((string)$text);
+
+    $data = json_decode($text, true);
+    if (!is_array($data) || !isset($data['results']) || !is_array($data['results'])) {
+      return $default;
+    }
+
+    $out = [];
+    foreach ($data['results'] as $item) {
+      if (!is_array($item)) continue;
+      $rid = $item['id'] ?? null;
+      if ($rid === null) continue;
+      $tp_first = isset($item['top_person_first']) && is_string($item['top_person_first']) ? $item['top_person_first'] : '';
+      $tp_last  = isset($item['top_person_last']) && is_string($item['top_person_last']) ? $item['top_person_last'] : '';
+      $org      = isset($item['org']) && is_string($item['org']) ? $item['org'] : '';
+      $names    = isset($item['names']) && is_array($item['names']) ? array_values(array_filter(array_map('strval', $item['names']), static fn($s) => $s !== '')) : [];
+      $orgs     = isset($item['orgs'])  && is_array($item['orgs'])  ? array_values(array_filter(array_map('strval', $item['orgs']), static fn($s) => $s !== '')) : [];
+      $out[$rid] = [
+        'top_person_first' => $tp_first,
+        'top_person_last' => $tp_last,
+        'org' => $org,
+        'names' => $names,
+        'orgs' => $orgs
+      ];
+    }
+
+    // Ensure all ids appear
+    foreach ($chunk as [$rid, $_]) {
+      if (!array_key_exists($rid, $out)) {
+        $out[$rid] = $default[$rid];
+      }
+    }
+    return $out;
+  };
+
+  $ai_results = [];
+  foreach ($chunks as $ch) {
+    try {
+      $res = $call_chunk($ch);
+      foreach ($res as $rid => $vals) {
+        $ai_results[$rid] = $vals;
+      }
+    } catch (Throwable $e) {
+      // Default empty on error
+      foreach ($ch as [$rid, $_]) {
+        $ai_results[$rid] = [
+          'top_person_first' => '',
+          'top_person_last' => '',
+          'org' => '',
+          'names' => [],
+          'orgs' => []
+        ];
+      }
+    }
+  }
+
+  // Build rows_out (array-of-arrays in header order)
+  $rows_out = [];
+  foreach ($rows_raw as $i => $r) {
+    $ai = $ai_results[$i] ?? [
+      'top_person_first' => '',
+      'top_person_last' => '',
+      'org' => '',
+      'names' => [],
+      'orgs' => []
+    ];
+    $ai_first = (string)($ai['top_person_first'] ?? '');
+    $ai_last  = (string)($ai['top_person_last'] ?? '');
+    $ai_org   = (string)($ai['org'] ?? '');
+    $namesStr = implode('; ', (array)($ai['names'] ?? []));
+    $orgsStr  = implode('; ', (array)($ai['orgs'] ?? []));
+    $rows_out[] = array_merge($r, [$ai_first, $ai_last, $ai_org, $namesStr, $orgsStr]);
+  }
+
+  json_response([
+    'file_name' => $_FILES['file']['name'],
+    'count_rows' => count($rows_out),
+    'headers_out' => $headers_out,
+    'rows_out' => $rows_out
+  ]);
+}
+
 function handle_add_person(): void {
   // Support JSON or form POST
   $input = null;
@@ -3014,6 +3245,7 @@ try {
   // AI
   if ($METHOD === 'POST' && $ROUTE === '/ai/extract-names') handle_ai_extract_names();
   if ($METHOD === 'POST' && $ROUTE === '/ai/extract-names-diaries') handle_ai_extract_names_diaries();
+  if ($METHOD === 'POST' && $ROUTE === '/ai/prepare-mapping-csv') handle_ai_prepare_mapping_csv();
 
   // People management
   if ($METHOD === 'POST' && $ROUTE === '/people') handle_add_person();
