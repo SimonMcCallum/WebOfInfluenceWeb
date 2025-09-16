@@ -1403,6 +1403,141 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
   ];
 }
 
+/** Helper: get or create party by name (case-insensitive) */
+function get_or_create_party_id(string $name): ?int {
+  $name = trim($name);
+  if ($name === '') return null;
+  $stmt = pdo()->prepare('SELECT id FROM parties WHERE UPPER(name) = UPPER(?) LIMIT 1');
+  $stmt->execute([$name]);
+  $row = $stmt->fetch();
+  if ($row && isset($row['id'])) return (int)$row['id'];
+  $ins = pdo()->prepare('INSERT INTO parties (name) VALUES (?)');
+  $ins->execute([$name]);
+  return (int)pdo()->lastInsertId();
+}
+
+/** Helper: get or create electorate by name (case-insensitive) */
+function get_or_create_electorate_id(string $name): ?int {
+  $name = trim($name);
+  if ($name === '') return null;
+  $stmt = pdo()->prepare('SELECT id FROM electorates WHERE UPPER(name) = UPPER(?) LIMIT 1');
+  $stmt->execute([$name]);
+  $row = $stmt->fetch();
+  if ($row && isset($row['id'])) return (int)$row['id'];
+  $ins = pdo()->prepare('INSERT INTO electorates (name) VALUES (?)');
+  $ins->execute([$name]);
+  return (int)pdo()->lastInsertId();
+}
+
+/** Normalize CSV header keys: "First Name" -> "first_name", "CandidateName_First" -> "candidatename_first" */
+function normalize_csv_header(string $s): string {
+  $s = strtolower($s);
+  $s = preg_replace('/[^a-z0-9]+/', '_', $s);
+  $s = preg_replace('/_+/', '_', $s);
+  return trim($s, '_');
+}
+
+/**
+ * Candidate Overview import:
+ * - CSV is expected to have columns for first/last name and optionally electorate and party.
+ * - Resolves/creates people, resolves/creates parties/electorates by name.
+ * - Inserts rows into candidate_overview with (people_id, party_id, electorate_id, year).
+ */
+function handle_candidate_overview_import(string $tmpPath, string $table, bool $truncate, int $defaultYear = 2023): array {
+  // Open CSV
+  $fh = @fopen($tmpPath, 'r');
+  if ($fh === false) {
+    return ['inserted' => 0, 'errors' => ['Failed to open CSV file']];
+  }
+  $header = fgetcsv($fh);
+  if (!$header) {
+    fclose($fh);
+    return ['inserted' => 0, 'errors' => ['CSV must include a header row']];
+  }
+
+  // Build normalized header index
+  $normIndex = [];
+  foreach ($header as $i => $col) {
+    $normIndex[normalize_csv_header((string)$col)] = $i;
+  }
+  $getVal = function(array $row, ?int $idx): string {
+    if ($idx === null) return '';
+    return isset($row[$idx]) ? trim((string)$row[$idx]) : '';
+  };
+
+  // Resolve candidate-relevant indices with fallbacks
+  $idxFirst = $normIndex['first_name'] ?? ($normIndex['candidatename_first'] ?? null);
+  $idxLast  = $normIndex['last_name']  ?? ($normIndex['candidatename_last']  ?? null);
+  $idxElect = $normIndex['electorate'] ?? ($normIndex['electorate_name'] ?? null);
+  $idxParty = $normIndex['party']      ?? ($normIndex['party_name'] ?? null);
+  $idxYear  = $normIndex['year']       ?? null; // optional override per row
+
+  if ($idxFirst === null || $idxLast === null) {
+    fclose($fh);
+    return ['inserted' => 0, 'errors' => ['CSV must include First Name and Last Name columns']];
+  }
+
+  $inserted = 0;
+  $errors = [];
+
+  try {
+    if ($truncate) {
+      try {
+        pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $table) . "`");
+      } catch (Throwable $e) {
+        // Fallback if TRUNCATE is not permitted due to FKs
+        pdo()->exec("DELETE FROM `" . str_replace('`', '``', $table) . "`");
+        try { pdo()->exec("ALTER TABLE `" . str_replace('`', '``', $table) . "` AUTO_INCREMENT = 1"); } catch (Throwable $ignore) {}
+      }
+    }
+
+    pdo()->beginTransaction();
+    $sql = "INSERT IGNORE INTO `" . str_replace('`', '``', $table) . "` (people_id, party_id, electorate_id, year) VALUES (?, ?, ?, ?)";
+    $stmt = pdo()->prepare($sql);
+
+    while (($row = fgetcsv($fh)) !== false) {
+      try {
+        $first = $getVal($row, $idxFirst);
+        $last  = $getVal($row, $idxLast);
+        $electName = $getVal($row, $idxElect);
+        $partyName = $getVal($row, $idxParty);
+        $yearVal = $getVal($row, $idxYear);
+        $year = (is_numeric($yearVal) && strlen((string)$yearVal) === 4) ? (int)$yearVal : $defaultYear;
+
+        if ($first === '' || $last === '') {
+          $errors[] = "Missing first/last name on row " . ($inserted + count($errors) + 1);
+          continue;
+        }
+
+        // Resolve or create people
+        $peopleId = resolve_candidate_person_id($first, $last, $electName);
+
+        // Resolve or create party/electorate
+        $partyId = $partyName !== '' ? get_or_create_party_id($partyName) : null;
+        $electId = $electName !== '' ? get_or_create_electorate_id($electName) : null;
+
+        $stmt->execute([$peopleId, $partyId, $electId, $year]);
+        $inserted++;
+      } catch (Throwable $e) {
+        $errors[] = "Row " . ($inserted + count($errors) + 1) . ": " . $e->getMessage();
+        if (count($errors) >= 50) {
+          // Avoid flooding with errors
+          break;
+        }
+      }
+    }
+
+    pdo()->commit();
+  } catch (Throwable $e) {
+    pdo()->rollBack();
+    $errors[] = "Transaction failed: " . $e->getMessage();
+  } finally {
+    fclose($fh);
+  }
+
+  return ['inserted' => $inserted, 'errors' => $errors];
+}
+
 /** Admin: POST /admin/upload-commit (execute mapping import) */
 function handle_admin_upload_commit(): void {
   $tmpName = $_POST['tmp_file'] ?? '';
@@ -1458,6 +1593,41 @@ function handle_admin_upload_commit(): void {
   if (!is_safe_identifier(str_replace('.', '_', $table))) {
     render_admin([
       'error' => 'Invalid destination table',
+      'tables' => list_tables_with_counts(),
+      'server_csvs' => find_server_csvs(),
+    ]);
+    return;
+  }
+
+  // Special handling for candidate_overview import using name-to-ID resolution
+  $isCandidateOverview = (stripos($table, 'candidate_overview') !== false);
+  if ($isCandidateOverview) {
+    $result = handle_candidate_overview_import($abs, $table, $truncate, 2023);
+    // Cleanup tmp
+    @unlink($abs);
+
+    $inserted = (int)($result['inserted'] ?? 0);
+    $errors = $result['errors'] ?? [];
+    if (!empty($errors)) {
+      $errorMsg = "Import completed with errors:\n" . implode("\n", array_slice($errors, 0, 10));
+      if (count($errors) > 10) {
+        $errorMsg .= "\n... and " . (count($errors) - 10) . " more errors.";
+      }
+      render_admin([
+        'error' => $errorMsg,
+        'upload_result' => true,
+        'inserted' => $inserted,
+        'table_shown' => $table,
+        'tables' => list_tables_with_counts(),
+        'server_csvs' => find_server_csvs(),
+      ]);
+      return;
+    }
+
+    render_admin([
+      'upload_result' => true,
+      'inserted' => $inserted,
+      'table_shown' => $table,
       'tables' => list_tables_with_counts(),
       'server_csvs' => find_server_csvs(),
     ]);
