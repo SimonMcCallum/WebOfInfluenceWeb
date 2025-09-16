@@ -459,6 +459,7 @@ function render_admin(array $ctx = []): void {
   $upload_result = $ctx['upload_result'] ?? false;
   $inserted = (int)($ctx['inserted'] ?? 0);
   $table_shown = htmlspecialchars((string)($ctx['table_shown'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+  $post_count = isset($ctx['post_count']) ? (int)$ctx['post_count'] : null;
 
   ?><!doctype html>
   <html lang="en">
@@ -543,7 +544,10 @@ function render_admin(array $ctx = []): void {
           <?php if (!empty($error)) : ?>
             <div class="err"><?= htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
           <?php else: ?>
-            <div class="ok">Inserted <?= (int)$inserted ?> rows into <?= $table_shown ?>.</div>
+            <div class="ok">
+              Inserted <?= (int)$inserted ?> rows into <?= $table_shown ?>.
+              <?php if ($post_count !== null): ?> Now has <?= (int)$post_count ?> rows.<?php endif; ?>
+            </div>
           <?php endif; ?>
         <?php endif; ?>
       </div>
@@ -2225,7 +2229,8 @@ function handle_admin_upload_commit(): void {
       }
       try {
         $stmt->execute($vals);
-        $inserted++;
+        // Count actual affected rows to avoid over-reporting when INSERT IGNORE skips duplicates
+        $inserted += (int)$stmt->rowCount();
       } catch (Throwable $e) {
         fclose($fh);
         render_admin([
@@ -2242,9 +2247,19 @@ function handle_admin_upload_commit(): void {
   // Cleanup tmp file
   @unlink($abs);
 
+  // Compute post-insert row count to show accurate table size
+  $postCount = null;
+  try {
+    $cntStmt = pdo()->query("SELECT COUNT(*) AS c FROM `" . str_replace('`', '``', $table) . "`");
+    $postCount = (int)($cntStmt->fetch()['c'] ?? 0);
+  } catch (Throwable $e) {
+    $postCount = null;
+  }
+
   render_admin([
     'upload_result' => true,
     'inserted' => $inserted,
+    'post_count' => $postCount,
     'table_shown' => $table,
     'tables' => list_tables_with_counts(),
     'server_csvs' => find_server_csvs(),
