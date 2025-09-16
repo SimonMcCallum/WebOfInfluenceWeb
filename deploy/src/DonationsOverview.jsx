@@ -85,7 +85,7 @@ function DonationsOverview() {
         for (let year of activeYears) {
             try {
                 const response = await fetch(
-                    `${API_BASE}/candidates/election-overview/${year}/search/combined?${params.toString()}`
+                    `${API_BASE}?route=/candidates/election-overview/${year}/search/combined&${params.toString()}`
                 );
 
                 if (response.ok) {
