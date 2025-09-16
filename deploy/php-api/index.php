@@ -1455,8 +1455,34 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
 
         // (3) Resolve from candidate names
         if ($peopleId === null) {
-          $candFirst = $getValByDb($row, 'candidatename_first') ?? $getValByDb($row, 'first_name') ?? $getValByCsv($row, 'candidatename_first') ?? $getValByCsv($row, 'candidate_name_first') ?? $getValByCsv($row, 'first_name');
-          $candLast  = $getValByDb($row, 'candidatename_last')  ?? $getValByDb($row, 'last_name')  ?? $getValByCsv($row, 'candidatename_last')  ?? $getValByCsv($row, 'candidate_name_last')  ?? $getValByCsv($row, 'last_name');
+          $candFirst = $getValByDb($row, 'candidatename_first')
+                    ?? $getValByDb($row, 'first_name')
+                    ?? $getValByDb($row, 'first_name_s')
+                    ?? $getValByDb($row, 'first')
+                    ?? $getValByDb($row, 'first_names')
+                    ?? $getValByDb($row, 'firstname')
+                    ?? $getValByDb($row, 'given_name')
+                    ?? $getValByCsv($row, 'candidatename_first')
+                    ?? $getValByCsv($row, 'candidate_name_first')
+                    ?? $getValByCsv($row, 'first_name')
+                    ?? $getValByCsv($row, 'first_name_s')
+                    ?? $getValByCsv($row, 'first')
+                    ?? $getValByCsv($row, 'first_names')
+                    ?? $getValByCsv($row, 'firstname')
+                    ?? $getValByCsv($row, 'given_name');
+          $candLast  = $getValByDb($row, 'candidatename_last')
+                    ?? $getValByDb($row, 'last_name')
+                    ?? $getValByDb($row, 'surname')
+                    ?? $getValByDb($row, 'last')
+                    ?? $getValByDb($row, 'lastname')
+                    ?? $getValByDb($row, 'family_name')
+                    ?? $getValByCsv($row, 'candidatename_last')
+                    ?? $getValByCsv($row, 'candidate_name_last')
+                    ?? $getValByCsv($row, 'last_name')
+                    ?? $getValByCsv($row, 'surname')
+                    ?? $getValByCsv($row, 'last')
+                    ?? $getValByCsv($row, 'lastname')
+                    ?? $getValByCsv($row, 'family_name');
           $electName = $getValByDb($row, 'electorate')          ?? $getValByDb($row, 'electorate_name') ?? $getValByCsv($row, 'electorate') ?? $getValByCsv($row, 'electorate_name');
           if ($candFirst && $candLast) {
             $peopleId = $get_or_create_person($candFirst, $candLast); // exact-create; avoids AI for admin imports
