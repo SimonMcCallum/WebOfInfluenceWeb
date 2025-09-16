@@ -8,6 +8,13 @@ const personCache = new Map();
 const partyCache = new Map();
 const electorateCache = new Map();
 
+// Currency formatter for table display
+const formatCurrency = (v) => {
+    const n = Number(v ?? 0);
+    if (Number.isNaN(n)) return '$0.00';
+    return `$${n.toLocaleString('en-NZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
 class Entry {
     constructor(people_id, party_id, electorate_id, total_expenses, total_donations, election_year) {
         this.people_id = people_id;
@@ -48,7 +55,7 @@ const fetchAdditionalDetails = async (result) => {
                 firstName = safe(fn);
                 lastName = safe(ln);
             } else {
-                const url = buildUrl(`/candidates/search-id?people_id=${encodeURIComponent(result.people_id)}`);
+                const url = `${API_BASE}?route=/candidates/search-id&people_id=${encodeURIComponent(result.people_id)}`;
                 if (url) {
                     const res = await fetch(url);
                     if (res.ok) {
@@ -77,7 +84,7 @@ const fetchAdditionalDetails = async (result) => {
             if (partyCache.has(cacheKey)) {
                 party = safe(partyCache.get(cacheKey));
             } else {
-                const url = buildUrl(`/party/search-id?party_id=${encodeURIComponent(result.party_id)}`);
+                const url = `${API_BASE}?route=/party/search-id&party_id=${encodeURIComponent(result.party_id)}`;
                 if (url) {
                     const res = await fetch(url);
                     if (res.ok) {
@@ -104,7 +111,7 @@ const fetchAdditionalDetails = async (result) => {
             if (electorateCache.has(cacheKey)) {
                 electorate = safe(electorateCache.get(cacheKey));
             } else {
-                const url = buildUrl(`/electorate/search-id?electorate_id=${encodeURIComponent(result.electorate_id)}`);
+                const url = `${API_BASE}?route=/electorate/search-id&electorate_id=${encodeURIComponent(result.electorate_id)}`;
                 if (url) {
                     const res = await fetch(url);
                     if (res.ok) {
@@ -270,10 +277,10 @@ const Output = ({ results, onExportCSV }) => {
                                 {detail.election_year}
                             </td>
                             <td style={{ padding: '0.75rem', borderBottom: '1px solid #ddd' }}>
-                                {detail.total_expenses}
+                                {formatCurrency(detail.total_expenses)}
                             </td>
                             <td style={{ padding: '0.75rem', borderBottom: '1px solid #ddd' }}>
-                                {detail.total_donations}
+                                {formatCurrency(detail.total_donations)}
                             </td>
                         </tr>
                     ))}
