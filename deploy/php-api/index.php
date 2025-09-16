@@ -319,6 +319,62 @@ function existing_columns(string $table): array {
   }
 }
 
+/** Foreign key helpers for safe TRUNCATE (cascade children then parent) */
+function find_referencing_tables(string $table): array {
+  $sql = "SELECT TABLE_NAME
+          FROM information_schema.KEY_COLUMN_USAGE
+          WHERE TABLE_SCHEMA = DATABASE()
+            AND REFERENCED_TABLE_NAME = ?
+          GROUP BY TABLE_NAME";
+  $stmt = pdo()->prepare($sql);
+  $stmt->execute([$table]);
+  $rows = $stmt->fetchAll();
+  $out = [];
+  foreach ($rows as $r) {
+    $t = $r['TABLE_NAME'] ?? null;
+    if ($t) $out[] = $t;
+  }
+  return $out;
+}
+
+/** Internal recursive truncation in FK dependency order (children first) */
+function truncate_cascade_internal(string $table, array &$visited, array &$order): void {
+  if (isset($visited[$table])) return;
+  $visited[$table] = true;
+
+  // Recurse into child tables that reference this table
+  $children = find_referencing_tables($table);
+  foreach ($children as $child) {
+    truncate_cascade_internal($child, $visited, $order);
+  }
+
+  // Then add this table to the truncation order only (actual truncation done later)
+  $order[] = $table;
+}
+
+/**
+ * Public API: Truncate a table along with any tables that reference it via FKs.
+ * Returns [array $truncatedOrder, string $warning]
+ */
+function truncate_table_cascade(string $table): array {
+  $visited = [];
+  $order = [];
+  truncate_cascade_internal($table, $visited, $order);
+
+  // Disable FK checks to allow TRUNCATE on referenced tables
+  try {
+    pdo()->exec('SET FOREIGN_KEY_CHECKS=0');
+    foreach ($order as $t) {
+      pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $t) . "`");
+    }
+  } finally {
+    // Always re-enable
+    pdo()->exec('SET FOREIGN_KEY_CHECKS=1');
+  }
+
+  return [$order, ''];
+}
+
 /** Import a CSV file on server into a table. Returns ['inserted' => n, 'table' => t, 'error' => ''] */
 function import_server_csv_to_table(string $relPath, ?string $targetTable, bool $truncateFirst): array {
   $base = data_dir();
@@ -1550,8 +1606,12 @@ function handle_admin_table_action(): void {
     $err = 'Invalid table name';
   } elseif ($action === 'truncate') {
     try {
-      pdo()->exec("TRUNCATE TABLE `" . str_replace('`', '``', $table) . "`");
-      $msg = "Truncated table {$table}.";
+      // Truncate in FK-safe order: children first, then requested table
+      [$truncated, $warn] = truncate_table_cascade($table);
+      $msg = "Truncated tables: " . implode(', ', $truncated) . ".";
+      if (!empty($warn)) {
+        $msg .= " " . $warn;
+      }
     } catch (Throwable $e) {
       $err = $e->getMessage();
     }
