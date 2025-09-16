@@ -21,8 +21,8 @@
       </a>
     </div>
 
-    <div class="dashboard-grid">
-      <div class="dashboard-card">
+    <div class="dashboard-grid" style="display:grid; grid-template-columns:minmax(320px, 420px) 1fr; gap:1rem; align-items:start;">
+      <div class="dashboard-card" style="grid-column:1">
         <div class="card-header">
           <div class="card-icon">📄</div>
           <h2 class="card-title">File Upload</h2>
@@ -66,7 +66,7 @@
       </div>
 
       <!-- New: Unclean CSV Mapping Prep -->
-      <div class="dashboard-card">
+      <div class="dashboard-card" style="grid-column:1">
         <div class="card-header">
           <div class="card-icon">🧹</div>
           <h2 class="card-title">Unclean CSV Mapping Prep</h2>
@@ -96,7 +96,7 @@
       </div>
 
       <!-- Placeholder: Address Cleaner (implement later) -->
-      <div class="dashboard-card">
+      <div class="dashboard-card" style="grid-column:1">
         <div class="card-header">
           <div class="card-icon">🏷️</div>
           <h2 class="card-title">Address Cleaner</h2>
@@ -106,7 +106,7 @@
         </div>
       </div>
 
-      <div class="dashboard-card">
+      <div class="dashboard-card" style="grid-column:2; align-self:start;">
         <div class="card-header">
           <div class="card-icon">📊</div>
           <h2 class="card-title">Results</h2>
