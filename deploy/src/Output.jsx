@@ -3,6 +3,11 @@ import ResponsivePagination from 'react-responsive-pagination';
 import 'react-responsive-pagination/themes/bootstrap.css';
 import { API_BASE } from './apiConfig';
 
+// Caches to avoid repeated lookups and speed up rendering
+const personCache = new Map();
+const partyCache = new Map();
+const electorateCache = new Map();
+
 class Entry {
     constructor(people_id, party_id, electorate_id, total_expenses, total_donations, election_year) {
         this.people_id = people_id;
@@ -36,18 +41,27 @@ const fetchAdditionalDetails = async (result) => {
 
     // People
     try {
-        if (result?.people_id) {
-            const url = buildUrl(`/candidates/search-id?people_id=${encodeURIComponent(result.people_id)}`);
-            if (url) {
-                const res = await fetch(url);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (Array.isArray(data) && data.length) {
-                        firstName = safe(data[0]?.first_name);
-                        lastName = safe(data[0]?.last_name);
-                    } else if (data && typeof data === "object") {
-                        firstName = safe(data.first_name);
-                        lastName = safe(data.last_name);
+        if (result?.people_id && (firstName === "Unknown" || lastName === "Unknown")) {
+            const cacheKey = String(result.people_id);
+            if (personCache.has(cacheKey)) {
+                const [fn, ln] = personCache.get(cacheKey);
+                firstName = safe(fn);
+                lastName = safe(ln);
+            } else {
+                const url = buildUrl(`/candidates/search-id?people_id=${encodeURIComponent(result.people_id)}`);
+                if (url) {
+                    const res = await fetch(url);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (Array.isArray(data) && data.length) {
+                            firstName = safe(data[0]?.first_name);
+                            lastName = safe(data[0]?.last_name);
+                            personCache.set(cacheKey, [firstName, lastName]);
+                        } else if (data && typeof data === "object") {
+                            firstName = safe(data.first_name);
+                            lastName = safe(data.last_name);
+                            personCache.set(cacheKey, [firstName, lastName]);
+                        }
                     }
                 }
             }
@@ -58,16 +72,23 @@ const fetchAdditionalDetails = async (result) => {
 
     // Party
     try {
-        if (result?.party_id) {
-            const url = buildUrl(`/party/search-id?party_id=${encodeURIComponent(result.party_id)}`);
-            if (url) {
-                const res = await fetch(url);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (Array.isArray(data) && data.length) {
-                        party = safe(data[0]?.party_name);
-                    } else if (data && typeof data === "object") {
-                        party = safe(data.party_name || data.name);
+        if (result?.party_id && party === "Unknown") {
+            const cacheKey = String(result.party_id);
+            if (partyCache.has(cacheKey)) {
+                party = safe(partyCache.get(cacheKey));
+            } else {
+                const url = buildUrl(`/party/search-id?party_id=${encodeURIComponent(result.party_id)}`);
+                if (url) {
+                    const res = await fetch(url);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (Array.isArray(data) && data.length) {
+                            party = safe(data[0]?.party_name);
+                            partyCache.set(cacheKey, party);
+                        } else if (data && typeof data === "object") {
+                            party = safe(data.party_name || data.name);
+                            partyCache.set(cacheKey, party);
+                        }
                     }
                 }
             }
@@ -78,16 +99,23 @@ const fetchAdditionalDetails = async (result) => {
 
     // Electorate
     try {
-        if (result?.electorate_id) {
-            const url = buildUrl(`/electorate/search-id?electorate_id=${encodeURIComponent(result.electorate_id)}`);
-            if (url) {
-                const res = await fetch(url);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (Array.isArray(data) && data.length) {
-                        electorate = safe(data[0]?.electorate_name || data[0]?.name);
-                    } else if (data && typeof data === "object") {
-                        electorate = safe(data.electorate_name || data.name);
+        if (result?.electorate_id && electorate === "Unknown") {
+            const cacheKey = String(result.electorate_id);
+            if (electorateCache.has(cacheKey)) {
+                electorate = safe(electorateCache.get(cacheKey));
+            } else {
+                const url = buildUrl(`/electorate/search-id?electorate_id=${encodeURIComponent(result.electorate_id)}`);
+                if (url) {
+                    const res = await fetch(url);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (Array.isArray(data) && data.length) {
+                            electorate = safe(data[0]?.electorate_name || data[0]?.name);
+                            electorateCache.set(cacheKey, electorate);
+                        } else if (data && typeof data === "object") {
+                            electorate = safe(data.electorate_name || data.name);
+                            electorateCache.set(cacheKey, electorate);
+                        }
                     }
                 }
             }
@@ -124,10 +152,29 @@ const Output = ({ results, onExportCSV }) => {
             }
 
             try {
-                const detailedResults = await Promise.all(
-                    results.map(result => fetchAdditionalDetails(result))
+                // Fast path: if inline fields are present, avoid extra lookups so the table renders immediately
+                const inlineReady = results.every(r =>
+                    r && (r.first_name || r.last_name || r.party_name || r.electorate_name)
                 );
-                setProcessedResults(detailedResults);
+
+                if (inlineReady) {
+                    const mapped = results.map(r => ({
+                        firstName: r.first_name || 'Unknown',
+                        lastName: r.last_name || 'Unknown',
+                        party: r.party_name || 'Unknown',
+                        electorate: r.electorate_name || 'Unknown',
+                        total_expenses: r.total_expenses || 0,
+                        total_donations: r.total_donations || 0,
+                        election_year: r.election_year || 'Unknown',
+                    }));
+                    setProcessedResults(mapped);
+                } else {
+                    // Fallback: enrich only when inline fields are missing
+                    const detailedResults = await Promise.all(
+                        results.map(result => fetchAdditionalDetails(result))
+                    );
+                    setProcessedResults(detailedResults);
+                }
             } catch (error) {
                 console.error("Error processing results:", error);
                 setProcessedResults([]);
