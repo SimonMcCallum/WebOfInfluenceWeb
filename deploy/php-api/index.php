@@ -1257,9 +1257,16 @@ function get_candidate_suggestions_from_gemini(string $firstName, string $lastNa
  * Get Gemini API key from file
  */
 function get_gemini_api_key(): ?string {
+  // Prefer environment variable if set (e.g., via hosting control panel)
+  $env = getenv('GEMINI_API_KEY');
+  if ($env !== false && trim($env) !== '') {
+    return trim($env);
+  }
+
+  // Fallback to a file in the PHP API directory
   $api_key_file = __DIR__ . '/gemini_api_key.txt';
   if (!file_exists($api_key_file)) {
-    // Try the api directory
+    // Try the Python API directory sibling (in case the key is stored once for both)
     $api_key_file = __DIR__ . '/../api/gemini_api_key.txt';
   }
   if (file_exists($api_key_file)) {

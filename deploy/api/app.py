@@ -499,11 +499,28 @@ def admin_ai_generate_names():
 
 # --- AI Integration ---
 def get_gemini_api_key():
-    try:
-        with open('gemini_api_key.txt', 'r') as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return None
+    # Prefer environment variable if present
+    env_key = os.environ.get("GEMINI_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+
+    # Check common file locations relative to this file
+    here = os.path.dirname(__file__)
+    candidates = [
+        os.path.join(here, "gemini_api_key.txt"),
+        os.path.join(here, "..", "gemini_api_key.txt"),
+    ]
+    for p in candidates:
+        try:
+            with open(p, "r") as f:
+                key = f.read().strip()
+                if key:
+                    return key
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+    return None
 
 @app.route('/ai/generate', methods=['POST'])
 def ai_generate():
