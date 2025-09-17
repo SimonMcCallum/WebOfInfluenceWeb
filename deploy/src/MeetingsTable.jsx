@@ -51,8 +51,8 @@ const MeetingsTable = ({ meetings }) => {
             <th className="py-2 px-4 border">Type</th>
             <th className="py-2 px-4 border">Portfolio</th>
             <th className="py-2 px-4 border">Location</th>
-            <th className="py-2 px-4 border">Notes</th>
             <th className="py-2 px-4 border">Attendees</th>
+            <th className="py-2 px-4 border">Notes</th>
           </tr>
         </thead>
         <tbody>
@@ -79,10 +79,10 @@ const MeetingsTable = ({ meetings }) => {
               <td className="py-2 px-4 border">{meeting.type}</td>
               <td className="py-2 px-4 border">{meeting.portfolio || "N/A"}</td>
               <td className="py-2 px-4 border">{meeting.location || "N/A"}</td>
-              <td className="py-2 px-4 border">{meeting.notes || "N/A"}</td>
               <td className="py-2 px-4 border">
                 {meeting.with_text ? String(meeting.with_text) : "N/A"}
               </td>
+              <td className="py-2 px-4 border">{meeting.notes || "N/A"}</td>
             </tr>
           ))}
         </tbody>
