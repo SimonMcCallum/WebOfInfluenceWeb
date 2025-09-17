@@ -90,9 +90,11 @@ const BarChart = ({ results, isLoading }) => {
         }
       }
 
-      const displayParty = Object.prototype.hasOwnProperty.call(partyColors, (partyName || '').toUpperCase())
-        ? partyName
-        : 'Other';
+      // Normalize and only keep known parties for legend coloring; unknowns show as grey but no legend chip
+      const normalized = normalizePartyName(partyName);
+      const displayParty = Object.prototype.hasOwnProperty.call(partyColors, normalized)
+        ? normalized
+        : 'Unknown';
 
       return {
         name: [first, last].filter(Boolean).join(' ') || 'Unknown',
@@ -209,19 +211,14 @@ const BarChart = ({ results, isLoading }) => {
         labels: {
           generateLabels: function(chart) {
             // Normalize to uppercase to match partyColors keys
+            // Only include known parties in the legend; hide 'Unknown/Other' buckets
             const uniqueNormalized = Array.from(
               new Set((chartData.parties || []).map(p => normalizePartyName(p)))
-            );
+            ).filter(n => Object.prototype.hasOwnProperty.call(partyColors, n) && n !== 'Unknown');
 
             return uniqueNormalized.map((normalized) => {
-              const isKnown = Object.prototype.hasOwnProperty.call(partyColors, normalized);
-              const color = isKnown ? partyColors[normalized] : partyColors.Unknown;
-
-              // Use a concise label for known parties (drop trailing " PARTY")
-              const labelText = isKnown
-                ? normalized.replace(/\s*PARTY$/, '')
-                : 'OTHER';
-
+              const color = partyColors[normalized];
+              const labelText = normalized.replace(/\s*PARTY$/, '');
               return {
                 text: labelText,
                 fillStyle: color,
