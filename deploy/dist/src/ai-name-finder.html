@@ -369,22 +369,47 @@
     }
 
     // Downloads
+    async function saveBlobAs(blob, suggestedName, types) {
+      try {
+        if (window.showSaveFilePicker) {
+          const handle = await window.showSaveFilePicker({
+            suggestedName,
+            types: types || []
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          return;
+        }
+      } catch (err) {
+        // If user cancels Save dialog, just return silently
+        if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) return;
+        // Otherwise fall back to anchor method
+        console.warn('showSaveFilePicker failed, falling back. Reason:', err);
+      }
+      // Fallback for browsers without File System Access API
+      const name = prompt('Enter a file name to download:', suggestedName) || suggestedName;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
     function downloadJSON(names) {
       const data = {
         names: names,
         extracted_at: new Date().toISOString(),
         source: 'AI Name Finder'
       };
-
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'extracted_names.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      return saveBlobAs(
+        blob,
+        'extracted_names.json',
+        [{ description: 'JSON', accept: { 'application/json': ['.json'], 'text/json': ['.json'] } }]
+      );
     }
 
     function downloadDiariesJSON(rows) {
@@ -394,14 +419,11 @@
         source: 'AI Name Finder (Ministerial Diaries)'
       };
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'ministerial_diaries_enriched.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      return saveBlobAs(
+        blob,
+        'ministerial_diaries_enriched.json',
+        [{ description: 'JSON', accept: { 'application/json': ['.json'], 'text/json': ['.json'] } }]
+      );
     }
 
     function downloadDiariesCSV(rows) {
@@ -424,14 +446,11 @@
       });
       const csv = [header].concat(lines).join('\n');
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'ministerial_diaries_enriched.csv';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      return saveBlobAs(
+        blob,
+        'ministerial_diaries_enriched.csv',
+        [{ description: 'CSV', accept: { 'text/csv': ['.csv'], 'application/vnd.ms-excel': ['.csv'] } }]
+      );
     }
 
     function csvEscape(v) {
@@ -555,14 +574,11 @@
     function downloadPreparedCSV(headers, rows) {
       const csv = buildCSV(headers, rows);
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'prepared_mapping.csv';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      return saveBlobAs(
+        blob,
+        'prepared_mapping.csv',
+        [{ description: 'CSV', accept: { 'text/csv': ['.csv'], 'application/vnd.ms-excel': ['.csv'] } }]
+      );
     }
 
     function downloadPreparedCSVFromStore() {

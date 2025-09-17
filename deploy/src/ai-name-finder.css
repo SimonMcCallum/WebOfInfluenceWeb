@@ -117,3 +117,23 @@
   border-color: rgba(255, 255, 255, 0.4);
   transform: translateY(-2px);
 }
+
+/* Page-specific spacing tweaks */
+/* Increase vertical gap between the file info text and the Run button */
+#fileInfo .dashboard-button,
+#mappingFileInfo .dashboard-button {
+  margin-top: 1rem;
+}
+
+/* Ensure a clear gap between button text and the arrow on this page */
+.dashboard-button .button-arrow {
+  margin-left: 1rem; /* increased gap */
+}
+
+/* Disabled state styling for download buttons on this page */
+.dashboard-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+  filter: saturate(0.8);
+}

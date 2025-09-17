@@ -25,11 +25,11 @@
       <div class="dashboard-card" style="grid-column:1">
         <div class="card-header">
           <div class="card-icon">📄</div>
-          <h2 class="card-title">File Upload</h2>
+          <h2 class="card-title">Name Finder</h2>
         </div>
 
         <!-- Mode selector -->
-        <div style="margin: .25rem 0 1rem; display:flex; gap:1rem; align-items:center; flex-wrap:wrap;">
+        <div style="margin: .25rem 0 1rem; display:flex; flex-direction:column; gap:.5rem; align-items:flex-start;">
           <div><strong>Mode:</strong></div>
           <label style="display:flex; align-items:center; gap:.4rem;">
             <input type="radio" name="mode" id="mode-generic" value="generic" checked>
@@ -49,9 +49,7 @@
             <h3>Drop your file here or click to browse</h3>
             <p>Supported formats: TXT, CSV, DOC, DOCX, PDF (max 1MB)</p>
             <input type="file" id="fileInput" class="file-input" accept=".txt,.csv,.doc,.docx,.pdf">
-            <button class="upload-button" onclick="document.getElementById('fileInput').click()">
-              Choose File
-            </button>
+            <button class="upload-button" id="chooseFileBtn">Choose File</button>
           </div>
         </div>
 
@@ -66,10 +64,15 @@
       </div>
 
       <!-- New: Unclean CSV Mapping Prep -->
-      <div class="dashboard-card" style="grid-column:1 / -1">
+      <div class="dashboard-card" style="grid-column:1">
         <div class="card-header">
           <div class="card-icon">🧹</div>
           <h2 class="card-title">Unclean CSV Mapping Prep</h2>
+        </div>
+        <div class="subtitle" style="margin-top:-.5rem; margin-bottom:.75rem; color:#6b7280;">
+          <div>Use this to clean and standardize any CSV before importing via Admin → Add Data.</div>
+          <div>It adds AI helper columns to assist matching and mapping: </div>
+          <div>ai_first_name, ai_last_name, ai_org_name, ai_person_names, ai_orgs </div>
         </div>
 
         <div class="upload-area" id="mappingUploadArea">
@@ -77,9 +80,7 @@
             <h3>Upload any CSV to prepare for Admin → Add Data</h3>
             <p>AI will add helper columns: ai_first_name, ai_last_name, ai_org_name, ai_person_names, ai_orgs</p>
             <input type="file" id="mappingFileInput" class="file-input" accept=".csv">
-            <button class="upload-button" onclick="document.getElementById('mappingFileInput').click()">
-              Choose CSV
-            </button>
+            <button class="upload-button" id="chooseMappingBtn">Choose CSV</button>
           </div>
         </div>
 
@@ -92,7 +93,16 @@
           </button>
         </div>
 
-        <div id="mappingResults"></div>
+      </div>
+
+      <div class="dashboard-card" style="grid-column:2; grid-row:2; align-self:start;">
+        <div class="card-header">
+          <div class="card-icon">📊</div>
+          <h2 class="card-title">Unclean CSV Mapping Prep Results</h2>
+        </div>
+        <div id="mappingResults">
+          <p>Upload a CSV and click "Prepare Mapping CSV" to see the preview and download options.</p>
+        </div>
       </div>
 
       <!-- Placeholder: Address Cleaner (implement later) -->
@@ -109,7 +119,7 @@
       <div class="dashboard-card" style="grid-column:2; grid-row:1; align-self:start;">
         <div class="card-header">
           <div class="card-icon">📊</div>
-          <h2 class="card-title">Results</h2>
+          <h2 class="card-title">Name Finder Results</h2>
         </div>
 
         <div id="resultsContent">
@@ -147,9 +157,16 @@
     const mappingFileSize = document.getElementById('mappingFileSize');
     const mappingResults = document.getElementById('mappingResults');
 
+    // Guards to prevent double-opening file pickers
+    let openingMainPicker = false;
+    let openingMappingPicker = false;
+
     // Mapping Upload: click to browse
     if (mappingUploadArea) {
-      mappingUploadArea.addEventListener('click', () => {
+      mappingUploadArea.addEventListener('click', (e) => {
+        if (e.target && e.target.closest('.upload-button')) return;
+        if (openingMappingPicker) return;
+        openingMappingPicker = true;
         mappingFileInput.click();
       });
       mappingUploadArea.addEventListener('dragover', (e) => {
@@ -170,9 +187,21 @@
     }
     if (mappingFileInput) {
       mappingFileInput.addEventListener('change', (e) => {
+        // reset guard when user finishes selecting (or cancels)
+        openingMappingPicker = false;
         if (e.target.files.length > 0) {
           handleMappingFileSelect(e.target.files[0]);
         }
+      });
+    }
+    // Button inside mapping area should not trigger area click twice
+    const mappingChooseBtn = document.getElementById('chooseMappingBtn');
+    if (mappingChooseBtn) {
+      mappingChooseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (openingMappingPicker) return;
+        openingMappingPicker = true;
+        mappingFileInput.click();
       });
     }
 
@@ -180,6 +209,19 @@
       const r = document.querySelector('input[name="mode"]:checked');
       return r ? r.value : 'generic';
     }
+
+    // Show Diaries mode help only when Diaries is selected
+    function updateModeHelp() {
+      const help = document.getElementById('modeHelp');
+      if (!help) return;
+      help.style.display = getSelectedMode() === 'diaries' ? 'block' : 'none';
+    }
+    ['mode-generic','mode-diaries'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', updateModeHelp);
+    });
+    // Initialize on load
+    updateModeHelp();
 
     // Drag and drop functionality
     uploadArea.addEventListener('dragover', (e) => {
@@ -200,15 +242,30 @@
       }
     });
 
-    uploadArea.addEventListener('click', () => {
+    uploadArea.addEventListener('click', (e) => {
+      if (e.target && e.target.closest('.upload-button')) return;
+      if (openingMainPicker) return;
+      openingMainPicker = true;
       fileInput.click();
     });
 
     fileInput.addEventListener('change', (e) => {
+      // reset guard when user finishes selecting (or cancels)
+      openingMainPicker = false;
       if (e.target.files.length > 0) {
         handleFileSelect(e.target.files[0]);
       }
     });
+    // Button inside main upload area should not bubble to area click
+    const chooseBtn = document.getElementById('chooseFileBtn');
+    if (chooseBtn) {
+      chooseBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (openingMainPicker) return;
+        openingMainPicker = true;
+        fileInput.click();
+      });
+    }
 
     function handleFileSelect(file) {
       selectedFile = file;
@@ -240,6 +297,10 @@
       try {
         const formData = new FormData();
         formData.append('file', selectedFile);
+        // Clear previous results when running again so old output isn't shown
+        if (resultsContent) {
+          resultsContent.innerHTML = '<div style="padding:.5rem 0; color:#6b7280;"><span class="loading"></span>Processing new request...</div>';
+        }
 
         const base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
         const mode = getSelectedMode();
@@ -288,8 +349,13 @@
         });
         html += '</div>';
 
-        html += '<div style="margin-top: 1rem; display:flex; gap:.5rem; flex-wrap:wrap;">';
-        html += `<button class="dashboard-button" onclick='downloadJSON(${JSON.stringify(result.names).replace(/"/g, '"')})'>`;
+        // filename input + actions
+        const defaultBase = (result.file_name ? String(result.file_name).replace(/\.[^/.]+$/, '') : 'extracted_names');
+        html += '<div style="margin-top: .75rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">';
+        html += '<label for="namesDownloadName" style="color:#374151;">Output filename:</label>';
+        html += `<input id="namesDownloadName" type="text" value="" placeholder="${escapeHtml(defaultBase)}" style="padding:.4rem .6rem; border:1px solid #d1d5db; border-radius:.375rem; min-width:220px;" />`;
+        html += '<span style="color:#6b7280;">.json</span>';
+        html += `<button class="dashboard-button" id="downloadNamesJsonBtn" disabled>`;
         html += '<span>📥 Download as JSON</span>';
         html += '<span class="button-arrow">→</span>';
         html += '</button>';
@@ -300,6 +366,30 @@
 
       html += '</div>';
       resultsContent.innerHTML = html;
+
+      // Persist data and wire up click without huge inline JSON
+      try {
+        window._namesExtracted = Array.isArray(result.names) ? result.names : [];
+        const btn = document.getElementById('downloadNamesJsonBtn');
+        const input = document.getElementById('namesDownloadName');
+        function updateNamesDl() {
+          if (btn) btn.disabled = !(input && input.value.trim().length);
+        }
+        if (input) input.addEventListener('input', updateNamesDl);
+        updateNamesDl();
+        if (btn) {
+          btn.addEventListener('click', function() {
+            const base = (input?.value || '').trim();
+            if (!base) {
+              alert('Please enter a filename.');
+              return;
+            }
+            downloadJSON(window._namesExtracted, base);
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to initialize names download button:', e);
+      }
     }
 
     // Diaries enrichment rendering
@@ -307,7 +397,7 @@
       const rows = Array.isArray(result.rows) ? result.rows : [];
       let html = '<div class="results-section">';
       html += '<div class="success-message">';
-      html += `<strong>✅ Success!</strong> Processed ${rows.length} rows in "${result.file_name || selectedFile?.name || ''}"`;
+      html += `<strong>✅ Success!</strong> Processed ${rows.length} rows`;
       if (result.warning) {
         html += `<div style="margin-top:.25rem; color:#a16207;">⚠️ ${escapeHtml(result.warning)}</div>`;
       }
@@ -343,10 +433,17 @@
 
         html += '</tbody></table></div>';
 
-        // Actions
-        html += '<div style="margin-top: 1rem; display:flex; gap:.5rem; flex-wrap:wrap;">';
-        html += `<button class="dashboard-button" onclick='downloadDiariesJSON(${JSON.stringify(rows).replace(/"/g, '"')})'><span>📥 Download JSON</span><span class="button-arrow">→</span></button>`;
-        html += `<button class="dashboard-button" onclick='downloadDiariesCSV(${JSON.stringify(rows).replace(/"/g, '"')})'><span>📄 Download CSV</span><span class="button-arrow">→</span></button>`;
+        // Filename base + actions (avoid huge inline JSON)
+        const originalName = (result.file_name || selectedFile?.name || 'ministerial_diaries_enriched.csv');
+        const baseDefault = String(originalName).replace(/\.[^/.]+$/, '') || 'ministerial_diaries_enriched';
+        const suggestedBase = /_enriched$/.test(baseDefault) ? baseDefault : (baseDefault + '_enriched');
+
+        html += '<div style="margin-top: 1rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">';
+        html += '<label for="diariesDownloadName" style="color:#374151;">Output filename:</label>';
+        html += `<input id="diariesDownloadName" type="text" value="" placeholder="${escapeHtml(suggestedBase)}" style="padding:.4rem .6rem; border:1px solid #d1d5db; border-radius:.375rem; min-width:240px;" />`;
+        html += '<span style="color:#6b7280;">(.json or .csv)</span>';
+        html += `<button class="dashboard-button" id="downloadDiariesJsonBtn" disabled><span>📥 Download JSON</span><span class="button-arrow">→</span></button>`;
+        html += `<button class="dashboard-button" id="downloadDiariesCsvBtn" disabled><span>📄 Download CSV</span><span class="button-arrow">→</span></button>`;
         html += '</div>';
       } else {
         html += '<p>No rows were returned. Check your CSV headers and try again.</p>';
@@ -354,6 +451,37 @@
 
       html += '</div>';
       resultsContent.innerHTML = html;
+
+      // Persist data and wire up click handlers
+      try {
+        window._diariesRows = rows;
+        const jsonBtn = document.getElementById('downloadDiariesJsonBtn');
+        const csvBtn = document.getElementById('downloadDiariesCsvBtn');
+        const input = document.getElementById('diariesDownloadName');
+        function updateDiariesDl() {
+          const has = !!(input && input.value.trim().length);
+          if (jsonBtn) jsonBtn.disabled = !has;
+          if (csvBtn) csvBtn.disabled = !has;
+        }
+        if (input) input.addEventListener('input', updateDiariesDl);
+        updateDiariesDl();
+        if (jsonBtn) {
+          jsonBtn.addEventListener('click', function () {
+            const base = (input?.value || '').trim();
+            if (!base) { alert('Please enter a filename.'); return; }
+            downloadDiariesJSON(window._diariesRows, base);
+          });
+        }
+        if (csvBtn) {
+          csvBtn.addEventListener('click', function () {
+            const base = (input?.value || '').trim();
+            if (!base) { alert('Please enter a filename.'); return; }
+            downloadDiariesCSV(window._diariesRows, base);
+          });
+        }
+      } catch (e) {
+        console.warn('Failed to initialize diaries download buttons:', e);
+      }
     }
 
     function td(val) {
@@ -369,42 +497,66 @@
     }
 
     // Downloads
-    function downloadJSON(names) {
-      const data = {
-        names: names,
-        extracted_at: new Date().toISOString(),
-        source: 'AI Name Finder'
-      };
-
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    async function saveBlobAs(blob, suggestedName, types) {
+      try {
+        if (window.showSaveFilePicker) {
+          const handle = await window.showSaveFilePicker({
+            suggestedName,
+            types: types || []
+          });
+          const writable = await handle.createWritable();
+          await writable.write(blob);
+          await writable.close();
+          return;
+        }
+      } catch (err) {
+        // If user cancels Save dialog, just return silently
+        if (err && (err.name === 'AbortError' || err.name === 'NotAllowedError')) return;
+        // Otherwise fall back to anchor method
+        console.warn('showSaveFilePicker failed, falling back. Reason:', err);
+      }
+      // Fallback for browsers without File System Access API
+      const name = prompt('Enter a file name to download:', suggestedName) || suggestedName;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'extracted_names.json';
+      a.download = name;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }
+    function downloadJSON(names, filenameBase) {
+      const data = {
+        names: names,
+        extracted_at: new Date().toISOString(),
+        source: 'AI Name Finder'
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const suggested = (filenameBase || 'extracted_names').replace(/\.[^/.]+$/, '') + '.json';
+      return saveBlobAs(
+        blob,
+        suggested,
+        [{ description: 'JSON', accept: { 'application/json': ['.json'], 'text/json': ['.json'] } }]
+      );
+    }
 
-    function downloadDiariesJSON(rows) {
+    function downloadDiariesJSON(rows, filenameBase) {
       const data = {
         rows,
         extracted_at: new Date().toISOString(),
         source: 'AI Name Finder (Ministerial Diaries)'
       };
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'ministerial_diaries_enriched.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const suggested = (filenameBase || 'ministerial_diaries_enriched').replace(/\.[^/.]+$/, '') + '.json';
+      return saveBlobAs(
+        blob,
+        suggested,
+        [{ description: 'JSON', accept: { 'application/json': ['.json'], 'text/json': ['.json'] } }]
+      );
     }
 
-    function downloadDiariesCSV(rows) {
+    function downloadDiariesCSV(rows, filenameBase) {
       const cols = ['date','start_time','end_time','title','type','portfolio','location','notes','attendees_text','attendees_names'];
       const header = cols.join(',');
       const lines = rows.map(r => {
@@ -424,14 +576,12 @@
       });
       const csv = [header].concat(lines).join('\n');
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'ministerial_diaries_enriched.csv';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const suggested = (filenameBase || 'ministerial_diaries_enriched').replace(/\.[^/.]+$/, '') + '.csv';
+      return saveBlobAs(
+        blob,
+        suggested,
+        [{ description: 'CSV', accept: { 'text/csv': ['.csv'], 'application/vnd.ms-excel': ['.csv'] } }]
+      );
     }
 
     function csvEscape(v) {
@@ -464,6 +614,10 @@
       try {
         const formData = new FormData();
         formData.append('file', selectedMappingFile);
+        // Clear previous Mapping Prep results when running again
+        if (mappingResults) {
+          mappingResults.innerHTML = '<div style="padding:.5rem 0; color:#6b7280;"><span class="loading"></span>Processing new request...</div>';
+        }
         const base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
         const response = await fetch(base + '/ai/prepare-mapping-csv', {
           method: 'POST',
@@ -520,9 +674,12 @@
         html += '<p>No data returned.</p>';
       }
 
-      // Download prepared CSV
-      html += '<div style="margin-top: 1rem; display:flex; gap:.5rem; flex-wrap:wrap;">';
-      html += '<button class="dashboard-button" id="downloadPreparedBtn"><span>📥 Download Prepared CSV</span><span class="button-arrow">→</span></button>';
+      // Download prepared CSV with filename input
+      html += '<div style="margin-top: 1rem; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;">';
+      html += '<label for="preparedFileNameBase" style="color:#374151;">Output filename:</label>';
+      html += '<input id="preparedFileNameBase" type="text" value="" placeholder="prepared_mapping" style="padding:.4rem .6rem; border:1px solid #d1d5db; border-radius:.375rem; min-width:220px;" />';
+      html += '<span style="color:#6b7280;">.csv</span>';
+      html += '<button class="dashboard-button" id="downloadPreparedBtn" disabled><span>📥 Download Prepared CSV</span><span class="button-arrow">→</span></button>';
       html += '</div>';
 
       html += '</div>';
@@ -536,6 +693,17 @@
           dlBtn.addEventListener('click', function () {
             downloadPreparedCSVFromStore();
           });
+        }
+        // Enable/disable download button based on filename input presence
+        try {
+          const inp = document.getElementById('preparedFileNameBase');
+          function updatePreparedDl() {
+            if (dlBtn) dlBtn.disabled = !(inp && inp.value.trim().length);
+          }
+          if (inp) inp.addEventListener('input', updatePreparedDl);
+          updatePreparedDl();
+        } catch (e) {
+          console.warn('Failed to wire prepared filename input:', e);
         }
       } catch (e) {
         console.warn('Failed to initialize download button:', e);
@@ -552,17 +720,15 @@
       return out.join('\n');
     }
 
-    function downloadPreparedCSV(headers, rows) {
+    function downloadPreparedCSV(headers, rows, filenameBase) {
       const csv = buildCSV(headers, rows);
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'prepared_mapping.csv';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const suggested = (filenameBase || 'prepared_mapping').replace(/\.[^/.]+$/, '') + '.csv';
+      return saveBlobAs(
+        blob,
+        suggested,
+        [{ description: 'CSV', accept: { 'text/csv': ['.csv'], 'application/vnd.ms-excel': ['.csv'] } }]
+      );
     }
 
     function downloadPreparedCSVFromStore() {
@@ -574,7 +740,13 @@
           alert('No prepared data to download. Please run "Prepare Mapping CSV" first.');
           return;
         }
-        downloadPreparedCSV(headers, rows);
+        const rawVal = document.getElementById('preparedFileNameBase')?.value || '';
+        const base = rawVal.trim();
+        if (!base) {
+          alert('Please enter a filename.');
+          return;
+        }
+        downloadPreparedCSV(headers, rows, base);
       } catch (e) {
         console.error('Download error:', e);
         alert('Failed to download prepared CSV.');
