@@ -122,7 +122,7 @@ const MeetingsSearch = () => {
     const filename = prompt('Enter a name for your CSV file:', defaultName) || defaultName;
     const finalFilename = filename.endsWith('.csv') ? filename : `${filename}.csv`;
 
-    const headers = ['Date', 'Start Time', 'End Time', 'Title', 'Type', 'Portfolio', 'Location', 'Notes', 'Attendees'];
+    const headers = ['Date', 'Start Time', 'End Time', 'Title', 'Type', 'Portfolio', 'Location', 'Attendees', 'Notes'];
 
     const csvRows = [
       headers.join(','),
