@@ -1158,6 +1158,24 @@ function handle_admin_upload_start(): void {
 
   // Existing DB columns for mapping
   $dbCols = existing_columns($table);
+  // Hide noisy/legacy columns from the mapping dropdown for certain tables
+  $tLower = strtolower($table);
+  if ($tLower === 'meetings') {
+    // Only show the columns we actually support importing into meetings
+    $allowed = [
+      'date',
+      'start_time',
+      'end_time',
+      'location',
+      'title',
+      'notes',
+      'type',
+      'portfolio',
+      'with_text',
+      'minister_person_id',
+    ];
+    $dbCols = array_values(array_intersect($dbCols, $allowed));
+  }
 
   $ctx = [
     'tables' => list_tables_with_counts(),
@@ -2309,7 +2327,8 @@ function handle_admin_upload_commit(): void {
         $csv_minister = $getHdr('Minister') ?? $getHdr('minister');
         // Attendees text (CSV header variants)
         // Some diaries use "With", others "Attendees" or similar
-        $csv_with = $getHdr(['With','with','Attendees','attendees','Attendee','attendee','Who','who']);
+        // Also support AI-prepared files that use 'attendees_text'
+        $csv_with = $getHdr(['attendees_text','With','with','Attendees','attendees','Attendee','attendee','Who','who']);
         // Optional AI names column produced by AI Name Finder "diaries" or Mapping Prep
         $csv_ai_attendees = $getHdr(['ai_person_names','attendees_names','ai_names']);
 
