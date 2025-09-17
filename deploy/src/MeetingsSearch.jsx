@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import MeetingsTable from './MeetingsTable';
 import './DonationsOverview.css';
+import './MeetingsSearch.css';
 import { API_BASE } from './apiConfig';
 import { useNavigate } from 'react-router-dom';
 import ResponsivePagination from 'react-responsive-pagination';

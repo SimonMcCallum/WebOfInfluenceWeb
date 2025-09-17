@@ -139,3 +139,60 @@
     margin-top: 20px;
     margin-bottom: 12px;
   }
+
+/* Meetings table overrides for Ministerial Meetings Search */
+.meetings-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 0 !important;
+}
+
+/* Default concise behavior */
+.meetings-table th,
+.meetings-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Column widths for this page's column order:
+   1 Date, 2 Minister, 3 Start, 4 End, 5 Title, 6 Type, 7 Portfolio, 8 Location, 9 Attendees, 10 Notes */
+.meetings-table th:nth-child(1),
+.meetings-table td:nth-child(1) { /* Date */
+  width: 80px;
+}
+
+.meetings-table th:nth-child(2),
+.meetings-table td:nth-child(2) { /* Minister */
+  width: 140px;
+}
+
+.meetings-table th:nth-child(3),
+.meetings-table td:nth-child(3) { /* Start Time */
+  width: 80px;
+}
+
+.meetings-table th:nth-child(4),
+.meetings-table td:nth-child(4) { /* End Time */
+  width: 80px;
+}
+
+/* Title should wrap within its fixed width */
+.meetings-table th:nth-child(5),
+.meetings-table td:nth-child(5) { /* Title */
+  width: 240px;
+  white-space: normal;      /* allow wrapping */
+  overflow: visible;        /* allow multi-line height */
+  text-overflow: clip;      /* no ellipsis */
+  word-break: break-word;   /* break long words if needed */
+}
+
+.meetings-table th:nth-child(6),
+.meetings-table td:nth-child(6) {  /* Type */
+  width: 80px;
+}
+
+.meetings-table th:nth-child(8),
+.meetings-table td:nth-child(8) {  /* Location */
+  width: 100px;
+}

@@ -35,7 +35,7 @@ const MeetingsTable = ({ meetings }) => {
 
   return (
     <div className="meetings-table-wrapper">
-      <table className="meetings-table">
+      <table className="meetings-table table-fixed w-full">
         <thead className="bg-gray-100">
           <tr>
             <th
@@ -75,7 +75,7 @@ const MeetingsTable = ({ meetings }) => {
               <td className="py-2 px-4 border">
                 {formatTime(meeting.end_time) || "N/A"}
               </td>
-              <td className="py-2 px-4 border">{meeting.title}</td>
+              <td className="py-2 px-4 border"><div className="w-full" style={{ whiteSpace: "normal", wordBreak: "break-word" }} title={meeting.title || "N/A"}>{meeting.title || "N/A"}</div></td>
               <td className="py-2 px-4 border">{meeting.type}</td>
               <td className="py-2 px-4 border">{meeting.portfolio || "N/A"}</td>
               <td className="py-2 px-4 border">{meeting.location || "N/A"}</td>
