@@ -22,13 +22,17 @@ deployment:
     - (cd deploy && if command -v npm >/dev/null 2>&1; then (npm ci || npm install) && npm run build; else echo "npm not found, skipping frontend build"; fi)
 
     # 2) Sync server (Flask API) and config files
-    - /bin/rsync -a --delete --exclude '.htaccess' --exclude 'passenger_wsgi.py' --exclude 'requirements.txt' --exclude 'api/' deploy/ "/home/ludog319/public_html/webofinfluence"/
+    - /bin/rsync -a --delete --exclude '.htaccess' --exclude 'passenger_wsgi.py' --exclude 'requirements.txt' --exclude 'api/' --exclude 'php-api/gemini_api_key.txt' deploy/ "/home/ludog319/public_html/webofinfluence"/
     # 2a) Sync CSV data for server-side imports (available to Admin UI under /webofinfluence/data)
     - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/data"
     - /bin/rsync -a --delete csv_data/ "/home/ludog319/public_html/webofinfluence/data"/ || true
     # 2b) Deploy PHP API into /webofinfluence/api (PHP-only; no .htaccess needed)
     - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/api"
     - /bin/rsync -a --delete --exclude '.htaccess' --exclude 'config.php' deploy/php-api/ "/home/ludog319/public_html/webofinfluence/api"/
+    # 2c) Ensure php-api directory exists for key placement (kept out of Git)
+    - /bin/mkdir -p "/home/ludog319/public_html/webofinfluence/php-api"
+    # 2d) Copy Gemini API key from repo working copy into php-api if present (file is .gitignored)
+    - if [ -f deploy/php-api/gemini_api_key.txt ]; then /bin/cp deploy/php-api/gemini_api_key.txt "/home/ludog319/public_html/webofinfluence/php-api/gemini_api_key.txt"; elif [ -f deploy/api/gemini_api_key.txt ]; then /bin/cp deploy/api/gemini_api_key.txt "/home/ludog319/public_html/webofinfluence/php-api/gemini_api_key.txt"; elif [ -f gemini_api_key.txt ]; then /bin/cp gemini_api_key.txt "/home/ludog319/public_html/webofinfluence/php-api/gemini_api_key.txt"; else echo "No gemini_api_key.txt found in repo working copy"; fi
 
     # 3) Sync built frontend to the same directory so Apache serves it (preserve src/ directory)
     - if [ -d deploy/dist ]; then /bin/rsync -a deploy/dist/ "/home/ludog319/public_html/webofinfluence"/; else echo "dist not found, skipping frontend sync"; fi

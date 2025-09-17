@@ -1277,11 +1277,15 @@ function get_gemini_api_key(): ?string {
     }
   }
 
-  // Fallback to a file in the PHP API directory
+  // Fallback to a file in the PHP API directory or sibling php-api directory
   $api_key_file = __DIR__ . '/gemini_api_key.txt';
   if (!file_exists($api_key_file)) {
     // Try the Python API directory sibling (in case the key is stored once for both)
     $api_key_file = __DIR__ . '/../api/gemini_api_key.txt';
+  }
+  if (!file_exists($api_key_file)) {
+    // Also support deployment that places the key under /webofinfluence/php-api
+    $api_key_file = __DIR__ . '/../php-api/gemini_api_key.txt';
   }
   if (file_exists($api_key_file)) {
     return trim(file_get_contents($api_key_file));
@@ -1295,7 +1299,7 @@ function get_gemini_key_status(): array {
   $hasEnv = ($env !== false && trim((string)$env) !== '');
 
   $filePath1 = __DIR__ . '/gemini_api_key.txt';
-  $filePath2 = __DIR__ . '/../api/gemini_api_key.txt';
+  $filePath2 = __DIR__ . '/../php-api/gemini_api_key.txt';
   $exists1 = is_file($filePath1);
   $exists2 = is_file($filePath2);
 
