@@ -408,7 +408,7 @@
         html += '<div class="table-responsive" style="overflow:auto; max-height:420px; border:1px solid #e5e7eb; border-radius:8px; margin-top:.75rem;">';
         html += '<table class="data-table" style="width:100%; border-collapse:collapse; font-size:.92rem;">';
         html += '<thead><tr>';
-        const headers = ['Date','Start','End','Title','Type','Portfolio','Location','Notes','Attendees (text)','Flagged Names'];
+        const headers = ['Minister','Date','Schedule Time','Start','End','Title','Type','Portfolio','Location','Notes','Attendees (text)','Flagged Names'];
         headers.forEach(h => {
           html += `<th style="position:sticky; top:0; background:#f9fafb; border-bottom:1px solid #e5e7eb; text-align:left; padding:.5rem .6rem;">${h}</th>`;
         });
@@ -417,8 +417,11 @@
         rows.forEach(r => {
           const flagged = (r.attendees_names || []).join(', ');
           const attendees = r.attendees_text || '';
+          const schedule = (r.start_time && r.end_time) ? (String(r.start_time) + ' - ' + String(r.end_time)) : '';
           html += '<tr>';
+          html += td(r.minister || '');
           html += td(r.date);
+          html += td(schedule);
           html += td(r.start_time);
           html += td(r.end_time);
           html += td(r.title);
@@ -557,22 +560,25 @@
     }
 
     function downloadDiariesCSV(rows, filenameBase) {
-      const cols = ['date','start_time','end_time','title','type','portfolio','location','notes','attendees_text','attendees_names'];
-      const header = cols.join(',');
+      const headers = ['Minister','Date','Schedule Time','Start Time','End Time','Title','Type','Portfolio','Location','Notes','Attendees Text','Attendees Names'];
+      const header = headers.map(csvEscape).join(',');
       const lines = rows.map(r => {
-        const obj = {
-          date: r.date || '',
-          start_time: r.start_time || '',
-          end_time: r.end_time || '',
-          title: r.title || '',
-          type: r.type || '',
-          portfolio: r.portfolio || '',
-          location: r.location || '',
-          notes: r.notes || '',
-          attendees_text: r.attendees_text || '',
-          attendees_names: Array.isArray(r.attendees_names) ? r.attendees_names.join('; ') : ''
-        };
-        return cols.map(k => csvEscape(obj[k])).join(',');
+        const schedule = (r.start_time && r.end_time) ? (String(r.start_time) + ' - ' + String(r.end_time)) : '';
+        const vals = [
+          r.minister || '',
+          r.date || '',
+          schedule,
+          r.start_time || '',
+          r.end_time || '',
+          r.title || '',
+          r.type || '',
+          r.portfolio || '',
+          r.location || '',
+          r.notes || '',
+          r.attendees_text || '',
+          Array.isArray(r.attendees_names) ? r.attendees_names.join('; ') : ''
+        ];
+        return vals.map(csvEscape).join(',');
       });
       const csv = [header].concat(lines).join('\n');
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
