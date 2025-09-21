@@ -124,7 +124,7 @@ $path = $path === '' ? '/' : $path;
 
 /**
  * Normalize request path to avoid needing .htaccess:
- * - Allow calling /api/index.php or /api/index.php/route
+ * - Allow calling /php-api/index.php or /api/index.php/route
  * - Also support query-style routing: /api/index.php?route=/path
  */
 // Normalize /index.php to /, and strip /index.php prefix if present
@@ -809,9 +809,9 @@ function handle_debug(): void {
 
     <h2>Useful Links</h2>
     <ul>
-      <li><a href="./index.php">/api/index.php (health)</a></li>
-      <li><a href="./index.php/admin">/api/index.php/admin (admin)</a></li>
-      <li><a href="./index.php?route=/admin">/api/index.php?route=/admin (admin ?route form)</a></li>
+      <li><a href="./index.php">/php-api/index.php (health)</a></li>
+      <li><a href="./index.php/admin">/php-api/index.php/admin (admin)</a></li>
+      <li><a href="./index.php?route=/admin">/php-api/index.php?route=/admin (admin ?route form)</a></li>
     </ul>
   </body>
   </html><?php

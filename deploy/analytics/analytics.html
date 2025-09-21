@@ -20,7 +20,7 @@
   </div>
 
   <nav class="nav-buttons">
-    <a href="../api/index.php/adddata" class="nav-btn" target="_blank" rel="noopener">
+    <a href="../php-api/index.php/adddata" class="nav-btn" target="_blank" rel="noopener">
       <span>Add Data</span>
     </a>
     <a href="/webofinfluence/src/dashboard.html" class="nav-btn">
@@ -181,7 +181,7 @@
       });
     });
 
-    const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '../php-api/index.php';
+    const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '../api/index.php';
 
 
 
@@ -246,6 +246,11 @@
     async function searchMeetings() {
       const status = document.getElementById('meetingsStatus');
       status.textContent = 'Loading...';
+      if (location.protocol === 'file:') {
+        status.textContent = 'Open this page via a local web server to enable data fetching.';
+        renderMeetings([]);
+        return;
+      }
       const fn = document.getElementById('mFirst').value.trim();
       const ln = document.getElementById('mLast').value.trim();
       const sd = document.getElementById('mStart').value;
@@ -313,6 +318,11 @@
       if (ln) params.set('last_name', ln);
       if (!fn && !ln) {
         status.textContent = 'Enter at least First or Last name.';
+        renderCandidates([]);
+        return;
+      }
+      if (location.protocol === 'file:') {
+        status.textContent = 'Open this page via a local web server to enable data fetching.';
         renderCandidates([]);
         return;
       }
