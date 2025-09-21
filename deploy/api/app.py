@@ -157,6 +157,11 @@ ADMIN_HTML = """
     .note { color: #444; font-size: .9rem; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
     @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
+    .info-box { background: #f9fafb; border: 1px solid #e5e7eb; border-left: 4px solid #3b82f6; padding: .75rem .9rem; border-radius: 6px; margin: .75rem 0; }
+    .info-box .info-title { font-weight: 600; margin-bottom: .25rem; color: #111827; }
+    .info-box .info-content { color: #374151; font-size: .92rem; }
+    .info-box ul { margin: .4rem 0 .2rem 1.1rem; padding: 0; }
+    .info-box li { margin: .2rem 0; }
   </style>
 </head>
 <body>
@@ -175,6 +180,12 @@ ADMIN_HTML = """
         </label>
         <button type="submit">Run Query</button>
       </form>
+      <div id="mapping-instructions" class="info-box" aria-live="polite">
+        <div class="info-title">Mapping Instructions</div>
+        <div class="info-content" id="mapping-instructions-content">
+          Type a destination table name on the right to see tailored mapping guidance.
+        </div>
+      </div>
       {% if query_result is defined %}
         {% if error %}
           <div class="err">{{ error }}</div>
@@ -264,6 +275,80 @@ ADMIN_HTML = """
   </div>
 
   <p class="note">Security: Query tool only permits SELECT and blocks semicolons. Upload validates identifiers and uses prepared statements.</p>
+  <script>
+  (function(){
+    // Flask Admin uses a text input for target table
+    var custom = document.querySelector('input[name="table"]');
+    var contentEl = document.getElementById('mapping-instructions-content');
+
+    function htmlDefault(){
+      return '<p>Pick a destination table then upload a CSV. The next step lets you map CSV columns to database columns. Use "Ignore" for columns you do not want imported.</p>'
+        + '<ul>'
+        + '<li>Avoid mapping id/primary key columns.</li>'
+        + '<li>Map only columns that exist in the destination table (or choose "Create column" to add a new TEXT column, if your importer supports it).</li>'
+        + '</ul>';
+    }
+
+    function htmlDonations(){
+      return '<p>Donations import with candidate linking is supported.</p>'
+        + '<ul>'
+        + '<li>Recommended mappings: <b>amount</b> (or donationamount), <b>date</b> (or a <b>year</b> column), <b>notes</b> (optional), <b>location</b> (optional).</li>'
+        + '<li>Donor details: map <b>donor_first_name</b>/<b>donor_last_name</b> or <b>donor_org_name</b>. Donors can be created automatically by the importer.</li>'
+        + '<li>Candidate linking: prefer <b>people_id</b> or <b>candidate_person_id</b>. Otherwise map candidate name columns (first/last) or <b>original_id</b> (if supported).</li>'
+        + '<li>Ignore unrelated columns. Create columns only when you need to preserve extra reference data.</li>'
+        + '</ul>'
+        + '<p>Why ignore? Unused columns clutter the normalized donations table and are not needed to reconstruct each donation record.</p>';
+    }
+
+    function htmlCandidateOverview(){
+      return '<p>Candidate Overview often uses an enhanced importer and may ignore manual mapping.</p>'
+        + '<ul>'
+        + '<li>Ensure headers include <b>candidate first</b>, <b>last</b>, <b>party</b>, <b>electorate</b>.</li>'
+        + '<li><b>year</b> may be inferred; include if available.</li>'
+        + '<li><b>original_id</b> helps link to donations later.</li>'
+        + '</ul>'
+        + '<p>Why ignore? Extra fields are not used by the overview importer.</p>';
+    }
+
+    function htmlMeetings(){
+      return '<p>Meetings import supports deriving fields from common diary CSVs.</p>'
+        + '<ul>'
+        + '<li>Recommended: <b>date</b>, <b>title</b>, <b>location</b>, <b>type</b>, <b>portfolio</b>, <b>with_text</b>.</li>'
+        + '<li><b>minister_person_id</b> can be left unmapped if a "Minister" column exists—importer can resolve the person.</li>'
+        + '<li><b>start_time</b>/<b>end_time</b> may be derived from "Schedule Time".</li>'
+        + '<li>Ignore unrelated columns to keep the table clean.</li>'
+        + '</ul>';
+    }
+
+    function htmlGeneric(name){
+      return '<p>Importing into <b>' + name + '</b>.</p>'
+        + '<ul>'
+        + '<li>Map only columns that exist in the table (or use a create-column feature if available).</li>'
+        + '<li>Avoid mapping primary key/id columns.</li>'
+        + '<li>Use "Ignore" for columns that are informational only.</li>'
+        + '</ul>';
+    }
+
+    function getChosen(){
+      var v = '';
+      if (custom && custom.value.trim() !== '') v = custom.value.trim();
+      return (v || '').toLowerCase();
+    }
+
+    function render(){
+      if (!contentEl) return;
+      var chosen = getChosen();
+      if (!chosen) { contentEl.innerHTML = htmlDefault(); return; }
+      if (chosen.indexOf('donation') !== -1) { contentEl.innerHTML = htmlDonations(); return; }
+      if (chosen.indexOf('meetings') !== -1) { contentEl.innerHTML = htmlMeetings(); return; }
+      if (chosen.indexOf('candidate_overview') !== -1) { contentEl.innerHTML = htmlCandidateOverview(); return; }
+      contentEl.innerHTML = htmlGeneric(chosen);
+    }
+
+    if (custom) custom.addEventListener('input', render);
+    render();
+  })();
+  </script>
 </body>
 </html>
 """

@@ -480,6 +480,12 @@ function render_admin(array $ctx = []): void {
       .note { color: #444; font-size: .9rem; }
       .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
       @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
+      .info-box { background: #111827; color: #ffffff; border: 1px solid #111827; border-left: 4px solid #3b82f6; padding: .75rem .9rem; border-radius: 6px; margin: .75rem 0; }
+      .info-box .info-title { font-weight: 700; margin-bottom: .25rem; color: #ffffff; letter-spacing: .2px; }
+      .info-box .info-content { color: #e5e7eb; font-size: .92rem; }
+      .info-box .info-subtitle { color: #93c5fd; font-size: .9rem; margin: .15rem 0 .35rem; }
+      .info-box ul { margin: .4rem 0 .2rem 1.1rem; padding: 0; }
+      .info-box li { margin: .2rem 0; }
     </style>
   </head>
   <body>
@@ -489,7 +495,51 @@ function render_admin(array $ctx = []): void {
     <div class="row">
       <div>
         <h2>Read-only Query</h2>
-        <form action="index.php?route=/admin/query" method="post">
+        <div id="mapping-instructions" class="info-box" aria-live="polite">
+          <div class="info-title">Mapping Instructions</div>
+          <div class="info-subtitle" id="mapping-instructions-subtitle">
+            Mapping instructions for <b><?= htmlspecialchars((string)($ctx['map_table'] ?? 'none selected'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></b>
+          </div>
+          <div class="info-content" id="mapping-instructions-content">
+            <?php
+              $mapTableLower = strtolower((string)($ctx['map_table'] ?? ''));
+              if ($mapTableLower && strpos($mapTableLower, 'donation') !== false): ?>
+                <p>Donations import with candidate linking is supported.</p>
+                <ul>
+                  <li>Required/recommended mappings: <b>amount</b> (or donationamount), <b>date</b> (or a <b>year</b> column), <b>notes</b> (optional), <b>location</b> (optional).</li>
+                  <li>Donor details: map <b>donor_first_name</b>/<b>donor_last_name</b> or <b>donor_org_name</b>. The importer creates donors automatically.</li>
+                  <li>Candidate linking: prefer <b>people_id</b> or <b>candidate_person_id</b>. Otherwise map candidate names or <b>original_id</b> using Helper tokens.</li>
+                  <li>Use “Ignore” for columns you don’t need. Use “Create column … (TEXT)” only to keep extra reference data.</li>
+                </ul>
+                <p>Why ignore? Unused columns clutter the normalized donations table and aren’t needed to reconstruct each donation record.</p>
+            <?php elseif ($mapTableLower && strpos($mapTableLower, 'candidate_overview') !== false): ?>
+                <p>Candidate Overview uses an enhanced importer and ignores the manual mapping grid.</p>
+                <ul>
+                  <li>Ensure CSV has <b>candidate first</b> and <b>last</b> name, <b>party</b>, and <b>electorate</b> headers (common variants are detected automatically).</li>
+                  <li><b>year</b> is inferred from file/headers when missing; include if available.</li>
+                  <li><b>original_id</b> (e.g., 2011candidatedonations_id or candidatedonations2023test_id) helps link to donations.</li>
+                  <li>Totals (part_a, total_donations, total_expenses, etc.) are optional.</li>
+                </ul>
+                <p>Why ignore? The importer reads known headers directly; extra fields are not used here.</p>
+            <?php elseif ($mapTableLower && strpos($mapTableLower, 'meetings') !== false): ?>
+                <p>Meetings import supports deriving fields from common diary CSVs.</p>
+                <ul>
+                  <li>Recommended mappings: <b>date</b>, <b>title</b>, <b>location</b>, <b>type</b>, <b>portfolio</b>, <b>with_text</b>.</li>
+                  <li><b>minister_person_id</b> can be left unmapped if your CSV has a “Minister” column—the importer resolves the person automatically.</li>
+                  <li><b>start_time</b>/<b>end_time</b> are derived from “Schedule Time” when present.</li>
+                  <li>Ignore unrelated columns; use “Create column” only if you need to preserve free text.</li>
+                </ul>
+            <?php else: ?>
+                <p>Pick a destination table then upload a CSV. The next step lets you map CSV columns to database columns. Use “Ignore” for columns you do not want imported.</p>
+                <ul>
+                  <li>Avoid mapping id/primary key columns.</li>
+                  <li>Map only columns that exist in the destination table (or choose “Create column” to add a new TEXT column).</li>
+                  <li>Use “Truncate” if you want to replace existing rows.</li>
+                </ul>
+            <?php endif; ?>
+          </div>
+        </div>
+        <form action="?route=/admin/query" method="post">
           <label>SELECT Query (LIMIT enforced if missing)
             <textarea name="query" rows="5" placeholder="SELECT * FROM woi.people LIMIT 50" required></textarea>
           </label>
@@ -522,7 +572,7 @@ function render_admin(array $ctx = []): void {
 
       <div>
         <h2>CSV Upload → Table</h2>
-        <form action="index.php?route=/admin/upload-start" method="post" enctype="multipart/form-data">
+        <form action="?route=/admin/upload-start" method="post" enctype="multipart/form-data">
           <label>Destination Table (pick existing)
             <select name="dest_table_select">
               <option value="">-- choose an existing table --</option>
@@ -557,7 +607,7 @@ function render_admin(array $ctx = []): void {
     <section class="panel">
       <h2>CSV Column Mapping</h2>
       <p class="note">CSV: <?= htmlspecialchars((string)($ctx['tmp_label'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> → Table: <?= htmlspecialchars((string)($ctx['map_table'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p>
-      <form action="index.php?route=/admin/upload-commit" method="post">
+      <form action="?route=/admin/upload-commit" method="post">
         <input type="hidden" name="tmp_file" value="<?= htmlspecialchars((string)($ctx['tmp_file'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
         <input type="hidden" name="table" value="<?= htmlspecialchars((string)($ctx['map_table'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
         <?php if (!empty($ctx['orig_name'])): ?>
@@ -638,12 +688,12 @@ function render_admin(array $ctx = []): void {
                 <td><?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
                 <td><?= (int)($t['rows'] ?? 0) ?></td>
                 <td>
-                  <form action="index.php?route=/admin/table-action" method="post" style="display:inline;margin-right:.5rem">
+                  <form action="?route=/admin/table-action" method="post" style="display:inline;margin-right:.5rem">
                     <input type="hidden" name="table" value="<?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
                     <input type="hidden" name="action" value="truncate">
                     <button type="submit" onclick="return confirm('Truncate table <?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>?')">Truncate</button>
                   </form>
-                  <form action="index.php?route=/admin/table-action" method="post" style="display:inline">
+                  <form action="?route=/admin/table-action" method="post" style="display:inline">
                     <input type="hidden" name="table" value="<?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
                     <input type="hidden" name="action" value="drop">
                     <button type="submit" onclick="return confirm('DROP table <?= htmlspecialchars($t['name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>? This cannot be undone!')">Drop</button>
@@ -662,7 +712,7 @@ function render_admin(array $ctx = []): void {
         <h2>Import CSVs from Server</h2>
         <p class="note">CSV files discovered under: <?= htmlspecialchars(data_dir(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p>
 
-        <form action="index.php?route=/admin/import-server" method="post">
+        <form action="?route=/admin/import-server" method="post">
           <label>Select CSV file found on server
             <select name="csv_rel" required>
               <option value="">-- choose a CSV --</option>
@@ -678,7 +728,7 @@ function render_admin(array $ctx = []): void {
           <button type="submit">Import Selected CSV</button>
         </form>
 
-        <form action="index.php?route=/admin/import-server-batch" method="post" style="margin-top:1rem">
+        <form action="?route=/admin/import-server-batch" method="post" style="margin-top:1rem">
           <label>Optional Subdirectory (relative to data/)
             <input type="text" name="subdir" placeholder="e.g., candidate_csv">
           </label>
@@ -695,7 +745,7 @@ function render_admin(array $ctx = []): void {
     <div class="row">
       <div>
         <h2>Maintenance</h2>
-        <form action="index.php?route=/admin/backfill-2023-original" method="post" style="margin-bottom: .75rem;">
+        <form action="?route=/admin/backfill-2023-original" method="post" style="margin-bottom: .75rem;">
           <button type="submit">Backfill 2023 original_id from stg_overview_2023</button>
           <p class="note">Requires you to import candidate_csv/2023_candidate_donations.csv into table "stg_overview_2023" via "Import CSVs from Server". You can re-run safely; this shows before/after counts.</p>
         </form>
@@ -706,6 +756,92 @@ function render_admin(array $ctx = []): void {
     </div>
 
     <p class="note">Security: Query tool only permits SELECT and blocks semicolons. Upload validates identifiers and uses prepared statements.</p>
+    <script>
+    (function(){
+      // Initial table from server context (when returning to page with mapping section)
+      var initialTable = <?php echo json_encode((string)($ctx['map_table'] ?? '')); ?>;
+      var sel = document.querySelector('select[name="dest_table_select"]');
+      var custom = document.querySelector('input[name="table"]');
+      var subtitleEl = document.getElementById('mapping-instructions-subtitle');
+      var contentEl = document.getElementById('mapping-instructions-content');
+
+      function htmlDefault(){
+        return '<p>Pick a destination table then upload a CSV. The next step lets you map CSV columns to database columns. Use "Ignore" for columns you do not want imported.</p>'
+          + '<ul>'
+          + '<li>Do not map id columns.</li>'
+          + '<li>Only map columns that exist in the destination table (or choose "Create column" to add a new TEXT column).</li>'
+          + '<li>Use "Truncate" if you want to replace existing rows.</li>'
+          + '</ul>';
+      }
+
+      function htmlDonations(){
+        return '<p>Donations import with candidate linking is supported.</p>'
+          + '<ul>'
+          + '<li>Required/recommended mappings: <b>amount</b> (or donationamount), <b>date</b> (or a <b>year</b> column), <b>notes</b> (optional), <b>location</b> (optional).</li>'
+          + '<li>Donor details: map <b>donor_first_name</b>/<b>donor_last_name</b> or <b>donor_org_name</b>. The importer creates donors automatically.</li>'
+          + '<li>Candidate linking: prefer <b>people_id</b> or <b>candidate_person_id</b>. Otherwise map candidate name columns (first/last) or <b>original_id</b> using the Helper tokens group.</li>'
+          + '<li>You can ignore unrelated columns. Use "Create column" only if you want to preserve extra data for reference.</li>'
+          + '</ul>'
+          + '<p>Why ignore? Columns not mapped are not needed to build the normalized donations record and avoiding them keeps the table clean.</p>';
+      }
+
+      function htmlCandidateOverview(){
+        return '<p>Candidate Overview uses an enhanced importer and ignores the manual mapping grid.</p>'
+          + '<ul>'
+          + '<li>Ensure your CSV has candidate <b>first</b> and <b>last</b> name, <b>party</b>, and <b>electorate</b> headers (common variants are detected automatically).</li>'
+          + '<li><b>year</b> is inferred from the file or headers; include it if available.</li>'
+          + '<li><b>original_id</b> (e.g. 2011candidatedonations_id or candidatedonations2023test_id) helps link to donations later.</li>'
+          + '<li>Other totals (part_a, total_donations, total_expenses, etc.) are optional.</li>'
+          + '</ul>'
+          + '<p>Why ignore? Manual mapping is not used here—the importer reads known headers directly.</p>';
+      }
+
+      function htmlMeetings(){
+        return '<p>Meetings import supports deriving fields from common diary CSVs.</p>'
+          + '<ul>'
+          + '<li>Recommended mappings: <b>date</b>, <b>title</b>, <b>location</b>, <b>type</b>, <b>portfolio</b>, <b>with_text</b>.</li>'
+          + '<li><b>minister_person_id</b> can be left unmapped if your CSV has a "Minister" column—the importer resolves the person automatically.</li>'
+          + '<li><b>start_time</b> and <b>end_time</b> are derived from "Schedule Time" when present.</li>'
+          + '<li>Ignore unrelated columns to avoid clutter. Use "Create column" only when you need to keep extra text.</li>'
+          + '</ul>';
+      }
+
+      function htmlGeneric(name){
+        return '<p>Importing into <b>' + name + '</b>.</p>'
+          + '<ul>'
+          + '<li>Map only columns that exist in the table or use "Create column" to add new TEXT columns.</li>'
+          + '<li>Avoid mapping primary key/id columns.</li>'
+          + '<li>Use "Ignore" for columns that are informational only.</li>'
+          + '</ul>';
+      }
+
+      function getChosen(){
+        var v = '';
+        if (custom && custom.value.trim() !== '') v = custom.value.trim();
+        else if (sel && sel.value) v = sel.value;
+        else if (initialTable) v = initialTable;
+        return (v || '').toLowerCase();
+      }
+
+      function render(){
+        if (!contentEl) return;
+        var chosen = getChosen();
+        if (subtitleEl) {
+          var safe = (chosen || 'none selected').replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>');
+          subtitleEl.innerHTML = 'Mapping instructions for <b>' + safe + '</b>';
+        }
+        if (!chosen) { contentEl.innerHTML = htmlDefault(); return; }
+        if (chosen.indexOf('donation') !== -1) { contentEl.innerHTML = htmlDonations(); return; }
+        if (chosen.indexOf('meetings') !== -1) { contentEl.innerHTML = htmlMeetings(); return; }
+        if (chosen.indexOf('candidate_overview') !== -1) { contentEl.innerHTML = htmlCandidateOverview(); return; }
+        contentEl.innerHTML = htmlGeneric(chosen);
+      }
+
+      if (sel) sel.addEventListener('change', render);
+      if (custom) custom.addEventListener('input', render);
+      render();
+    })();
+    </script>
   </body>
   </html>
   <?php
