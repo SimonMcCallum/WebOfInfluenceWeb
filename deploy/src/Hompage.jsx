@@ -75,6 +75,22 @@ const HomePage = () => {
             </div>
             <div className="card-arrow">→</div>
           </Link>
+
+          <Link to="/person-profile" className="nav-card profile-card">
+            <div className="card-icon">👤</div>
+            <div className="card-content">
+              <h3 className="card-title">Person Profile</h3>
+              <p className="card-description">
+                Explore connections between people, parties, and donors with an interactive force-directed graph.
+              </p>
+              <div className="card-features">
+                <span className="feature-tag">D3 Force Graph</span>
+                <span className="feature-tag">Donations & Meetings</span>
+                <span className="feature-tag">Party Links</span>
+              </div>
+            </div>
+            <div className="card-arrow">→</div>
+          </Link>
         </div>
       </div>
 

@@ -6,7 +6,7 @@ import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import HomePage from './Hompage.jsx';
 import DonationsOverview from './DonationsOverview.jsx';
 import MeetingsSearch from './MeetingsSearch.jsx';
-//import PersonProfile from './PersonProfile.jsx';
+import PersonProfile from './PersonProfile.jsx';
 import LoginPage from './Loginpage.jsx';
 import SettingsNav from './SettingsNav.jsx';
 import AccSettings from './AccSettings.jsx';
@@ -36,7 +36,7 @@ createRoot(document.getElementById('root')).render(
           <Route path="/home" element={<HomePage />} />
           <Route path="/donations-overview" element={<DonationsOverview />} />
           <Route path="/meetings" element={<MeetingsSearch />} />
-          {/*<Route path="/person/:firstName/:lastName" element={<PersonProfile />} /> */}
+          <Route path="/person-profile" element={<PersonProfile />} />
           <Route path="/settings" element={<SettingsNav />} />
           <Route path="/account-settings" element={<AccSettings />} />
           <Route path="/admin-dashboard" element={<DashboardRedirect />} />

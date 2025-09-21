@@ -876,11 +876,18 @@ function handle_search_candidates(): void {
   $last = $_GET['last_name'] ?? null;
   if (!$first && !$last) json_response(['error' => 'At least one parameter (first_name or last_name) is required'], 400);
 
+  // Case-insensitive partial match to be more forgiving (e.g., "Mcgruddy" vs "McGruddy")
   $conds = [];
   $params = [];
-  if ($first) { $conds[] = 'UPPER(first_name) = UPPER(?)'; $params[] = $first; }
-  if ($last) { $conds[] = 'UPPER(last_name)  = UPPER(?)';  $params[] = $last; }
-  $sql = 'SELECT id, first_name, last_name FROM people WHERE ' . implode(' AND ', $conds);
+  if ($first) { $conds[] = 'UPPER(first_name) LIKE UPPER(?)'; $params[] = '%' . $first . '%'; }
+  if ($last)  { $conds[] = 'UPPER(last_name)  LIKE UPPER(?)';  $params[] = '%' . $last  . '%'; }
+
+  $sql = 'SELECT id, first_name, last_name FROM people';
+  if (!empty($conds)) {
+    $sql .= ' WHERE ' . implode(' AND ', $conds);
+  }
+  $sql .= ' ORDER BY last_name, first_name LIMIT 20';
+
   $stmt = pdo()->prepare($sql);
   $stmt->execute($params);
   $rows = $stmt->fetchAll();
@@ -948,13 +955,18 @@ function handle_ministerial_diaries_search(): void {
   $end   = $_GET['end_date'] ?? null;
   $portfolio = $_GET['portfolio'] ?? null;
 
-  if (!$first || !$last) json_response(['error' => 'Both first name and last name are required'], 400);
+  if (!$first && !$last) json_response(['error' => 'Provide at least one of first_name or last_name'], 400);
 
-  // Resolve person
-  $stmt = pdo()->prepare('SELECT id FROM people WHERE UPPER(first_name) = UPPER(?) AND UPPER(last_name) = UPPER(?)');
-  $stmt->execute([$first, $last]);
+  // Resolve person (partial, case-insensitive)
+  $conds = [];
+  $params = [];
+  if ($first) { $conds[] = 'UPPER(first_name) LIKE UPPER(?)'; $params[] = '%' . $first . '%'; }
+  if ($last)  { $conds[] = 'UPPER(last_name)  LIKE UPPER(?)';  $params[] = '%' . $last  . '%'; }
+  $sqlP = 'SELECT id FROM people WHERE ' . implode(' AND ', $conds) . ' ORDER BY last_name, first_name LIMIT 1';
+  $stmt = pdo()->prepare($sqlP);
+  $stmt->execute($params);
   $person = $stmt->fetch();
-  if (!$person) json_response(['error' => 'Candidate not found'], 404);
+  if (!$person) json_response([]);
   $people_id = (int)$person['id'];
 
   $sql = 'SELECT m.id, m.date, m.start_time, m.end_time, m.location, m.notes, m.type, m.portfolio, m.title, m.minister_person_id, m.with_text, p.first_name AS minister_first_name, p.last_name AS minister_last_name
@@ -3488,6 +3500,127 @@ function handle_add_person(): void {
   ], 201);
 }
 
+/** Donations by person (with donors) */
+function handle_donations_by_person(): void {
+  $first = $_GET['first_name'] ?? null;
+  $last  = $_GET['last_name'] ?? null;
+  $peopleIdParam = $_GET['people_id'] ?? null;
+  $yearsParam = $_GET['years'] ?? null; // comma-separated e.g. 2011,2014,2017,2020,2023
+
+  if (!$peopleIdParam && (!$first && !$last)) {
+    json_response(['error' => 'Provide either people_id or at least one of first_name or last_name'], 400);
+  }
+
+  // Resolve person id(s)
+  $peopleIds = [];
+  if ($peopleIdParam && is_numeric($peopleIdParam)) {
+    $peopleIds = [(int)$peopleIdParam];
+  } else {
+    // Try exact match first
+    $stmt = pdo()->prepare('SELECT id FROM people WHERE UPPER(first_name) = UPPER(?) AND UPPER(last_name) = UPPER(?) LIMIT 1');
+    $stmt->execute([$first, $last]);
+    $row = $stmt->fetch();
+    if ($row && isset($row['id'])) {
+      $peopleIds = [(int)$row['id']];
+    } else {
+      // Fallback to partial case-insensitive match (more forgiving)
+      $stmt = pdo()->prepare('SELECT id FROM people WHERE UPPER(first_name) LIKE UPPER(?) AND UPPER(last_name) LIKE UPPER(?) LIMIT 50');
+      $stmt->execute(['%' . $first . '%', '%' . $last . '%']);
+      $rows = $stmt->fetchAll();
+      foreach ($rows as $r) {
+        if (isset($r['id'])) $peopleIds[] = (int)$r['id'];
+      }
+      if (empty($peopleIds)) {
+        json_response([]); // no person candidates -> no donations
+      }
+    }
+  }
+
+  // Parse and validate years filter if provided
+  $years = null;
+  if (is_string($yearsParam) && trim($yearsParam) !== '') {
+    $parts = array_filter(array_map('trim', explode(',', $yearsParam)), static fn($y) => $y !== '');
+    $valid = [];
+    foreach ($parts as $y) {
+      if (preg_match('/^(2011|2014|2017|2020|2023)$/', $y)) {
+        $valid[] = $y;
+      }
+    }
+    if (!empty($valid)) {
+      $years = $valid;
+    }
+  }
+
+  // Build SQL (support 1 or many candidate_person_id values)
+  $params = [];
+  $sql = "SELECT 
+            d.id,
+            d.year,
+            d.date,
+            d.amount,
+            d.money_or_goods_services,
+            d.notes,
+            d.location,
+            d.donor_id,
+            dr.first_name AS donor_first_name,
+            dr.last_name  AS donor_last_name,
+            dr.org_name   AS donor_org_name
+          FROM donations d
+          LEFT JOIN donors dr ON dr.id = d.donor_id
+          WHERE ";
+
+  if (count($peopleIds) === 1) {
+    $sql .= "d.candidate_person_id = ?";
+    $params[] = $peopleIds[0];
+  } else {
+    $in = implode(',', array_fill(0, count($peopleIds), '?'));
+    $sql .= "d.candidate_person_id IN ($in)";
+    foreach ($peopleIds as $pid) $params[] = $pid;
+  }
+
+  if ($years && count($years) > 0) {
+    $inYears = implode(',', array_fill(0, count($years), '?'));
+    $sql .= " AND d.year IN ($inYears)";
+    foreach ($years as $y) $params[] = $y;
+  }
+
+  $sql .= " ORDER BY COALESCE(d.date, CONCAT(d.year, '-01-01')) ASC, d.id ASC";
+
+  $stmt = pdo()->prepare($sql);
+  $stmt->execute($params);
+  $rows = $stmt->fetchAll();
+  if (!$rows) json_response([]);
+  json_response($rows);
+}
+
+/** Donations by donor -> other connected people */
+function handle_donations_by_donor(): void {
+  $donorId = $_GET['donor_id'] ?? null;
+  if (!$donorId || !is_numeric($donorId)) {
+    json_response(['error' => 'donor_id is required'], 400);
+  }
+  $exclude = $_GET['exclude_people_id'] ?? null;
+
+  $sql = "SELECT DISTINCT p.id AS people_id, p.first_name, p.last_name
+          FROM donations d
+          JOIN people p ON p.id = d.candidate_person_id
+          WHERE d.donor_id = ?";
+  $params = [(int)$donorId];
+
+  if ($exclude && is_numeric($exclude)) {
+    $sql .= " AND p.id <> ?";
+    $params[] = (int)$exclude;
+  }
+
+  $sql .= " ORDER BY p.last_name, p.first_name";
+
+  $stmt = pdo()->prepare($sql);
+  $stmt->execute($params);
+  $rows = $stmt->fetchAll();
+  if (!$rows) json_response([]);
+  json_response($rows);
+}
+
 /** Dispatch */
 try {
   if ($METHOD === 'GET' && $ROUTE === '/') handle_health();
@@ -3508,6 +3641,8 @@ try {
   }
 
   if ($METHOD === 'GET' && $ROUTE === '/ministerial_diaries/search-cand-filter') handle_ministerial_diaries_search();
+  if ($METHOD === 'GET' && $ROUTE === '/donations/by-person') handle_donations_by_person();
+  if ($METHOD === 'GET' && $ROUTE === '/donations/by-donor') handle_donations_by_donor();
 
   // AI
   if ($METHOD === 'POST' && $ROUTE === '/ai/extract-names') handle_ai_extract_names();

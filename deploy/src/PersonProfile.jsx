@@ -1,0 +1,943 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import * as d3 from 'd3';
+import './PersonProfile.css';
+import { API_BASE } from './apiConfig';
+
+/**
+ * PersonProfile (Web of Influence)
+ * - Search by first/last name
+ * - Builds a connections graph:
+ *   - Person node
+ *   - Party node (2023 overview) -> linked to person
+ *   - Donor nodes -> linked to person (edge weight ~ amount)
+ *   - Other people connected via the same donors (donor -> peer person edges)
+ *   - Attendees from meetings (meeting -> person links)
+ * - Tables for Donations (all years) and Meetings
+ *
+ * Back-end PHP endpoints used:
+ *   GET /candidates/search?first_name=&last_name=
+ *   GET /candidates/election-overview/2023/search/combined?first_name=&last_name=
+ *   GET /party/search-id?party_id=
+ *   GET /donations/by-person?people_id=ID  (returns year/date/amount plus donor_first/last/org)
+ *   GET /donations/by-donor?donor_id=ID&exclude_people_id=ID (other people funded by donor)
+ *   GET /ministerial_diaries/search-cand-filter?first_name=&last_name=
+ */
+const PersonProfile = () => {
+  const navigate = useNavigate();
+
+  const [searchQuery, setSearchQuery] = useState({
+    firstName: '',
+    lastName: ''
+  });
+  const [activeFirstName, setActiveFirstName] = useState('');
+  const [activeLastName, setActiveLastName] = useState('');
+
+  const [profileData, setProfileData] = useState(null); // {id, first_name, last_name}
+  const [partyGuess, setPartyGuess] = useState(null); // string name
+  const [partyId, setPartyId] = useState(null);
+
+  const [donations, setDonations] = useState([]); // rows from /donations/by-person
+  const [donorPeers, setDonorPeers] = useState({}); // donor_id -> [{people_id, first_name, last_name}]
+  const [meetings, setMeetings] = useState([]);
+  const [suggestions, setSuggestions] = useState([]); // suggested matches from historical overviews
+  const [selectedPeopleId, setSelectedPeopleId] = useState(null); // explicit person id chosen from suggestions
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Sorting config for tables
+  const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'asc' });
+
+  // D3 refs
+  const svgRef = useRef(null);
+  const containerRef = useRef(null);
+  const zoomRef = useRef(null);
+
+  const handleBackToHome = () => navigate('/home');
+
+  const handleReset = () => {
+    setSearchQuery({ firstName: '', lastName: '' });
+    setActiveFirstName('');
+    setActiveLastName('');
+    setProfileData(null);
+    setDonations([]);
+    setDonorPeers({});
+    setMeetings([]);
+    setSuggestions([]);
+    setSelectedPeopleId(null);
+    setError(null);
+    setPartyGuess(null);
+    setPartyId(null);
+    setHasSearched(false);
+  };
+
+  const handleSearchChange = (event) => {
+    const { name, value } = event.target;
+    setSearchQuery((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleSearchSubmit = () => {
+    setError(null);
+    setSuggestions([]);
+    setSelectedPeopleId(null);
+    setHasSearched(true);
+    setActiveFirstName(searchQuery.firstName.trim());
+    setActiveLastName(searchQuery.lastName.trim());
+  };
+
+  // Choose a suggestion and refetch with known people_id
+  const handleUseSuggestion = (s) => {
+    if (!s) return;
+    setSelectedPeopleId(s.people_id ?? null);
+    setActiveFirstName((s.first_name || '').trim());
+    setActiveLastName((s.last_name || '').trim());
+    setSearchQuery({ firstName: s.first_name || '', lastName: s.last_name || '' });
+    setError(null);
+    setHasSearched(true);
+  };
+
+  // Fetch data whenever active names or selected person id change
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!activeFirstName && !activeLastName) {
+        setProfileData(null);
+        setDonations([]);
+        setDonorPeers({});
+        setMeetings([]);
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        // 1) Resolve person (exact match on PHP API)
+        const personResp = await fetch(
+          `${API_BASE}/candidates/search?first_name=${encodeURIComponent(activeFirstName || '')}&last_name=${encodeURIComponent(activeLastName || '')}`
+        );
+        const personRows = personResp.ok ? await personResp.json() : [];
+        const person = Array.isArray(personRows) && personRows.length > 0 ? personRows[0] : null;
+        setProfileData(person);
+
+        // 2) Try to infer party for 2023
+        try {
+          const ovResp = await fetch(
+            `${API_BASE}/candidates/election-overview/2023/search/combined?first_name=${encodeURIComponent(activeFirstName || '')}&last_name=${encodeURIComponent(activeLastName || '')}`
+          );
+          if (ovResp.ok) {
+            const ovRows = await ovResp.json();
+            const first = Array.isArray(ovRows) && ovRows.length > 0 ? ovRows[0] : null;
+            const pid = first && (first.party_id || first.partyId || first.party);
+            const pname = first && (first.party_name || first.party || null);
+            if (pid) {
+              setPartyId(pid);
+              if (!pname) {
+                const pResp = await fetch(`${API_BASE}/party/search-id?party_id=${encodeURIComponent(pid)}`);
+                if (pResp.ok) {
+                  const pRows = await pResp.json();
+                  const pName = Array.isArray(pRows) && pRows.length > 0 ? (pRows[0].party_name || pRows[0].name) : null;
+                  if (pName) setPartyGuess(pName);
+                }
+              } else {
+                setPartyGuess(pname);
+              }
+            } else if (pname) {
+              setPartyGuess(pname);
+            }
+          }
+        } catch {
+          // ignore party inference failure
+        }
+
+        // 2b) If no exact person found, search historical overviews for suggestions
+        let foundSuggestions = [];
+        if (!person) {
+          try {
+            const years = ['2023', '2020', '2017', '2014', '2011'];
+            const seen = new Set();
+            for (const y of years) {
+              const sResp = await fetch(
+                `${API_BASE}/candidates/election-overview/${y}/search/combined?first_name=${encodeURIComponent(activeFirstName || '')}&last_name=${encodeURIComponent(activeLastName || '')}`
+              );
+              if (!sResp.ok) continue;
+              const rows = await sResp.json();
+              const arr = Array.isArray(rows) ? rows : [];
+              for (const r of arr) {
+                const pid = r.people_id ?? null;
+                if (pid != null && !seen.has(pid)) {
+                  seen.add(pid);
+                  foundSuggestions.push({
+                    people_id: pid,
+                    first_name: r.first_name || activeFirstName || '',
+                    last_name: r.last_name || activeLastName || '',
+                    party_id: r.party_id ?? null,
+                    party_name: r.party_name || null,
+                    electorate_name: r.electorate_name || null,
+                    year: r.year || y
+                  });
+                }
+              }
+            }
+          } catch {
+            // ignore suggestions failure
+          }
+          if (foundSuggestions.length > 0) {
+            setSuggestions(foundSuggestions);
+          } else {
+            setSuggestions([]);
+          }
+          // 2c) If we still don't have a party, use the first suggestion that carries party info
+          if (!partyGuess && Array.isArray(foundSuggestions) && foundSuggestions.length > 0) {
+            const withParty = foundSuggestions.find((s) => s.party_name) || foundSuggestions[0];
+            if (withParty) {
+              if (withParty.party_id != null) setPartyId(withParty.party_id);
+              if (withParty.party_name) setPartyGuess(withParty.party_name);
+            }
+          }
+        }
+
+        // 3) Donations across all supported years (single endpoint)
+        let donationsRows = [];
+        try {
+          const peopleIdEff = (selectedPeopleId != null) ? selectedPeopleId : (person?.id ?? null);
+          const url = peopleIdEff
+            ? `${API_BASE}/donations/by-person?people_id=${encodeURIComponent(peopleIdEff)}`
+            : `${API_BASE}/donations/by-person?first_name=${encodeURIComponent(activeFirstName || '')}&last_name=${encodeURIComponent(activeLastName || '')}`;
+          const dResp = await fetch(url);
+          if (dResp.ok) {
+            const d = await dResp.json();
+            donationsRows = Array.isArray(d) ? d : [];
+          }
+        } catch {
+          donationsRows = [];
+        }
+        setDonations(donationsRows);
+
+        // 4) For each donor, pull other connected people (shared donors)
+        const uniqueDonors = Array.from(
+          new Set(donationsRows.filter((r) => r.donor_id != null).map((r) => String(r.donor_id)))
+        );
+        // Limit to avoid huge graphs
+        const maxDonors = 30;
+        const donorsLimited = uniqueDonors.slice(0, maxDonors);
+
+        const peersEntries = await Promise.all(
+          donorsLimited.map(async (donorId) => {
+            try {
+              const peerResp = await fetch(
+                `${API_BASE}/donations/by-donor?donor_id=${encodeURIComponent(donorId)}${(selectedPeopleId != null || (person?.id != null)) ? `&exclude_people_id=${encodeURIComponent((selectedPeopleId != null) ? selectedPeopleId : person.id)}` : ''}`
+              );
+              if (!peerResp.ok) return [donorId, []];
+              const rows = await peerResp.json();
+              const peers = Array.isArray(rows) ? rows : [];
+              return [donorId, peers];
+            } catch {
+              return [donorId, []];
+            }
+          })
+        );
+        const peersMap = {};
+        for (const [did, peers] of peersEntries) peersMap[did] = peers;
+        setDonorPeers(peersMap);
+
+        // 5) Meetings data
+        let meetingsData = [];
+        try {
+          const meetingsResp = await fetch(
+            `${API_BASE}/ministerial_diaries/search-cand-filter?first_name=${encodeURIComponent(activeFirstName || '')}&last_name=${encodeURIComponent(activeLastName || '')}`
+          );
+          if (meetingsResp.ok) {
+            const md = await meetingsResp.json();
+            meetingsData = Array.isArray(md) ? md : [];
+          }
+        } catch {
+          meetingsData = [];
+        }
+        setMeetings(meetingsData);
+
+        if (!person && donationsRows.length === 0 && meetingsData.length === 0) {
+          if (Array.isArray(foundSuggestions) && foundSuggestions.length > 0) {
+            // Show suggestions UI instead of an error banner
+            setError(null);
+          } else {
+            setError('No data found for this person.');
+          }
+        }
+      } catch (e) {
+        console.error('Error fetching person profile data:', e);
+        setError('An error occurred while fetching data. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [activeFirstName, activeLastName, selectedPeopleId]);
+
+  const sortTable = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
+    setSortConfig({ key, direction });
+  };
+
+  const sortedDonations = useMemo(() => {
+    const arr = [...donations];
+    arr.sort((a, b) => {
+      if (sortConfig.key === 'date') {
+        const ad = a.date ? new Date(a.date) : new Date(`${a.year}-01-01`);
+        const bd = b.date ? new Date(b.date) : new Date(`${b.year}-01-01`);
+        return sortConfig.direction === 'asc' ? ad - bd : bd - ad;
+      }
+      if (sortConfig.key === 'amount') {
+        const aAmt = Number(a.amount) || 0;
+        const bAmt = Number(b.amount) || 0;
+        return sortConfig.direction === 'asc' ? aAmt - bAmt : bAmt - aAmt;
+      }
+      return 0;
+    });
+    return arr;
+  }, [donations, sortConfig]);
+
+  const sortedMeetings = useMemo(() => {
+    const arr = [...meetings];
+    arr.sort((a, b) => {
+      if (sortConfig.key === 'date') {
+        return sortConfig.direction === 'asc'
+          ? new Date(a.date) - new Date(b.date)
+          : new Date(b.date) - new Date(a.date);
+      }
+      return 0;
+    });
+    return arr;
+  }, [meetings, sortConfig]);
+
+
+  // Programmatic zoom controls
+  const handleZoom = (direction) => {
+    if (!svgRef.current || !zoomRef.current) return;
+    const svg = d3.select(svgRef.current);
+    const factor = direction === 'in' ? 1.2 : 1 / 1.2;
+    try {
+      svg.transition().duration(200).call(zoomRef.current.scaleBy, factor);
+    } catch {
+      // ignore if zoom not initialized yet
+    }
+  };
+
+  // Build graph data (nodes, links)
+  const graphData = useMemo(() => {
+    const nodes = [];
+    const links = [];
+
+    const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
+    const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
+    const personLabel = profileLabel || inputLabel || 'Selected Person';
+    const personId = (selectedPeopleId != null)
+      ? `person:${selectedPeopleId}`
+      : ((profileData && profileData.id != null)
+        ? `person:${profileData.id}`
+        : `person:${personLabel}`);
+
+    // Ensure a person node is always present
+    nodes.push({
+      id: personId,
+      label: personLabel,
+      type: 'person'
+    });
+
+    const partyName = partyGuess || null;
+
+    if (partyName) {
+      const pId = partyId ? `partyid:${partyId}` : `party:${partyName}`;
+      nodes.push({ id: pId, label: partyName, type: 'party' });
+      if (personId) {
+        links.push({
+          source: personId,
+          target: pId,
+          type: 'affiliation',
+          value: 1
+        });
+      }
+    }
+
+    // Aggregate donation amounts per donor for edge weighting
+    const donorAgg = new Map();
+    for (const d of donations) {
+      const did = d.donor_id != null ? String(d.donor_id) : null;
+      if (!did) continue;
+      const prev = donorAgg.get(did) || { amount: 0, rows: [] };
+      prev.amount += Number(d.amount) || 0;
+      prev.rows.push(d);
+      donorAgg.set(did, prev);
+    }
+
+    // Create donor nodes and link to person
+    for (const [did, agg] of donorAgg.entries()) {
+      const any = agg.rows[0] || {};
+      const df = any.donor_first_name ? String(any.donor_first_name) : '';
+      const dl = any.donor_last_name ? String(any.donor_last_name) : '';
+      const org = any.donor_org_name ? String(any.donor_org_name) : '';
+      const label = org || [df, dl].filter(Boolean).join(' ') || `Donor ${did}`;
+      const donorNodeId = `donor:${did}`;
+
+      if (!nodes.some((n) => n.id === donorNodeId)) {
+        nodes.push({ id: donorNodeId, label, type: 'donor' });
+      }
+
+      if (personId) {
+        links.push({
+          source: personId,
+          target: donorNodeId,
+          type: 'donation',
+          value: Math.max(1, Math.log10(Math.abs(agg.amount) + 1))
+        });
+      }
+
+      // Add other people this donor has funded
+      const peers = donorPeers[did] || [];
+      for (const pr of peers) {
+        const peerId = Number(pr.people_id);
+        const peerLabel = [pr.first_name || '', pr.last_name || ''].filter(Boolean).join(' ') || `Person ${peerId}`;
+        const peerNodeId = `person:${peerId}`;
+        if (!nodes.some((n) => n.id === peerNodeId)) {
+          nodes.push({ id: peerNodeId, label: peerLabel, type: 'person' });
+        }
+        links.push({
+          source: donorNodeId,
+          target: peerNodeId,
+          type: 'donation',
+          value: 1
+        });
+      }
+    }
+
+    // Attendee nodes from meetings (use attendees_names if available, else with_text)
+    const ensureNode = (id, label, type) => {
+      if (!nodes.some((n) => n.id === id)) {
+        nodes.push({ id, label, type });
+      }
+    };
+
+    const addAttendeeLink = (label) => {
+      const name = (label || '').trim();
+      if (!name) return;
+      // skip generic placeholders
+      if (/^(attendees|officials|multiple ministers|ministers|delegation|representatives|committee|board|council|group|members|staff)$/i.test(name)) {
+        return;
+      }
+      const id = `attendee:${name}`;
+      ensureNode(id, name, 'attendee');
+      if (personId) {
+        links.push({ source: personId, target: id, type: 'meeting', value: 1 });
+      }
+    };
+
+    for (const m of meetings || []) {
+      const raw = m.attendees_names || m.with_text || '';
+      if (!raw) continue;
+      const parts = String(raw).split(/;|,|&| and |\/|\+/gi);
+      for (let p of parts) {
+        addAttendeeLink(p);
+      }
+    }
+
+    return { nodes, links };
+  }, [donations, donorPeers, meetings, profileData, activeFirstName, activeLastName, partyGuess, partyId, selectedPeopleId]);
+
+  // Build a simple connections list summarizing direct links from the selected person node
+  const connections = useMemo(() => {
+    // Reconstruct current personId to match the graph
+    const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
+    const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
+    const personLabel = profileLabel || inputLabel || 'Selected Person';
+    const pid = (selectedPeopleId != null)
+      ? `person:${selectedPeopleId}`
+      : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${personLabel}`);
+
+    // Recreate current graph nodes/links (depends on same deps as graphData)
+    const nodes = new Map();
+    // Reuse graphData if possible for efficiency
+    try {
+      (graphData.nodes || []).forEach(n => nodes.set(n.id, n));
+    } catch {
+      // noop
+    }
+    const list = [];
+    const seen = new Map(); // id -> {label, types:Set}
+
+    try {
+      for (const l of (graphData.links || [])) {
+        let otherId = null;
+        if (l.source && typeof l.source === 'object' && l.source.id === pid) {
+          otherId = typeof l.target === 'object' ? l.target.id : l.target;
+        } else if (l.target && typeof l.target === 'object' && l.target.id === pid) {
+          otherId = typeof l.source === 'object' ? l.source.id : l.source;
+        } else if (l.source === pid) {
+          otherId = l.target;
+        } else if (l.target === pid) {
+          otherId = l.source;
+        }
+        if (!otherId) continue;
+        const n = nodes.get(otherId);
+        if (!n) continue;
+
+        const src = l.type === 'donation'
+          ? 'Donation'
+          : (l.type === 'meeting' ? 'Meeting' : (l.type === 'affiliation' ? 'Affiliation' : (l.type || 'Link')));
+
+        if (!seen.has(otherId)) {
+          seen.set(otherId, { id: otherId, label: n.label || otherId, nodeType: n.type || '', sources: new Set([src]) });
+        } else {
+          seen.get(otherId).sources.add(src);
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    for (const v of seen.values()) {
+      list.push({
+        id: v.id,
+        label: v.label,
+        nodeType: v.nodeType,
+        sources: Array.from(v.sources)
+      });
+    }
+
+    // Sort by nodeType then label
+    list.sort((a, b) => {
+      const t = a.nodeType.localeCompare(b.nodeType);
+      if (t !== 0) return t;
+      return a.label.localeCompare(b.label);
+    });
+    return list;
+  }, [graphData, profileData, activeFirstName, activeLastName, selectedPeopleId]);
+
+  // Render D3 force-directed graph
+  useEffect(() => {
+    const svg = d3.select(svgRef.current);
+
+    // Clear previous
+    svg.selectAll('*').remove();
+
+    // Use a safe width even if the container has not measured yet (prevent negative/zero viewBox width)
+    let cw = containerRef.current?.clientWidth || 0;
+    let width = cw - 20;
+    if (!width || !Number.isFinite(width) || width <= 0) width = 900;
+    const height = 500;
+
+    svg.attr('viewBox', [0, 0, width, height].join(' ')).attr('width', '100%').attr('height', height);
+
+    const zoomLayer = svg.append('g');
+
+    // DEBUG: baseline marker (DEV only)
+    if (import.meta?.env?.DEV) {
+      const dbg = zoomLayer.append('g').attr('aria-hidden', 'true');
+      dbg
+        .append('circle')
+        .attr('cx', 24)
+        .attr('cy', 24)
+        .attr('r', 6)
+        .attr('fill', '#10b981')
+        .attr('stroke', '#065f46')
+        .attr('stroke-width', 1.5)
+        .attr('opacity', 0.6);
+
+      dbg
+        .append('text')
+        .text('DEBUG')
+        .attr('x', 40)
+        .attr('y', 28)
+        .attr('font-size', 12)
+        .attr('fill', '#6b7280');
+    }
+
+    const color = d3
+      .scaleOrdinal()
+      .domain(['person', 'party', 'donor', 'attendee', 'org', 'region'])
+      .range(['#1f77b4', '#9467bd', '#2ca02c', '#17becf', '#ff7f0e', '#8c564b']);
+
+    const linkStrength = (l) => (l.type === 'donation' ? 0.2 : 0.1);
+    const linkDistance = (l) => (l.type === 'donation' ? 80 + (l.value || 1) * 20 : 120);
+
+    // Clone data to avoid mutating memoized objects and seed initial positions
+    const nodesData = graphData.nodes.map((d) => ({ ...d }));
+    const linksData = graphData.links.map((l) => ({ ...l }));
+    nodesData.forEach((n) => {
+      if (n.x == null || Number.isNaN(n.x)) n.x = width / 2;
+      if (n.y == null || Number.isNaN(n.y)) n.y = height / 2;
+    });
+    // Debug: ensure we have at least the person node
+    try {
+      // eslint-disable-next-line no-console
+      console.debug('WOI PersonProfile graph', { nodes: nodesData.length, node0: nodesData[0], links: linksData.length });
+    } catch {}
+
+    const simulation = d3
+      .forceSimulation(nodesData)
+      .force('link', d3.forceLink(linksData).id((d) => d.id).distance(linkDistance).strength(linkStrength))
+      .force('charge', d3.forceManyBody().strength(-250))
+      .force('center', d3.forceCenter(width / 2, height / 2))
+      .force('collision', d3.forceCollide().radius(30));
+
+    const link = zoomLayer
+      .append('g')
+      .attr('stroke', '#999')
+      .attr('stroke-opacity', 0.6)
+      .selectAll('line')
+      .data(linksData)
+      .join('line')
+      .attr('stroke-width', (d) => 1 + (d.value || 1) * 0.5);
+
+    const node = zoomLayer
+      .append('g')
+      .attr('stroke', '#fff')
+      .attr('stroke-width', 1.5)
+      .selectAll('circle')
+      .data(nodesData)
+      .join('circle')
+      .attr('r', (d) => (d.type === 'person' ? 10 : 6))
+      .attr('fill', (d) => color(d.type))   // attribute fill for maximum compatibility
+      .style('fill', (d) => color(d.type))  // inline style fill to override any CSS
+      .style('opacity', 1)
+      .call(
+        d3
+          .drag()
+          .on('start', (event, d) => {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+          })
+          .on('drag', (event, d) => {
+            d.fx = event.x;
+            d.fy = event.y;
+          })
+          .on('end', (event, d) => {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+          })
+      );
+
+    const labels = zoomLayer
+      .append('g')
+      .selectAll('text')
+      .data(nodesData)
+      .join('text')
+      .text((d) => d.label)
+      .attr('font-size', 10)
+      .attr('dx', 10)
+      .attr('dy', 4)
+      .attr('fill', '#333');
+
+    // Kick the simulation once and set initial positions for immediate render
+    try {
+      simulation.tick();
+    } catch (e) {
+      // ignore if tick not available
+    }
+    link
+      .attr('x1', (d) => (d.source && d.source.x != null ? d.source.x : width / 2))
+      .attr('y1', (d) => (d.source && d.source.y != null ? d.source.y : height / 2))
+      .attr('x2', (d) => (d.target && d.target.x != null ? d.target.x : width / 2))
+      .attr('y2', (d) => (d.target && d.target.y != null ? d.target.y : height / 2));
+
+    node
+      .attr('cx', (d) => (d.x != null ? d.x : width / 2))
+      .attr('cy', (d) => (d.y != null ? d.y : height / 2));
+
+    labels
+      .attr('x', (d) => (d.x != null ? d.x : width / 2))
+      .attr('y', (d) => (d.y != null ? d.y : height / 2));
+
+    // If only the person node exists, add a subtle highlight ring (avoid duplicate label/circle)
+    if (nodesData.length === 1) {
+      const cx = nodesData[0].x != null ? nodesData[0].x : width / 2;
+      const cy = nodesData[0].y != null ? nodesData[0].y : height / 2;
+
+      zoomLayer
+        .append('circle')
+        .attr('cx', cx)
+        .attr('cy', cy)
+        .attr('r', 14)
+        .attr('fill', 'none')
+        .attr('stroke', '#93c5fd')
+        .attr('stroke-width', 2)
+        .attr('opacity', 0.8);
+    }
+
+    // Zoom and pan (store zoom instance so UI buttons can control it)
+    const zoom = d3
+      .zoom()
+      .scaleExtent([0.5, 3])
+      .on('zoom', (event) => {
+        zoomLayer.attr('transform', event.transform);
+      });
+    zoomRef.current = zoom;
+    svg.call(zoom);
+
+    simulation.on('tick', () => {
+      link
+        .attr('x1', (d) => d.source.x)
+        .attr('y1', (d) => d.source.y)
+        .attr('x2', (d) => d.target.x)
+        .attr('y2', (d) => d.target.y);
+
+      node.attr('cx', (d) => d.x).attr('cy', (d) => d.y);
+
+      labels.attr('x', (d) => d.x).attr('y', (d) => d.y);
+    });
+
+    return () => {
+      simulation.stop();
+    };
+  }, [graphData]);
+
+  return (
+    <div className="donations-page" ref={containerRef}>
+      {/* Header Section */}
+      <div className="donations-header">
+        <div className="header-content">
+          <div className="header-left">
+            <div className="page-icon">👤</div>
+            <div className="header-text">
+              <h1 className="page-title">Person Profile</h1>
+              <p className="page-subtitle">Search a person and explore connections across parties, donors, and other people</p>
+            </div>
+          </div>
+          <button onClick={handleBackToHome} className="back-button">
+            ← Back to Home
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="donations-container">
+        {/* Search Section (left column) */}
+        <div className="search-section">
+          <div className="search-card">
+            <div className="card-header">
+              <h2 className="card-title">
+                <span className="card-icon">🔍</span>
+                Search Filters
+              </h2>
+              <button type="button" className="reset-button" onClick={handleReset}>
+                <span>↺</span>
+                Reset
+              </button>
+            </div>
+
+            {/* Inputs */}
+            <div className="inputs-grid">
+              <div className="field">
+                <span className="icon" aria-hidden>👤</span>
+                <input
+                  type="text"
+                  name="firstName"
+                  placeholder="First Name"
+                  value={searchQuery.firstName}
+                  onChange={handleSearchChange}
+                  className="input"
+                />
+              </div>
+
+              <div className="field">
+                <span className="icon" aria-hidden>👤</span>
+                <input
+                  type="text"
+                  name="lastName"
+                  placeholder="Last Name"
+                  value={searchQuery.lastName}
+                  onChange={handleSearchChange}
+                  className="input"
+                />
+              </div>
+            </div>
+
+            {/* Search Button */}
+            <button type="button" className="search-button" onClick={handleSearchSubmit} disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <span className="loading-spinner">⏳</span>
+                  Searching...
+                </>
+              ) : (
+                <>
+                  <span>🔍</span>
+                  Search Person
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Results Section (right column) */}
+        <div className="results-section">
+          <div className="results-header">
+            <h2 className="results-title">
+              <span className="results-icon">📊</span>
+              Connections and Data
+            </h2>
+          </div>
+
+          {error && (
+            <div className="error-message">
+              <span className="error-icon">⚠️</span>
+              {error}
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="loading-message">
+              <span className="loading-spinner">⏳</span>
+              Loading results...
+            </div>
+          )}
+
+          {!isLoading && hasSearched && !error && (
+            <div className="results-content">
+              {/* Graph */}
+              <div style={{ marginBottom: '1rem' }}>
+                {(profileData?.first_name || activeFirstName || activeLastName) && (
+                  <h3 style={{ margin: 0, marginBottom: '0.5rem', color: '#1f2937' }}>
+                    {(profileData?.first_name || activeFirstName) + ' ' + (profileData?.last_name || activeLastName)}
+                  </h3>
+                )}
+                <div className="graph-wrap">
+                  <svg ref={svgRef} className="person-graph" />
+                  <div className="graph-zoom" aria-label="Graph zoom controls">
+                    <button
+                      type="button"
+                      aria-label="Zoom in"
+                      onClick={() => handleZoom('in')}
+                      className="graph-zoom__btn"
+                      title="Zoom in"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Zoom out"
+                      onClick={() => handleZoom('out')}
+                      className="graph-zoom__btn"
+                      title="Zoom out"
+                    >
+                      -
+                    </button>
+                  </div>
+                </div>
+                <p className="results-note">Colors: Person (blue), Party (purple), Donor (green), Attendee (teal). Drag nodes to explore. Zoom/pan with mouse.</p>
+              </div>
+
+              {/* Donations Table */}
+              {Array.isArray(sortedDonations) && sortedDonations.length > 0 && (
+                <>
+                  <h3 style={{ marginTop: '1rem', color: '#1f2937' }}>Donation History (All Years)</h3>
+                  <div className="table-container">
+                    <table className="min-w-full border">
+                      <thead>
+                        <tr>
+                          <th onClick={() => sortTable('date')}>Date</th>
+                          <th onClick={() => sortTable('amount')}>Amount</th>
+                          <th>Donor First</th>
+                          <th>Donor Last</th>
+                          <th>Donor Org</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedDonations.map((donation, idx) => (
+                          <tr key={idx}>
+                            <td>{donation.date ? new Date(donation.date).toLocaleDateString() : (donation.year || '')}</td>
+                            <td>{typeof donation.amount === 'number' ? `$${donation.amount.toLocaleString()}` : `$${donation.amount}`}</td>
+                            <td>{donation.donor_first_name || ''}</td>
+                            <td>{donation.donor_last_name || ''}</td>
+                            <td>{donation.donor_org_name || ''}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+
+              {/* Connections (summary of direct links from the selected person) */}
+              <div>
+                <h3 style={{ marginTop: '1rem', color: '#1f2937' }}>
+                  Connections {Array.isArray(connections) ? `(${connections.length})` : ''}
+                </h3>
+                {Array.isArray(connections) && connections.length > 0 ? (
+                  <div className="table-container">
+                    <table className="min-w-full border">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Type</th>
+                          <th>Source</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {connections.map((c) => (
+                          <tr key={c.id}>
+                            <td>{c.label}</td>
+                            <td style={{ textTransform: 'capitalize' }}>{c.nodeType || 'unknown'}</td>
+                            <td>
+                              {c.sources.map((s) => {
+                                const cls =
+                                  s === 'Donation' ? 'conn-badge conn-badge--donation' :
+                                  s === 'Meeting' ? 'conn-badge conn-badge--meeting' :
+                                  s === 'Affiliation' ? 'conn-badge conn-badge--affiliation' :
+                                  'conn-badge';
+                                return <span key={s} className={cls}>{s}</span>;
+                              })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="results-note">No direct connections were found for this person.</p>
+                )}
+              </div>
+
+              {/* No results after search */}
+              {(!sortedDonations || sortedDonations.length === 0) &&
+                (!sortedMeetings || sortedMeetings.length === 0) &&
+                !profileData && (
+                  <div className="no-results">
+                    <span className="no-results-icon">🔍</span>
+                    <h3>No data found</h3>
+                    {Array.isArray(suggestions) && suggestions.length > 0 ? (
+                      <>
+                        <p>We couldn't find a direct profile, but found matching candidates in historical election data:</p>
+                        <ul className="suggestions-list" style={{ listStyle: 'none', padding: 0 }}>
+                          {suggestions.map((s, idx) => (
+                            <li key={idx} style={{ marginBottom: '0.5rem' }}>
+                              <button
+                                type="button"
+                                className="search-button"
+                                onClick={() => handleUseSuggestion(s)}
+                              >
+                                {(s.first_name || '') + ' ' + (s.last_name || '')} — {(s.party_name || 'Unknown party')} — {(s.electorate_name || 'Unknown electorate')} — {s.year}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <p>Try adjusting the name.</p>
+                    )}
+                  </div>
+                )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default PersonProfile;
