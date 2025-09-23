@@ -1081,7 +1081,7 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
 
       // Mapping Instructions bubble appears under the Read-only Query form
       var mapEl = document.getElementById('mapping-instructions');
-      var queryForm = document.querySelector('form[action="?route=/admin/query"]');
+      var queryForm = document.querySelector('form[action*="/admin/query"]');
       if (mapEl && queryForm && mapEl.previousElementSibling !== queryForm) {
         queryForm.insertAdjacentElement('afterend', mapEl);
       }
