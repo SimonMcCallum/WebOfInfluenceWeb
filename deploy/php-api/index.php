@@ -715,6 +715,57 @@ WHERE year = 2011
                 <ul>
                   <li><b>Never</b> map <code>_2011CandidateDonations_Id</code> to <code>people_id</code>. It is stored in <code>candidate_overview.original_id</code>.</li>
                 </ul>
+<?php elseif ($mapTableLower === 'stg_overview_2023'): ?>
+                <p><b>stg_overview_2023 — What this is</b></p>
+                <ul>
+                  <li>Temporary <b>staging table</b> used to load the 2023 candidate donations CSV before running the Maintenance backfill.</li>
+                  <li>The <b>Maintenance → “Backfill 2023 original_id”</b> action copies <code>candidatedonations2023test_id</code> from this staging table into <code>candidate_overview.original_id</code> (year 2023) so <b>donations</b> can link correctly.</li>
+                </ul>
+
+                <p><b>When and why to use it</b></p>
+                <ol>
+                  <li>Use when preparing the site to link 2023 donations → candidates.</li>
+                  <li>Load <b>candidate_csv/2023_candidate_donations.csv</b> into <b>stg_overview_2023</b>.</li>
+                  <li>Run <b>Maintenance → Backfill 2023 original_id</b> to safely fill <code>candidate_overview.original_id</code> for 2023.</li>
+                </ol>
+
+                <p><b>Expected/Helpful columns in stg_overview_2023</b></p>
+                <ul>
+                  <li><code>candidatedonations2023test_id</code> <small>(REQUIRED to copy into candidate_overview.original_id)</small></li>
+                  <li><code>candidatename_first</code>, <code>candidatename_last</code></li>
+                  <li><code>party</code>, <code>electorate</code></li>
+                </ul>
+
+                <p><b>How to load the CSV</b></p>
+                <ol>
+                  <li>Recommended (no manual mapping): <b>Import CSVs from Server</b>
+                    <ul>
+                      <li>Place the file under <code>data/candidate_csv/2023_candidate_donations.csv</code> on the server.</li>
+                      <li>Choose the file and set Target Table to <b>stg_overview_2023</b> (create if missing).</li>
+                    </ul>
+                  </li>
+                  <li>Alternative: <b>CSV Upload → Table</b>
+                    <ul>
+                      <li>Destination table: <b>stg_overview_2023</b></li>
+                      <li>Ensure the columns listed above are present; you may <b>Create column (TEXT)</b> if needed.</li>
+                      <li>It’s fine to leave unrelated columns as <b>Ignore</b>.</li>
+                    </ul>
+                  </li>
+                </ol>
+
+                <p><b>After loading</b></p>
+                <ol>
+                  <li>Go to <b>Maintenance</b> and click <b>Backfill 2023 original_id</b>.</li>
+                  <li>Check the result message: it shows before/after counts and updated rows per matching step.</li>
+                  <li>Optional: once backfill finishes, you can <b>Truncate</b> <code>stg_overview_2023</code> to keep things tidy.</li>
+                </ol>
+
+                <p><b>Notes & Troubleshooting</b></p>
+                <ul>
+                  <li>The backfill is <b>idempotent</b>: it only fills <code>NULL</code> values and can be re-run safely.</li>
+                  <li>If no rows are updated, confirm staging columns exist (case-insensitive): <code>candidatename_first</code>, <code>candidatename_last</code>, <code>party</code>, <code>electorate</code>, and <code>candidatedonations2023test_id</code>.</li>
+                  <li>You can re-run after improving the staging file; only NULL <code>original_id</code> values will be filled.</li>
+                </ul>
 <?php elseif ($mapTableLower && strpos($mapTableLower, 'meetings') !== false): ?>
                 <p><b>Importing Ministerial Diaries into meetings Table</b></p>
                 <p><b>General Rule</b></p>
