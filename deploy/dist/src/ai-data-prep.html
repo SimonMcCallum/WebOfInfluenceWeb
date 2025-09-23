@@ -30,6 +30,42 @@
         <button id="toolInfoToggle" type="button" aria-expanded="false" aria-controls="toolInfoContent" class="reset-button">↺ Info</button>
       </div>
       <div id="toolInfoContent" style="display:none; margin-top:.5rem;">
+      <div id="toolWizard" class="tool-wizard" style="border:1px solid #e5e7eb; border-radius:8px; padding:.75rem; background:#f9fafb; margin:.5rem 0;">
+        <div style="font-weight:600; margin-bottom:.5rem;">Guided Picker</div>
+        <div class="wizard-step">
+          <div style="margin-bottom:.25rem;">Are you importing this CSV via Admin → Add Data?</div>
+          <label style="margin-right:.75rem;"><input type="radio" name="wiz-admin" id="wiz-admin-yes"> Yes</label>
+          <label><input type="radio" name="wiz-admin" id="wiz-admin-no"> No</label>
+        </div>
+        <div class="wizard-step" id="wiz-diaries-q" style="display:none; margin-top:.5rem;">
+          <div style="margin-bottom:.25rem;">Is this a ministerial diary (meetings) and you need per-row attendees?</div>
+          <label style="margin-right:.75rem;"><input type="radio" name="wiz-diaries" id="wiz-diaries-yes"> Yes</label>
+          <label><input type="radio" name="wiz-diaries" id="wiz-diaries-no"> No</label>
+        </div>
+        <div id="toolRecommendation" style="display:none; margin-top:.75rem;"></div>
+        <div style="margin-top:.5rem;">
+          <button type="button" class="reset-button" id="compareToolsBtn">Compare tools</button>
+        </div>
+        <div id="compareTools" style="display:none; margin-top:.5rem;">
+          <div class="table-responsive" style="overflow:auto;">
+            <table class="data-table" style="width:100%; border-collapse:collapse; font-size:.9rem;">
+              <thead><tr>
+                <th style="text-align:left; padding:.4rem;">Capability</th>
+                <th style="text-align:left; padding:.4rem;">CSV AI Preprocessor</th>
+                <th style="text-align:left; padding:.4rem;">Name Finder (Diaries)</th>
+                <th style="text-align:left; padding:.4rem;">Name Finder (Generic)</th>
+              </tr></thead>
+              <tbody>
+                <tr><td style="padding:.4rem;">Output</td><td style="padding:.4rem;">ai_* columns per row</td><td style="padding:.4rem;">attendees_names per row</td><td style="padding:.4rem;">deduped people list (aggregate)</td></tr>
+                <tr><td style="padding:.4rem;">Per-row vs Aggregate</td><td style="padding:.4rem;">Per-row</td><td style="padding:.4rem;">Per-row</td><td style="padding:.4rem;">Aggregate</td></tr>
+                <tr><td style="padding:.4rem;">First/Last split</td><td style="padding:.4rem;">Yes (ai_first_name/ai_last_name)</td><td style="padding:.4rem;">No</td><td style="padding:.4rem;">No</td></tr>
+                <tr><td style="padding:.4rem;">Org detection</td><td style="padding:.4rem;">Yes (ai_org_name / ai_orgs)</td><td style="padding:.4rem;">No</td><td style="padding:.4rem;">No</td></tr>
+                <tr><td style="padding:.4rem;">Best for</td><td style="padding:.4rem;">Admin import mapping</td><td style="padding:.4rem;">Diaries → Meetings importer</td><td style="padding:.4rem;">Discovery / QA</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       <div style="color:#374151; line-height:1.55;">
         <ul style="margin:0 0 .5rem 1.1rem;">
           <li style="margin:.2rem 0;">
@@ -37,6 +73,7 @@
             <ul style="margin:.25rem 0 .4rem 1.1rem;">
               <li><strong>Output:</strong> a single, deduplicated list of person names across the whole file.</li>
               <li><strong>Use when:</strong> you want a quick inventory of people present, dedupe/QA a corpus, or build a watchlist. It does not align names back to individual rows, nor split first/last, nor identify organizations.</li>
+              <li><strong>Note:</strong> Not meant for per-row import; use CSV AI Preprocessor for Admin imports.</li>
             </ul>
           </li>
           <li style="margin:.2rem 0;">
@@ -47,7 +84,7 @@
             </ul>
           </li>
           <li style="margin:.2rem 0;">
-            <strong>Unclean CSV Mapping Prep</strong>
+            <strong>CSV AI Preprocessor (adds mapping columns)</strong>
             <ul style="margin:.25rem 0 .4rem 1.1rem;">
               <li><strong>Output:</strong> returns your original CSV with new AI columns appended:</li>
               <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_first_name, ai_last_name (single "top" person per row when applicable)</li>
@@ -61,20 +98,20 @@
 
         <h4 style="margin:.75rem 0 .25rem; color:#111827;">When to choose which</h4>
         <ul style="margin:0 0 .5rem 1.1rem;">
-          <li>You're importing arbitrary CSVs into people/parties/electorates/donations/meetings via Admin: use Mapping Prep first to get ai_* columns, then map those columns in the Admin importer.</li>
+          <li>You're importing arbitrary CSVs into people/parties/electorates/donations/meetings via Admin: use CSV AI Preprocessor first to get ai_* columns, then map those columns in the Admin importer.</li>
           <li>You just want to know "who is in here?" across a document: use Name Finder (Generic).</li>
-          <li>You're prepping diaries for the meetings importer: use Name Finder (Diaries) for attendees_names per row. If you later need first/last split for specific tables, run Mapping Prep to get ai_first_name/ai_last_name.</li>
+          <li>You're prepping diaries for the meetings importer: use Name Finder (Diaries) for attendees_names per row. If you later need first/last split for specific tables, run CSV AI Preprocessor to get ai_first_name/ai_last_name.</li>
         </ul>
 
         <h4 style="margin:.75rem 0 .25rem; color:#111827;">Optional improvements</h4>
         <ul style="margin:0 0 .5rem 1.1rem;">
-          <li>Rename Mapping Prep to "CSV AI Preprocessor (adds mapping columns)" and note "Use this before Admin → Add Data."</li>
+          <li>CSV AI Preprocessor: add a note “Use this before Admin → Add Data.”</li>
           <li>In Diaries results, you can also download enriched CSV (includes attendees_names); optionally add ai_first_name/ai_last_name as hints per row.</li>
-          <li>Add a note under Name Finder (Generic) that it's not meant for per-row import; use Mapping Prep for Admin imports.</li>
+          <li>Add a note under Name Finder (Generic) that it's not meant for per-row import; use CSV AI Preprocessor for Admin imports.</li>
         </ul>
 
         <p style="margin:.75rem 0 0; color:#111827;">
-          <strong>Conclusion:</strong> Name Finder is great for discovery and diaries row-level people lists. Mapping Prep creates structured ai_* columns for fast, accurate Admin importing. They solve adjacent but different workflows, so both are useful.
+          <strong>Conclusion:</strong> Name Finder is great for discovery and diaries row-level people lists. CSV AI Preprocessor creates structured ai_* columns for fast, accurate Admin importing. They solve adjacent but different workflows, so both are useful.
         </p>
       </div>
       </div>
@@ -85,7 +122,7 @@
         <div class="card-header" style="display:flex; align-items:center; justify-content:space-between; gap:.5rem;">
           <div style="display:flex; align-items:center; gap:.6rem;">
             <div class="card-icon">📄</div>
-            <h2 class="card-title" style="margin:0;">Name Finder</h2>
+            <h2 id="nameFinderCard" class="card-title" style="margin:0;">Name Finder</h2>
           </div>
           <button type="button" class="reset-button" id="resetNameFinderBtn" title="Reset Name Finder">↺ Reset</button>
         </div>
@@ -138,7 +175,7 @@
         <div class="card-header" style="display:flex; align-items:center; justify-content:space-between; gap:.5rem;">
           <div style="display:flex; align-items:center; gap:.6rem;">
             <div class="card-icon">🧹</div>
-            <h2 class="card-title" style="margin:0;">Unclean CSV Mapping Prep</h2>
+            <h2 id="mappingPrepCard" class="card-title" style="margin:0;">CSV AI Preprocessor (adds mapping columns)</h2>
           </div>
           <button type="button" class="reset-button" id="resetMappingPrepBtn" title="Reset Mapping Prep">↺ Reset</button>
         </div>
@@ -146,6 +183,7 @@
           <div>Use this to clean and standardize any CSV before importing via Admin → Add Data.</div>
           <div>It adds AI helper columns to assist matching and mapping: </div>
           <div>ai_first_name, ai_last_name, ai_org_name, ai_person_names, ai_orgs </div>
+          <div><em>Use this before Admin → Add Data.</em></div>
         </div>
 
         <div class="upload-area" id="mappingUploadArea">
@@ -171,7 +209,7 @@
       <div class="dashboard-card" style="grid-column:2; grid-row:2; align-self:start;">
         <div class="card-header">
           <div class="card-icon">📊</div>
-          <h2 class="card-title">Unclean CSV Mapping Prep Results</h2>
+          <h2 class="card-title">CSV AI Preprocessor Results</h2>
         </div>
         <div id="mappingResults">
           <p>Upload a CSV and click "Prepare Mapping CSV" to see the preview and download options.</p>
@@ -309,6 +347,132 @@
           content.style.display = expanded ? 'none' : 'block';
         });
       }
+    })();
+
+    // Guided tool picker (wizard) setup
+    (function(){
+      const adminYes = document.getElementById('wiz-admin-yes');
+      const adminNo = document.getElementById('wiz-admin-no');
+      const diariesYes = document.getElementById('wiz-diaries-yes');
+      const diariesNo = document.getElementById('wiz-diaries-no');
+      const diariesQ = document.getElementById('wiz-diaries-q');
+      const recoEl = document.getElementById('toolRecommendation');
+      const compareBtn = document.getElementById('compareToolsBtn');
+      const compareEl = document.getElementById('compareTools');
+
+      if (compareBtn && compareEl) {
+        compareBtn.addEventListener('click', function(){
+          const visible = compareEl.style.display !== 'none';
+          compareEl.style.display = visible ? 'none' : 'block';
+        });
+      }
+
+      function recommendTool(state) {
+        if (state.forAdminImport === true) return 'preprocessor';
+        if (state.forAdminImport === false && state.isDiaries === true) return 'diaries';
+        if (state.forAdminImport === false && state.isDiaries === false) return 'generic';
+        return null;
+      }
+
+      function getState() {
+        const forAdminImport = adminYes?.checked ? true : (adminNo?.checked ? false : undefined);
+        const isDiaries = diariesYes?.checked ? true : (diariesNo?.checked ? false : undefined);
+        return { forAdminImport, isDiaries };
+      }
+
+      function scrollToId(id) {
+        const el = document.getElementById(id);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+
+      function renderReco() {
+        if (!recoEl) return;
+        const state = getState();
+        if (diariesQ) {
+          diariesQ.style.display = (state.forAdminImport === false) ? 'block' : 'none';
+        }
+        const tool = recommendTool(state);
+        if (!tool) { recoEl.style.display = 'none'; recoEl.innerHTML = ''; return; }
+        let title = '';
+        let body = '';
+        let onClick = null;
+
+        if (tool === 'preprocessor') {
+          title = 'Recommended: CSV AI Preprocessor (adds mapping columns)';
+          body = `
+            <div style="color:#374151; line-height:1.55;">
+              <div><strong>Output:</strong> ai_first_name, ai_last_name, ai_org_name, ai_person_names, ai_orgs appended per row.</div>
+              <div><strong>Why:</strong> You indicated you are importing via Admin → Add Data; this tool creates clean mapping columns.</div>
+            </div>
+          `;
+          onClick = function(){
+            scrollToId('mappingPrepCard');
+          };
+        } else if (tool === 'diaries') {
+          title = 'Recommended: Name Finder (Diaries)';
+          body = `
+            <div style="color:#374151; line-height:1.55;">
+              <div><strong>Output:</strong> attendees_names per row (people only) for ministerial diaries.</div>
+              <div><strong>Why:</strong> You selected a diaries CSV and need row-level attendees.</div>
+              <div style="margin-top:.25rem; color:#6b7280;">Hint: If later you need first/last split, run CSV AI Preprocessor after this.</div>
+            </div>
+          `;
+          onClick = function(){
+            const radio = document.getElementById('mode-diaries');
+            if (radio) {
+              radio.checked = true;
+              updateModeHelp && updateModeHelp();
+            }
+            scrollToId('nameFinderCard');
+          };
+        } else {
+          title = 'Recommended: Name Finder (Generic)';
+          body = `
+            <div style="color:#374151; line-height:1.55;">
+              <div><strong>Output:</strong> One deduplicated list of person names across the whole file.</div>
+              <div><strong>Why:</strong> Not for Admin import or diaries; you want quick discovery/QA.</div>
+              <div style="margin-top:.25rem; color:#6b7280;">Note: Not for per-row imports; for Admin imports use CSV AI Preprocessor.</div>
+            </div>
+          `;
+          onClick = function(){
+            const radio = document.getElementById('mode-generic');
+            if (radio) {
+              radio.checked = true;
+              updateModeHelp && updateModeHelp();
+            }
+            scrollToId('nameFinderCard');
+          };
+        }
+
+        recoEl.style.display = 'block';
+        recoEl.innerHTML = `
+          <div class="dashboard-card" style="margin:0; border:1px solid #e5e7eb; background:#fff;">
+            <div class="card-header" style="display:flex; align-items:center; justify-content:space-between; gap:.5rem;">
+              <div style="display:flex; align-items:center; gap:.6rem;">
+                <div class="card-icon">✅</div>
+                <h3 class="card-title" style="margin:0;">${title}</h3>
+              </div>
+              <span class="badge" style="font-size:.75rem; color:#065f46; background:#d1fae5; padding:.2rem .45rem; border-radius:.375rem;">Recommended</span>
+            </div>
+            <div style="padding:.5rem 0 0 0;">
+              ${body}
+              <div style="margin-top:.6rem;">
+                <button type="button" class="dashboard-button" id="reco-cta">
+                  <span>Open tool</span>
+                  <span class="button-arrow">→</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+        const cta = document.getElementById('reco-cta');
+        if (cta && onClick) cta.addEventListener('click', onClick);
+      }
+
+      [adminYes, adminNo, diariesYes, diariesNo].forEach(function(el){
+        if (el) el.addEventListener('change', renderReco);
+      });
+      renderReco();
     })();
 
     // Reset handlers
