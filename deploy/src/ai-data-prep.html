@@ -43,8 +43,9 @@
           <label><input type="radio" name="wiz-diaries" id="wiz-diaries-no"> No</label>
         </div>
         <div id="toolRecommendation" style="display:none; margin-top:.75rem;"></div>
-        <div style="margin-top:.5rem;">
+        <div style="margin-top:.5rem; display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">
           <button type="button" class="reset-button" id="compareToolsBtn" style="padding:.6rem .9rem; border-radius:.5rem;">Compare tools</button>
+          <button type="button" class="reset-button" id="resetWizardBtn" title="Reset Guided Picker" style="padding:.5rem .75rem; border-radius:.5rem;">↺ Reset picker</button>
         </div>
         <div id="compareTools" style="display:none; margin-top:.5rem;">
           <div class="table-responsive" style="overflow:auto;">
@@ -362,6 +363,7 @@
       const compareEl = document.getElementById('compareTools');
       const detailsEl = document.getElementById('toolDetails');
       const staticEl = document.getElementById('toolInfoStatic');
+      const resetBtn = document.getElementById('resetWizardBtn');
 
       function detailsFor(tool) {
         if (tool === 'preprocessor') {
@@ -418,6 +420,22 @@
           compareEl.style.display = visible ? 'none' : 'block';
         });
       }
+      function resetWizard() {
+        try {
+          if (adminYes) adminYes.checked = false;
+          if (adminNo) adminNo.checked = false;
+          if (diariesYes) diariesYes.checked = false;
+          if (diariesNo) diariesNo.checked = false;
+          if (diariesQ) diariesQ.style.display = 'none';
+          if (recoEl) { recoEl.style.display = 'none'; recoEl.innerHTML = ''; }
+          if (detailsEl) { detailsEl.style.display = 'none'; detailsEl.innerHTML = ''; }
+          if (staticEl) staticEl.style.display = 'block';
+          if (compareEl) compareEl.style.display = 'none';
+        } catch (e) {
+          console.warn('Reset wizard failed:', e);
+        }
+      }
+      if (resetBtn) resetBtn.addEventListener('click', resetWizard);
 
       function recommendTool(state) {
         if (state.forAdminImport === true) return 'preprocessor';
