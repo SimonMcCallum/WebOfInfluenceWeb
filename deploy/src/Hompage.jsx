@@ -26,10 +26,10 @@ const HomePage = () => {
         <div className="header-content">
           <h1 className="title">Web of Influence Research Homepage</h1>
           <nav className="header-nav">
-            <Link to="/settings" className="nav-button settings-button" target="_blank" rel="noopener noreferrer">
+            <a href="/webofinfluence/#/settings" className="nav-button settings-button" target="_blank" rel="noopener noreferrer">
               <span className="button-icon">⚙️</span>
               Settings
-            </Link>
+            </a>
             <button onClick={handleLogout} className="nav-button logout-button">
               <span className="button-icon">🚪</span>
               Logout

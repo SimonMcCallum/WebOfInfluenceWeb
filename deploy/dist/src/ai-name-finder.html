@@ -21,11 +21,68 @@
       </a>
     </div>
 
+    <div class="config-section">
+      <h3 class="config-title">Which tool should I use?</h3>
+      <div style="color:#374151; line-height:1.55;">
+        <ul style="margin:0 0 .5rem 1.1rem;">
+          <li style="margin:.2rem 0;">
+            <strong>Name Finder (Generic)</strong>
+            <ul style="margin:.25rem 0 .4rem 1.1rem;">
+              <li><strong>Output:</strong> a single, deduplicated list of person names across the whole file.</li>
+              <li><strong>Use when:</strong> you want a quick inventory of people present, dedupe/QA a corpus, or build a watchlist. It does not align names back to individual rows, nor split first/last, nor identify organizations.</li>
+            </ul>
+          </li>
+          <li style="margin:.2rem 0;">
+            <strong>Name Finder (Ministerial Diaries → enrich + flag attendees)</strong>
+            <ul style="margin:.25rem 0 .4rem 1.1rem;">
+              <li><strong>Output:</strong> per-row attendees_names (people only) for diaries, good for feeding the meetings importer.</li>
+              <li><strong>Use when:</strong> preparing ministerial diaries; it gives row-level people but not split into first/last and not organization detection.</li>
+            </ul>
+          </li>
+          <li style="margin:.2rem 0;">
+            <strong>Unclean CSV Mapping Prep</strong>
+            <ul style="margin:.25rem 0 .4rem 1.1rem;">
+              <li><strong>Output:</strong> returns your original CSV with new AI columns appended:</li>
+              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_first_name, ai_last_name (single "top" person per row when applicable)</li>
+              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_org_name</li>
+              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_person_names (multi-value; semicolon separated)</li>
+              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_orgs (multi-value; semicolon separated)</li>
+              <li><strong>Use when:</strong> you plan to import via Admin → Add Data and need AI-assisted columns that map cleanly to DB fields (people.first_name/last_name, donors.org_name, etc.). This creates a prepared, importable CSV with explicit per-row columns.</li>
+            </ul>
+          </li>
+        </ul>
+
+        <h4 style="margin:.75rem 0 .25rem; color:#111827;">When to choose which</h4>
+        <ul style="margin:0 0 .5rem 1.1rem;">
+          <li>You're importing arbitrary CSVs into people/parties/electorates/donations/meetings via Admin: use Mapping Prep first to get ai_* columns, then map those columns in the Admin importer.</li>
+          <li>You just want to know "who is in here?" across a document: use Name Finder (Generic).</li>
+          <li>You're prepping diaries for the meetings importer: use Name Finder (Diaries) for attendees_names per row. If you later need first/last split for specific tables, run Mapping Prep to get ai_first_name/ai_last_name.</li>
+        </ul>
+
+        <h4 style="margin:.75rem 0 .25rem; color:#111827;">Optional improvements</h4>
+        <ul style="margin:0 0 .5rem 1.1rem;">
+          <li>Rename Mapping Prep to "CSV AI Preprocessor (adds mapping columns)" and note "Use this before Admin → Add Data."</li>
+          <li>In Diaries results, you can also download enriched CSV (includes attendees_names); optionally add ai_first_name/ai_last_name as hints per row.</li>
+          <li>Add a note under Name Finder (Generic) that it's not meant for per-row import; use Mapping Prep for Admin imports.</li>
+        </ul>
+
+        <p style="margin:.75rem 0 0; color:#111827;">
+          <strong>Conclusion:</strong> Name Finder is great for discovery and diaries row-level people lists. Mapping Prep creates structured ai_* columns for fast, accurate Admin importing. They solve adjacent but different workflows, so both are useful.
+        </p>
+      </div>
+    </div>
+
     <div class="dashboard-grid" style="display:grid; grid-template-columns:minmax(320px, 420px) 1fr; gap:1rem; align-items:start;">
       <div class="dashboard-card" style="grid-column:1">
         <div class="card-header">
           <div class="card-icon">📄</div>
           <h2 class="card-title">Name Finder</h2>
+        </div>
+        <div style="text-align:right; margin-top:-.25rem;">
+          <button type="button" class="reset-button" id="resetNameFinderBtn" title="Reset Name Finder" style="display:inline-flex; align-items:center; gap:.35rem; padding:.35rem .6rem; border:1px solid #d1d5db; border-radius:.375rem; background:#fff; color:#374151; cursor:pointer;">
+            <span>↺</span>
+            <span>Reset</span>
+          </button>
         </div>
 
         <!-- Mode selector -->
@@ -76,6 +133,12 @@
         <div class="card-header">
           <div class="card-icon">🧹</div>
           <h2 class="card-title">Unclean CSV Mapping Prep</h2>
+        </div>
+        <div style="text-align:right; margin-top:-.25rem;">
+          <button type="button" class="reset-button" id="resetMappingPrepBtn" title="Reset Mapping Prep" style="display:inline-flex; align-items:center; gap:.35rem; padding:.35rem .6rem; border:1px solid #d1d5db; border-radius:.375rem; background:#fff; color:#374151; cursor:pointer;">
+            <span>↺</span>
+            <span>Reset</span>
+          </button>
         </div>
         <div class="subtitle" style="margin-top:-.5rem; margin-bottom:.75rem; color:#6b7280;">
           <div>Use this to clean and standardize any CSV before importing via Admin → Add Data.</div>
@@ -232,6 +295,63 @@
     });
     // Initialize on load
     updateModeHelp();
+
+    // Reset handlers
+    function resetNameFinderUI() {
+      try {
+        // Reset file selection and UI
+        selectedFile = null;
+        if (fileInput) fileInput.value = '';
+        if (uploadArea) uploadArea.style.display = 'block';
+        if (fileInfo) fileInfo.style.display = 'none';
+
+        // Reset mode and toggle
+        const generic = document.getElementById('mode-generic');
+        const diaries = document.getElementById('mode-diaries');
+        if (generic) generic.checked = true;
+        if (diaries) diaries.checked = false;
+        if (geminiOnlyCheckbox) geminiOnlyCheckbox.checked = false;
+        updateModeHelp();
+
+        // Clear results panel to default help text
+        if (resultsContent) {
+          resultsContent.innerHTML = '<p>Upload a file, choose a mode, and click "Run" to get started.</p>';
+        }
+
+        // Clear any stored extracted names
+        window._namesExtracted = [];
+      } catch (e) {
+        console.warn('Reset Name Finder failed:', e);
+      }
+    }
+
+    function resetMappingPrepUI() {
+      try {
+        // Reset file selection and UI
+        selectedMappingFile = null;
+        if (mappingFileInput) mappingFileInput.value = '';
+        if (mappingUploadArea) mappingUploadArea.style.display = 'block';
+        if (mappingFileInfo) mappingFileInfo.style.display = 'none';
+
+        // Clear results panel to default help text
+        if (mappingResults) {
+          mappingResults.innerHTML = '<p>Upload a CSV and click "Prepare Mapping CSV" to see the preview and download options.</p>';
+        }
+
+        // Clear any stored prepared data
+        window._preparedMapping = { headers: [], rows: [] };
+      } catch (e) {
+        console.warn('Reset Mapping Prep failed:', e);
+      }
+    }
+
+    // Wire up reset buttons
+    (function(){
+      const nfBtn = document.getElementById('resetNameFinderBtn');
+      if (nfBtn) nfBtn.addEventListener('click', resetNameFinderUI);
+      const mpBtn = document.getElementById('resetMappingPrepBtn');
+      if (mpBtn) mpBtn.addEventListener('click', resetMappingPrepUI);
+    })();
 
     // Drag and drop functionality
     uploadArea.addEventListener('dragover', (e) => {
