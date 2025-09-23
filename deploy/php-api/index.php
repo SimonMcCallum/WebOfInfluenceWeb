@@ -1179,6 +1179,7 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
           + '</ul>'
           + '<p><b>Optional Verification Queries</b></p>'
           + '<pre>-- Check newly created donors\nSELECT id, first_name, last_name, org_name \nFROM donors \nORDER BY id DESC LIMIT 10;\n\n-- Donations linked to a person\nSELECT COUNT(*) \nFROM donations \nWHERE year = 2011 \n  AND candidate_person_id IS NOT NULL;\n\n-- Donations linked to candidate_overview\nSELECT COUNT(*) \nFROM donations \nWHERE year = 2011 \n  AND candidate_overview_id IS NOT NULL;</pre>';
+      }
       function htmlCandidateOverview(){
         return '<p>Candidate Overview uses an enhanced importer and ignores the manual mapping grid.</p>'
           + '<ul>'
@@ -1320,27 +1321,29 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
       }
 
       function getChosen(){
+        // Re-query each time in case DOM nodes change
+        var s = document.querySelector('select[name="dest_table_select"]');
+        var c = document.querySelector('input[name="table"]');
         var v = '';
+
         // 1) custom text input takes precedence
-        if (custom && typeof custom.value === 'string' && custom.value.trim() !== '') {
-          v = custom.value.trim();
-        }
-        // 2) select value, else fallback to selected option's text (strip " (1234)" etc.)
-        else if (sel) {
-          if (typeof sel.value === 'string' && sel.value.trim() !== '') {
-            v = sel.value.trim();
-          } else {
-            var opt = sel.options && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+        if (c && typeof c.value === 'string' && c.value.trim() !== '') {
+          v = c.value.trim();
+        } else if (s) {
+          // 2) select value, else fallback to selected option's text (strip " (rowcount)" etc.)
+          var raw = (typeof s.value === 'string' && s.value.trim() !== '') ? s.value.trim() : '';
+          if (!raw) {
+            var opt = s.options && s.selectedIndex >= 0 ? s.options[s.selectedIndex] : null;
             var txt = opt && opt.textContent ? opt.textContent.trim() : '';
-            // Extract leading identifier (letters/digits/underscore/dot) before any spaces/parentheses
             var m = txt.match(/^[A-Za-z0-9_.]+/);
-            if (m) v = m[0];
+            if (m) raw = m[0];
           }
+          v = raw;
         }
+
         // 3) server-provided initial table (when returning from mapping step)
-        else if (initialTable) {
-          v = initialTable;
-        }
+        if (!v && initialTable) v = initialTable;
+
         return (v || '').toLowerCase();
       }
 
@@ -1365,6 +1368,20 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
       }
       if (custom) custom.addEventListener('input', render);
 
+      // Defensive: also listen at document level in case events are missed/rebound
+      document.addEventListener('change', function(e){
+        var t = e.target;
+        if (t && t.matches && (t.matches('select[name="dest_table_select"]') || t.matches('input[name="table"]'))) {
+          render();
+        }
+      }, true);
+      document.addEventListener('input', function(e){
+        var t = e.target;
+        if (t && t.matches && (t.matches('select[name="dest_table_select"]') || t.matches('input[name="table"]'))) {
+          render();
+        }
+      }, true);
+
       // Fallback: poll for selection changes (handles browser/UI quirks)
       var __lastChosen = getChosen();
       setInterval(function(){
@@ -1375,7 +1392,8 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
         }
       }, 300);
 
-      render();
+      // Kick once after DOM settles
+      setTimeout(render, 0);
     })();
     </script>
   </body>
