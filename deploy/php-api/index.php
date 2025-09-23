@@ -1360,6 +1360,53 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
           + '</ul>';
       }
 
+      function htmlStgOverview2023(){
+        return '<p><b>stg_overview_2023 — What this is</b></p>'
+          + '<ul>'
+          + '<li>Temporary <b>staging table</b> used to load the 2023 candidate donations CSV before running the Maintenance backfill.</li>'
+          + '<li>The <b>Maintenance → Backfill 2023 original_id</b> action copies <code>candidatedonations2023test_id</code> into <code>candidate_overview.original_id</code> (year 2023) so donations can link.</li>'
+          + '</ul>'
+          + '<p><b>When and why to use it</b></p>'
+          + '<ol>'
+          + '<li>Use when preparing the site to link 2023 donations → candidates.</li>'
+          + '<li>Load <b>candidate_csv/2023_candidate_donations.csv</b> into <b>stg_overview_2023</b>.</li>'
+          + '<li>Then run <b>Maintenance → Backfill 2023 original_id</b> to safely fill <code>candidate_overview.original_id</code> for 2023.</li>'
+          + '</ol>'
+          + '<p><b>Expected/Helpful columns in stg_overview_2023</b></p>'
+          + '<ul>'
+          + '<li><code>candidatedonations2023test_id</code> <small>(required to copy into candidate_overview.original_id)</small></li>'
+          + '<li><code>candidatename_first</code>, <code>candidatename_last</code></li>'
+          + '<li><code>party</code>, <code>electorate</code></li>'
+          + '</ul>'
+          + '<p><b>How to load the CSV</b></p>'
+          + '<ol>'
+          + '<li><b>Import CSVs from Server</b> (recommended)'
+          +   '<ul>'
+          +     '<li>Place the file under <code>data/candidate_csv/2023_candidate_donations.csv</code> on the server.</li>'
+          +     '<li>Choose the file and set Target Table to <b>stg_overview_2023</b> (create if missing).</li>'
+          +   '</ul>'
+          + '</li>'
+          + '<li><b>CSV Upload → Table</b> (alternative)'
+          +   '<ul>'
+          +     '<li>Destination table: <b>stg_overview_2023</b></li>'
+          +     '<li>Ensure the columns listed above are present; you may <b>Create column (TEXT)</b> if needed.</li>'
+          +     '<li>It is fine to leave unrelated columns as <b>Ignore</b>.</li>'
+          +   '</ul>'
+          + '</li>'
+          + '</ol>'
+          + '<p><b>After loading</b></p>'
+          + '<ol>'
+          + '<li>Go to <b>Maintenance</b> and click <b>Backfill 2023 original_id</b>.</li>'
+          + '<li>Review the result message: it shows before/after counts and updated rows per matching step.</li>'
+          + '<li>Optional: once backfill finishes, you can <b>Truncate</b> <code>stg_overview_2023</code> to keep things tidy.</li>'
+          + '</ol>'
+          + '<p><b>Notes & troubleshooting</b></p>'
+          + '<ul>'
+          + '<li>The backfill is <b>idempotent</b>: it only fills <code>NULL</code> values and can be re-run safely.</li>'
+          + '<li>If no rows are updated, confirm staging columns exist (case-insensitive): <code>candidatename_first</code>, <code>candidatename_last</code>, <code>party</code>, <code>electorate</code>, and <code>candidatedonations2023test_id</code>.</li>'
+          + '<li>You can re-run after improving the staging file; only <code>NULL</code> <code>original_id</code> values will be filled.</li>'
+          + '</ul>';
+      }
       function htmlGeneric(name){
         return '<p>Importing into <b>' + name + '</b>.</p>'
           + '<ul>'
@@ -1412,6 +1459,7 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
         if (chosen.indexOf('meetings') !== -1) { contentEl.innerHTML = htmlMeetings(); return; }
         if (chosen.indexOf('people') !== -1) { contentEl.innerHTML = htmlPeople(); return; }
         if (chosen.indexOf('candidate_overview') !== -1) { contentEl.innerHTML = htmlCandidateOverview(); return; }
+        if (chosen.indexOf('stg_overview_2023') !== -1) { contentEl.innerHTML = htmlStgOverview2023(); return; }
         contentEl.innerHTML = htmlGeneric(chosen);
       }
 
