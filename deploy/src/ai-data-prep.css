@@ -162,23 +162,23 @@
   align-items:center;
   gap:0.5rem;
   padding:0.5rem 1rem !important;
-  background-color:#ef4444 !important;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important; /* match Search Filters vibe */
   color:#fff !important;
   border:none;
   border-radius:0.5rem;
-  font-weight:500;
+  font-weight:600;
   cursor:pointer;
   transition:all 0.2s ease;
   font-size:0.875rem !important;
   white-space:nowrap;
   flex-shrink:0;
+  box-shadow: 0 4px 6px rgba(76, 81, 191, 0.25); /* subtle purple shadow */
 }
 .reset-button:hover{
-  background-color:#dc2626 !important;
+  filter: brightness(1.03);
   transform:translateY(-1px);
 }
 .reset-button:focus{
-  background-color:#ef4444 !important;
   outline:none;
-  box-shadow:0 0 0 3px rgba(239,68,68,.3);
+  box-shadow:0 0 0 3px rgba(102,126,234,.35);
 }

@@ -2,18 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>AI Name Finder - Web Of Influence</title>
+  <title>AI Data Prep Tools - Web Of Influence</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script type="module" crossorigin src="/webofinfluence/assets/modulepreload-polyfill-B5Qt9EMX.js"></script>
-  <script type="module" crossorigin src="/webofinfluence/assets/app-config-CSENolPA.js"></script>
-  <script type="module" crossorigin src="/webofinfluence/assets/auth-config-CxUtIded.js"></script>
-  <link rel="stylesheet" crossorigin href="/webofinfluence/assets/ainamefinder-DANVtvpN.css">
+  <link rel="stylesheet" href="dashboard.css">
+  <link rel="stylesheet" href="ai-data-prep.css">
+  <script type="module" src="../app-config.js"></script>
+  <script type="module" src="../auth-config.js"></script>
 </head>
 <body>
-  <div class="container">
+  <div id="ai-data-prep" class="container">
     <div class="header">
-      <h1>🤖 AI Name Finder</h1>
-      <p class="subtitle">Upload a file and let AI extract person names for you</p>
+      <h1>🤖 AI Data Prep Tools</h1>
+      <p class="subtitle">Extract people from text/CSV, enrich ministerial diaries, and prepare mapping columns for Admin → Add Data</p>
     </div>
     <div style="text-align: right; margin-bottom: 1rem;">
       <a href="/webofinfluence/src/dashboard.html" class="back-button">
@@ -27,7 +27,7 @@
           <div class="card-icon">ℹ️</div>
           <h3 class="config-title" style="margin:0;">Which tool should I use?</h3>
         </div>
-        <button id="toolInfoToggle" type="button" aria-expanded="false" aria-controls="toolInfoContent" class="small-reset-button">Info</button>
+        <button id="toolInfoToggle" type="button" aria-expanded="false" aria-controls="toolInfoContent" class="reset-button">↺ Info</button>
       </div>
       <div id="toolInfoContent" style="display:none; margin-top:.5rem;">
       <div style="color:#374151; line-height:1.55;">
