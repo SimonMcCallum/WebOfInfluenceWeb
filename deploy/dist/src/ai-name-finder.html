@@ -21,8 +21,17 @@
       </a>
     </div>
 
-    <div class="config-section">
-      <h3 class="config-title">Which tool should I use?</h3>
+    <div class="config-section" id="toolInfoSection" style="margin-bottom: 1rem;">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:.5rem;">
+        <h3 class="config-title" style="margin:0;">Which tool should I use?</h3>
+        <button id="toolInfoToggle" type="button" aria-expanded="false" aria-controls="toolInfoContent"
+          class="info-toggle-button"
+          style="display:inline-flex; align-items:center; gap:.35rem; padding:.35rem .6rem; border:1px solid #d1d5db; border-radius:.375rem; background:#fff; color:#374151; cursor:pointer;">
+          <span aria-hidden>ℹ️</span>
+          <span>Info</span>
+        </button>
+      </div>
+      <div id="toolInfoContent" style="display:none; margin-top:.5rem;">
       <div style="color:#374151; line-height:1.55;">
         <ul style="margin:0 0 .5rem 1.1rem;">
           <li style="margin:.2rem 0;">
@@ -69,6 +78,7 @@
         <p style="margin:.75rem 0 0; color:#111827;">
           <strong>Conclusion:</strong> Name Finder is great for discovery and diaries row-level people lists. Mapping Prep creates structured ai_* columns for fast, accurate Admin importing. They solve adjacent but different workflows, so both are useful.
         </p>
+      </div>
       </div>
     </div>
 
@@ -295,6 +305,19 @@
     });
     // Initialize on load
     updateModeHelp();
+
+    // Info dropdown toggle
+    (function(){
+      const tgl = document.getElementById('toolInfoToggle');
+      const content = document.getElementById('toolInfoContent');
+      if (tgl && content) {
+        tgl.addEventListener('click', function(){
+          const expanded = tgl.getAttribute('aria-expanded') === 'true';
+          tgl.setAttribute('aria-expanded', String(!expanded));
+          content.style.display = expanded ? 'none' : 'block';
+        });
+      }
+    })();
 
     // Reset handlers
     function resetNameFinderUI() {
