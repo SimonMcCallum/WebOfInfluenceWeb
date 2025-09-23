@@ -21,6 +21,57 @@
       </a>
     </div>
 
+    <div class="config-section">
+      <h3 class="config-title">Which tool should I use?</h3>
+      <div style="color:#374151; line-height:1.55;">
+        <ul style="margin:0 0 .5rem 1.1rem;">
+          <li style="margin:.2rem 0;">
+            <strong>Name Finder (Generic)</strong>
+            <ul style="margin:.25rem 0 .4rem 1.1rem;">
+              <li><strong>Output:</strong> a single, deduplicated list of person names across the whole file.</li>
+              <li><strong>Use when:</strong> you want a quick inventory of people present, dedupe/QA a corpus, or build a watchlist. It does not align names back to individual rows, nor split first/last, nor identify organizations.</li>
+            </ul>
+          </li>
+          <li style="margin:.2rem 0;">
+            <strong>Name Finder (Ministerial Diaries → enrich + flag attendees)</strong>
+            <ul style="margin:.25rem 0 .4rem 1.1rem;">
+              <li><strong>Output:</strong> per-row attendees_names (people only) for diaries, good for feeding the meetings importer.</li>
+              <li><strong>Use when:</strong> preparing ministerial diaries; it gives row-level people but not split into first/last and not organization detection.</li>
+            </ul>
+          </li>
+          <li style="margin:.2rem 0;">
+            <strong>Unclean CSV Mapping Prep</strong>
+            <ul style="margin:.25rem 0 .4rem 1.1rem;">
+              <li><strong>Output:</strong> returns your original CSV with new AI columns appended:</li>
+              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_first_name, ai_last_name (single "top" person per row when applicable)</li>
+              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_org_name</li>
+              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_person_names (multi-value; semicolon separated)</li>
+              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_orgs (multi-value; semicolon separated)</li>
+              <li><strong>Use when:</strong> you plan to import via Admin → Add Data and need AI-assisted columns that map cleanly to DB fields (people.first_name/last_name, donors.org_name, etc.). This creates a prepared, importable CSV with explicit per-row columns.</li>
+            </ul>
+          </li>
+        </ul>
+
+        <h4 style="margin:.75rem 0 .25rem; color:#111827;">When to choose which</h4>
+        <ul style="margin:0 0 .5rem 1.1rem;">
+          <li>You're importing arbitrary CSVs into people/parties/electorates/donations/meetings via Admin: use Mapping Prep first to get ai_* columns, then map those columns in the Admin importer.</li>
+          <li>You just want to know "who is in here?" across a document: use Name Finder (Generic).</li>
+          <li>You're prepping diaries for the meetings importer: use Name Finder (Diaries) for attendees_names per row. If you later need first/last split for specific tables, run Mapping Prep to get ai_first_name/ai_last_name.</li>
+        </ul>
+
+        <h4 style="margin:.75rem 0 .25rem; color:#111827;">Optional improvements</h4>
+        <ul style="margin:0 0 .5rem 1.1rem;">
+          <li>Rename Mapping Prep to "CSV AI Preprocessor (adds mapping columns)" and note "Use this before Admin → Add Data."</li>
+          <li>In Diaries results, you can also download enriched CSV (includes attendees_names); optionally add ai_first_name/ai_last_name as hints per row.</li>
+          <li>Add a note under Name Finder (Generic) that it's not meant for per-row import; use Mapping Prep for Admin imports.</li>
+        </ul>
+
+        <p style="margin:.75rem 0 0; color:#111827;">
+          <strong>Conclusion:</strong> Name Finder is great for discovery and diaries row-level people lists. Mapping Prep creates structured ai_* columns for fast, accurate Admin importing. They solve adjacent but different workflows, so both are useful.
+        </p>
+      </div>
+    </div>
+
     <div class="dashboard-grid" style="display:grid; grid-template-columns:minmax(320px, 420px) 1fr; gap:1rem; align-items:start;">
       <div class="dashboard-card" style="grid-column:1">
         <div class="card-header">
