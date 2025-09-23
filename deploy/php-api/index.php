@@ -3685,81 +3685,369 @@ function handle_ai_extract_names(): void {
     json_response(['error' => 'File too large (max 1MB)'], 400);
   }
 
-  // Get Gemini API key (env var, config.php, or key file)
-  $apiKey = get_gemini_api_key();
-  if (!$apiKey) {
-    json_response(['error' => 'Gemini API key not found'], 500);
+  // Helpers
+  $norm_ws = function($s) {
+    $s = (string)($s ?? '');
+    $s = preg_replace('/\s+/u', ' ', $s);
+    return trim($s);
+  };
+
+  // Remove titles, parentheses, and stray punctuation; keep hyphens and dots in names
+  $cleanName = function(string $name) use ($norm_ws) {
+    $n = $norm_ws($name);
+    if ($n === '') return null;
+
+    // Strip quotes and bracketed info
+    $n = trim($n, "\"'");
+    $n = preg_replace('/\([^)]*\)/', ' ', $n);
+
+    // Titles and honorifics commonly present in diaries
+    $n = preg_replace('/\b(Rt\.?\s*Hon\.?|Rt\s*Hon|Hon\.?|Dr|Sir|Dame|Councillor|Minister|MP)\b\.?/i', '', $n);
+
+    // Replace commas/parentheses with spaces, normalize hyphen spacing
+    $n = preg_replace('/[(),]/', ' ', $n);
+    $n = preg_replace('/\s*-\s*/', '-', $n);
+    $n = $norm_ws($n);
+
+    // Filter obvious non-person tokens
+    $bad = [
+      'attendees','event attendees','officials','ministers','multi ministers','committee members',
+      'representatives','chair','ce','ceo','advisor','advisors','representative','official',
+      'ministers & officials','ministers and officials'
+    ];
+    if (in_array(mb_strtolower($n, 'UTF-8'), $bad, true)) return null;
+
+    // Expect at least two tokens
+    $parts = explode(' ', $n);
+    if (count($parts) < 2) return null;
+
+    // Validate tokens (letters, apostrophes, dots, hyphens)
+    foreach ($parts as $p) {
+      if (!preg_match("/^[A-Za-z][A-Za-z'.-]*$/", $p)) return null;
+    }
+
+    return $n;
+  };
+
+  $splitPossibleNames = function(string $text) use ($norm_ws, $cleanName) {
+    $t = $norm_ws($text);
+    if ($t === '') return [];
+
+    // Normalize common separators to semicolon
+    $t = preg_replace('/\s+(?:&|and)\s+/i', ';', $t);
+    $pieces = preg_split('/[;|]/', $t);
+    $out = [];
+
+    foreach ($pieces as $piece) {
+      $piece = $norm_ws($piece);
+      if ($piece === '') continue;
+
+      // If there are many commas, split further on commas
+      $subs = [ $piece ];
+      if (substr_count($piece, ',') >= 2) {
+        $subs = array_filter(array_map($norm_ws, explode(',', $piece)));
+      }
+
+      foreach ($subs as $sp) {
+        $nm = $cleanName($sp);
+        if ($nm) $out[] = $nm;
+      }
+    }
+
+    return $out;
+  };
+
+  // Unique set helper (case-insensitive)
+  $namesSet = [];
+  $addName = function($n) use (&$namesSet) {
+    $key = mb_strtolower(preg_replace('/\s+/', ' ', trim($n)), 'UTF-8');
+    if ($key !== '') $namesSet[$key] = trim($n);
+  };
+
+  // Detect CSV quickly
+  $filename = $_FILES['file']['name'] ?? '';
+  $looksCsv = (is_string($filename) && preg_match('/\.csv$/i', $filename)) ||
+              (strpos($content, ',') !== false && preg_match('/\r?\n/', $content));
+
+  // Optional: force Gemini-only extraction via ?gemini_only=1 or form field
+  $forceGemini = false;
+  $rq = array_merge($_GET ?? [], $_POST ?? []);
+  if (isset($rq['gemini_only'])) {
+    $v = strtolower(trim((string)$rq['gemini_only']));
+    $forceGemini = ($v === '1' || $v === 'true' || $v === 'yes' || $v === 'on');
   }
 
-  // Create prompt for name extraction
-  $prompt = 'Analyze the following text and extract all person names you can find. Return the results as a JSON object with this exact format: {"names": ["First Last", "First Last", ...]}
+  if ($forceGemini) {
+    // Build text for AI (prefer likely name-bearing columns for CSVs)
+    $aiText = $content;
+    if ($looksCsv) {
+      $mem = fopen('php://memory', 'r+');
+      fwrite($mem, $content);
+      rewind($mem);
+      $header = fgetcsv($mem);
+      if ($header) {
+        $norm = fn($s) => normalize_csv_header((string)$s);
+        $normToIdx = [];
+        foreach ($header as $i => $h) $normToIdx[$norm($h)] = $i;
+        $buf = [];
+        while (($row = fgetcsv($mem)) !== false) {
+          $snippet = [];
+          $keys = ['attendees_names','attendees','with','minister','who','title','notes'];
+          foreach ($keys as $key) {
+            if (isset($normToIdx[$key])) {
+              $snippet[] = (string)($row[$normToIdx[$key]] ?? '');
+            }
+          }
+          if (empty($snippet)) {
+            // Fallback: entire row text
+            $snippet = array_map('strval', $row);
+          }
+          $line = $norm_ws(implode(' | ', array_filter($snippet, fn($x) => (string)$x !== '')));
+          if ($line !== '') $buf[] = $line;
+        }
+        $aiText = implode("\n", $buf);
+      }
+      fclose($mem);
+    }
 
-Only include actual person names, not organizations, places, or other entities. If no names are found, return {"names": []}.
+    // Chunk and call Gemini
+    $apiKey = get_gemini_api_key();
+    if (!$apiKey) {
+      json_response(['error' => 'Gemini API key not found'], 500);
+    }
 
-Text to analyze:
-' . substr($content, 0, 10000); // Limit content to avoid token limits
+    $chunks = [];
+    $start = 0;
+    $limit = 8000;
+    $len = strlen($aiText);
+    while ($start < $len) {
+      $end = min($len, $start + $limit);
+      $chunks[] = substr($aiText, $start, $end - $start);
+      $start = $end;
+    }
 
-  // Call Gemini API
-  $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}";
-  $payload = json_encode([
-    'contents' => [
-      [
-        'parts' => [
-          [
-            'text' => $prompt
-          ]
+    $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}";
+    foreach ($chunks as $chunk) {
+      $instruction = 'Extract ONLY human person names from the following text. '
+        . 'Return STRICTLY VALID JSON as: {"names": ["First Last", "..."]} with no markdown or explanation. '
+        . "Text:\n" . $chunk;
+
+      $payload = json_encode([
+        'contents' => [
+          [ 'parts' => [ [ 'text' => $instruction ] ] ]
         ]
-      ]
-    ]
-  ]);
+      ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-  $ch = curl_init($url);
-  curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-  curl_setopt($ch, CURLOPT_POST, true);
-  curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-  curl_setopt($ch, CURLOPT_HTTPHEADER, [
-    'Content-Type: application/json'
-  ]);
+      $ch = curl_init($endpoint);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+      curl_setopt($ch, CURLOPT_POST, true);
+      curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+      curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+      $resp = curl_exec($ch);
+      $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+      curl_close($ch);
 
-  $response = curl_exec($ch);
-  $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-  curl_close($ch);
+      if ($code === 200 && $resp) {
+        $res = json_decode($resp, true);
+        $text = $res['candidates'][0]['content']['parts'][0]['text'] ?? '';
+        $text = preg_replace('/```\w*\n?/', '', (string)$text);
+        $data = json_decode(trim((string)$text), true);
+        $aiNames = [];
+        if (is_array($data) && isset($data['names']) && is_array($data['names'])) {
+          $aiNames = $data['names'];
+        } elseif (is_array($data)) {
+          $aiNames = $data;
+        }
+        foreach ($aiNames as $nm) {
+          if (!is_string($nm) && !is_numeric($nm)) continue;
+          $cn = $cleanName((string)$nm);
+          if ($cn) $addName($cn);
+        }
+      }
+    }
 
-  if ($httpCode !== 200) {
-    json_response(['error' => "AI API error: {$httpCode}"], 500);
+    // Final unique, case-insensitive ordered list
+    ksort($namesSet, SORT_NATURAL | SORT_FLAG_CASE);
+    $final = array_values($namesSet);
+
+    json_response([
+      'names' => $final,
+      'count' => count($final),
+      'file_name' => $filename
+    ]);
   }
 
-  $result = json_decode($response, true);
-  if (!$result || !isset($result['candidates']) || empty($result['candidates'])) {
-    json_response(['error' => 'No response generated by AI'], 500);
-  }
+  if ($looksCsv) {
+    // Parse CSV with quoted newline support using php://memory
+    $mem = fopen('php://memory', 'r+');
+    fwrite($mem, $content);
+    rewind($mem);
 
-  $generatedText = $result['candidates'][0]['content']['parts'][0]['text'] ?? '';
+    $header = fgetcsv($mem);
+    if ($header && is_array($header)) {
+      // Build header maps (raw and normalized)
+      $norm = fn($s) => normalize_csv_header((string)$s);
+      $rawToIdx = [];
+      $normToIdx = [];
+      foreach ($header as $i => $h) {
+        $raw = trim((string)$h);
+        $rawToIdx[$raw] = $i;
+        $normToIdx[$norm($raw)] = $i;
+      }
 
-  // Clean markdown code blocks
-  $cleanedText = preg_replace('/```\w*\n?/', '', $generatedText);
-  $cleanedText = trim($cleanedText);
+      // Candidate columns likely to contain names
+      $candidateNorms = [
+        'attendees_names','attendeesnames','names',
+        'attendees_text','attendeestext','attendees','with','who','attendee','minister'
+      ];
+      $candidateIdx = [];
+      foreach ($candidateNorms as $ck) {
+        if (array_key_exists($ck, $normToIdx)) {
+          $candidateIdx[] = $normToIdx[$ck];
+        }
+      }
+      // Always include last column if it's likely to be "Attendees Names"
+      if (!empty($header)) {
+        $lastRaw = trim(end($header));
+        $lastNorm = $norm($lastRaw);
+        if (in_array($lastNorm, ['attendees_names','attendeesnames']) && !in_array(array_key_last($header), $candidateIdx, true)) {
+          $candidateIdx[] = array_key_last($header);
+        }
+      }
+      $candidateIdx = array_values(array_unique(array_filter($candidateIdx, fn($v) => $v !== null)));
 
-  // Parse JSON
-  $namesData = json_decode($cleanedText, true);
-  if ($namesData === null) {
-    json_response(['error' => 'AI response is not valid JSON'], 500);
-  }
+      // Read rows and extract names from candidate columns
+      while (($row = fgetcsv($mem)) !== false) {
+        foreach ($candidateIdx as $ci) {
+          $val = isset($row[$ci]) ? $row[$ci] : null;
+          if ($val === null || $val === '') continue;
+          foreach ($splitPossibleNames((string)$val) as $nm) {
+            $addName($nm);
+          }
+        }
+      }
+      fclose($mem);
 
-  // Extract names
-  $namesList = [];
-  if (is_array($namesData) && isset($namesData['names'])) {
-    $namesList = $namesData['names'];
-  } elseif (is_array($namesData)) {
-    $namesList = $namesData;
+      // If very few names found, broaden: scan all cells
+      if (count($namesSet) < 5) {
+        $mem2 = fopen('php://memory', 'r+');
+        fwrite($mem2, $content);
+        rewind($mem2);
+        // skip header
+        fgetcsv($mem2);
+        while (($row = fgetcsv($mem2)) !== false) {
+          foreach ($row as $cell) {
+            foreach ($splitPossibleNames((string)$cell) as $nm) {
+              $addName($nm);
+            }
+          }
+        }
+        fclose($mem2);
+      }
+    } else {
+      fclose($mem);
+    }
   } else {
-    json_response(['error' => 'Unexpected response format'], 500);
+    // Not a CSV: try splitting raw text heuristically
+    foreach ($splitPossibleNames($content) as $nm) {
+      $addName($nm);
+    }
   }
+
+  // Optional AI augmentation if still small result
+  if (count($namesSet) < 5) {
+    $apiKey = get_gemini_api_key();
+    if ($apiKey) {
+      // Prefer building AI text from likely CSV columns to reduce noise
+      $aiText = $content;
+      if ($looksCsv) {
+        $mem = fopen('php://memory', 'r+');
+        fwrite($mem, $content);
+        rewind($mem);
+        $header = fgetcsv($mem);
+        if ($header) {
+          $norm = fn($s) => normalize_csv_header((string)$s);
+          $normToIdx = [];
+          foreach ($header as $i => $h) $normToIdx[$norm($h)] = $i;
+          $buf = [];
+          while (($row = fgetcsv($mem)) !== false) {
+            $snippet = [];
+            foreach (['attendees_names','attendees','with','minister'] as $key) {
+              if (isset($normToIdx[$key])) {
+                $snippet[] = (string)($row[$normToIdx[$key]] ?? '');
+              }
+            }
+            $line = $norm_ws(implode(' | ', array_filter($snippet, fn($x) => (string)$x !== '')));
+            if ($line !== '') $buf[] = $line;
+          }
+          $aiText = implode("\n", $buf);
+        }
+        fclose($mem);
+      }
+
+      // Chunk text to ~8k chars per request
+      $chunks = [];
+      $start = 0;
+      $limit = 8000;
+      $len = strlen($aiText);
+      while ($start < $len) {
+        $end = min($len, $start + $limit);
+        $chunks[] = substr($aiText, $start, $end - $start);
+        $start = $end;
+      }
+
+      $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}";
+      foreach ($chunks as $chunk) {
+        $instruction = 'Extract ONLY human person names from the following text. '
+          . 'Return STRICTLY VALID JSON as: {"names": ["First Last", "..."]} with no markdown or explanation. '
+          . "Text:\n" . $chunk;
+
+        $payload = json_encode([
+          'contents' => [
+            [ 'parts' => [ [ 'text' => $instruction ] ] ]
+          ]
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        $ch = curl_init($endpoint);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+        $resp = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($code === 200 && $resp) {
+          $res = json_decode($resp, true);
+          $text = $res['candidates'][0]['content']['parts'][0]['text'] ?? '';
+          $text = preg_replace('/```\w*\n?/', '', (string)$text);
+          $data = json_decode(trim((string)$text), true);
+          $aiNames = [];
+          if (is_array($data) && isset($data['names']) && is_array($data['names'])) {
+            $aiNames = $data['names'];
+          } elseif (is_array($data)) {
+            $aiNames = $data;
+          }
+          foreach ($aiNames as $nm) {
+            if (!is_string($nm) && !is_numeric($nm)) continue;
+            $cn = $cleanName((string)$nm);
+            if ($cn) $addName($cn);
+          }
+        }
+      }
+    }
+  }
+
+  // Final unique, case-insensitive ordered list
+  ksort($namesSet, SORT_NATURAL | SORT_FLAG_CASE);
+  $final = array_values($namesSet);
 
   json_response([
-    'names' => $namesList,
-    'count' => count($namesList),
-    'file_name' => $_FILES['file']['name']
+    'names' => $final,
+    'count' => count($final),
+    'file_name' => $filename
   ]);
 }
 

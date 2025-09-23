@@ -824,14 +824,22 @@ def ai_generate():
 
 @app.route('/ai/extract-names', methods=['POST'])
 def ai_extract_names():
+    """
+    Generic Text/CSV → extract names
+    Improvements:
+      - If the upload is a CSV, parse likely name-bearing columns first (e.g., Attendees Names, With, Attendees, Minister).
+      - Heuristics to split semicolon/comma/&/'and' separated names and strip titles (Hon, Dr, Sir, Dame, Councillor, Minister).
+      - Fallback to AI on the full text in CHUNKS (no 10k truncation) and merge results.
+    """
     # Get the uploaded file
     file = request.files.get('file')
     if not file:
         return jsonify({"error": "No file uploaded"}), 400
 
-    # Read file content
+    # Read file content (text mode)
     try:
-        content = file.read().decode('utf-8', errors='replace')
+        content_bytes = file.read()
+        content = content_bytes.decode('utf-8', errors='replace')
     except Exception as e:
         return jsonify({"error": f"Error reading file: {str(e)}"}), 400
 
@@ -839,71 +847,218 @@ def ai_extract_names():
     if len(content) > 1024 * 1024:
         return jsonify({"error": "File too large (max 1MB)"}), 400
 
+    # Helpers
+    def norm_ws(s: Optional[str]) -> str:
+        return ' '.join((s or '').split()).strip()
+
+    # Remove common titles, parentheses, stray punctuation, keep hyphens
+    TITLES_RE = re.compile(r'\b(Rt\.?\s*Hon|Hon|Dr|Sir|Dame|Councillor|Minister|MP)\b\.?', re.IGNORECASE)
+    BAD_TOKENS = {
+        'attendees','event attendees','officials','ministers','multi ministers','committee members',
+        'representatives','chair','ce','ceo','advisor','advisors','representative','official',
+        'ministers & officials','ministers and officials'
+    }
+
+    def clean_name(name: str) -> Optional[str]:
+        n = norm_ws(name)
+        if not n:
+            return None
+        # Strip surrounding quotes
+        n = n.strip('"\'')
+
+        # Drop bracketed/role info and commas in role suffixes conservatively
+        n = re.sub(r'\([^)]*\)', ' ', n)
+        n = TITLES_RE.sub('', n)
+        n = re.sub(r'[(),]', ' ', n)
+        n = re.sub(r'\s*-\s*', '-', n)  # normalize spaces around hyphens
+        n = norm_ws(n)
+
+        lo = n.lower()
+        if lo in BAD_TOKENS:
+            return None
+
+        # Expect at least 2 tokens to be a person name
+        parts = n.split()
+        if len(parts) < 2:
+            return None
+
+        # basic token sanity: allow letters, dots and hyphens, roman "van/de/du/of" etc.
+        valid = True
+        for p in parts:
+            if not re.match(r"^[A-Za-z][A-Za-z'.-]*$", p):
+                valid = False
+                break
+        if not valid:
+            return None
+        return n
+
+    def split_possible_names(text: str) -> List[str]:
+        """
+        Split by common separators ; , & and, and vertical bars.
+        Then try to clean each piece into a person name.
+        """
+        t = norm_ws(text)
+        if not t:
+            return []
+        # canonical separators
+        # Replace ' & ' and ' and ' with ';' to unify
+        t = re.sub(r'\s+(?:&|and)\s+', ';', t, flags=re.IGNORECASE)
+        # Also split on commas that likely separate distinct people (keep commas inside last names rare)
+        # We will first split on semicolons and pipes, then further split residual long chunks on comma if needed.
+        parts = re.split(r'[;|]', t)
+        out = []
+        for part in parts:
+            part = norm_ws(part)
+            # If still contains multiple comma-separated items, split them too
+            subparts = [part]
+            if part.count(',') >= 2:
+                subparts = [norm_ws(x) for x in part.split(',') if norm_ws(x)]
+            for sp in subparts:
+                nm = clean_name(sp)
+                if nm:
+                    out.append(nm)
+        return out
+
+    # Decide if this looks like CSV
+    looks_like_csv = file.filename.lower().endswith('.csv') or (',' in content.splitlines()[0] if content else False)
+
+    names_set = {}
+    def add_name(n: str):
+        key = re.sub(r'\s+', ' ', n.strip()).lower()
+        if not key:
+            return
+        # Normalize minor typos like double spaces around hyphen already handled
+        names_set[key] = n.strip()
+
+    if looks_like_csv:
+        try:
+            reader = csv.DictReader(io.StringIO(content))
+            headers = reader.fieldnames or []
+            # Normalize headers to find candidate columns
+            def norm_key(s: str) -> str:
+                return re.sub(r'[^a-z0-9]+', '_', (s or '').lower()).strip('_')
+
+            norm_headers = {norm_key(h): h for h in headers}
+            # Candidate columns likely to contain explicit names
+            candidate_cols = []
+            for nk, raw in norm_headers.items():
+                if any(key in nk for key in [
+                    'attendees_names', 'attendeesnames', 'names',
+                    'attendees_text','attendeestext','attendees','with','minister'
+                ]):
+                    candidate_cols.append(raw)
+
+            # Always include last column if it's "Attendees Names" pattern
+            # (supports files where last col is the target)
+            if headers:
+                last_h = headers[-1]
+                if last_h not in candidate_cols:
+                    candidate_cols.append(last_h)
+
+            # Iterate rows and parse names from candidate columns
+            for row in reader:
+                for col in candidate_cols:
+                    val = row.get(col)
+                    if not val:
+                        continue
+                    # Primary: explicit attendees names list
+                    for nm in split_possible_names(val):
+                        add_name(nm)
+
+            # If very few names found, widen search by scanning all cells for person-like patterns
+            if len(names_set) < 5:
+                for row in csv.reader(io.StringIO(content)):
+                    for cell in row:
+                        for nm in split_possible_names(cell):
+                            add_name(nm)
+        except Exception:
+            # If CSV parse fails, fall back to text mode below
+            pass
+
+    # Fallback and augmentation with AI over the full text in CHUNKS (no 10k truncation)
     api_key = get_gemini_api_key()
-    if not api_key:
-        return jsonify({"error": "Gemini API key not found"}), 500
+    if api_key:
+        def chunk_text(txt: str, limit: int = 8000) -> List[str]:
+            if not txt:
+                return []
+            # Prefer using only potentially relevant columns for AI when CSV was detected
+            if looks_like_csv:
+                try:
+                    reader = csv.DictReader(io.StringIO(content))
+                    buf = []
+                    for r in reader:
+                        # build a compact line with likely columns to reduce noise
+                        line = ' | '.join([
+                            r.get('Attendees Names', '') or r.get('Attendees_Names', '') or r.get('Attendees', '') or r.get('With', ''),
+                            r.get('Minister', '') or '',
+                            r.get('Meeting', '') or ''
+                        ])
+                        s = norm_ws(line)
+                        if s:
+                            buf.append(s)
+                    txt = '\n'.join(buf)
+                except Exception:
+                    # keep original text if any parsing fails
+                    pass
 
-    # Create prompt for name extraction
-    prompt = f"""Analyze the following text and extract all person names you can find. Return the results as a JSON object with this exact format:
-{{"names": ["First Last", "First Last", ...]}}
+            chunks = []
+            start = 0
+            while start < len(txt):
+                end = min(len(txt), start + limit)
+                chunks.append(txt[start:end])
+                start = end
+            return chunks
 
-Only include actual person names, not organizations, places, or other entities. If no names are found, return {{"names": []}}.
-
-Text to analyze:
-{content[:10000]}"""  # Limit content to avoid token limits
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-    headers = {'Content-Type': 'application/json'}
-    payload = {
-        "contents": [
-            {
-                "parts": [
+        def call_gemini(text_chunk: str) -> List[str]:
+            prompt = (
+                'Extract ONLY human person names from the following text. '
+                'Return STRICTLY VALID JSON as: {"names": ["First Last", "..."]} with no markdown:\n\n'
+                + text_chunk
+            )
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            headers = {'Content-Type': 'application/json'}
+            payload = {
+                "contents": [
                     {
-                        "text": prompt
+                        "parts": [
+                            {"text": prompt}
+                        ]
                     }
                 ]
             }
-        ]
-    }
+            try:
+                resp = requests.post(url, headers=headers, json=payload, timeout=20)
+                if resp.status_code != 200:
+                    return []
+                result = resp.json()
+                if 'candidates' not in result or not result['candidates']:
+                    return []
+                generated_text = result['candidates'][0]['content']['parts'][0]['text']
+                cleaned_text = re.sub(r'```\w*\n?', '', generated_text).strip()
+                data = json.loads(cleaned_text)
+                if isinstance(data, dict) and isinstance(data.get('names'), list):
+                    return [str(x) for x in data['names']]
+                if isinstance(data, list):
+                    return [str(x) for x in data]
+                return []
+            except Exception:
+                return []
 
-    try:
-        response = requests.post(url, headers=headers, json=payload)
-        if response.status_code != 200:
-            return jsonify({"error": f"AI API error: {response.status_code}"}), 500
+        for ch in chunk_text(content, 8000):
+            ai_names = call_gemini(ch)
+            for nm in ai_names:
+                cn = clean_name(nm)
+                if cn:
+                    add_name(cn)
 
-        result = response.json()
-        if 'candidates' not in result or not result['candidates']:
-            return jsonify({"error": "No response generated by AI"}), 500
+    # Build final unique, stable-ordered list (case-insensitive unique but keep original capitalization)
+    final_names = list(dict(sorted(names_set.items(), key=lambda kv: kv[0])).values())
 
-        generated_text = result['candidates'][0]['content']['parts'][0]['text']
-
-        # Clean markdown code blocks
-        import re
-        cleaned_text = re.sub(r'```\w*\n?', '', generated_text).strip()
-
-        # Parse JSON
-        try:
-            names_data = json.loads(cleaned_text)
-        except json.JSONDecodeError:
-            return jsonify({"error": "AI response is not valid JSON"}), 500
-
-        # Extract names
-        names_list = []
-        if isinstance(names_data, dict) and 'names' in names_data:
-            names_list = names_data['names']
-        elif isinstance(names_data, list):
-            names_list = names_data
-        else:
-            return jsonify({"error": "Unexpected response format"}), 500
-
-        return jsonify({
-            "names": names_list,
-            "count": len(names_list),
-            "file_name": file.filename
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify({
+        "names": final_names,
+        "count": len(final_names),
+        "file_name": file.filename
+    })
 
 @app.route('/ai/extract-names-diaries', methods=['POST'])
 def ai_extract_names_diaries():

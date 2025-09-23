@@ -40,8 +40,16 @@
             <span>Ministerial Diaries CSV → enrich + flag attendees</span>
           </label>
         </div>
-        <div id="modeHelp" class="subtitle" style="margin-top:-.5rem; margin-bottom:.75rem; color:#6b7280;">
+        <div id="modeHelp" class="subtitle" style="margin-top:-.5rem; margin-bottom:.5rem; color:#6b7280;">
           In Diaries mode, upload a CSV with headers: Minister, Date or Date Started, Date Finished, Schedule Time, Type, Meeting, Location, With, Portfolio.
+        </div>
+        <!-- Gemini-only toggle -->
+        <label style="display:flex; align-items:center; gap:.4rem; margin:.25rem 0 .75rem;">
+          <input type="checkbox" id="gemini-only">
+          <span>Use Gemini-only (ignore local heuristics)</span>
+        </label>
+        <div class="subtitle" style="margin-top:-.5rem; margin-bottom:.75rem; color:#6b7280;">
+          When enabled, the whole file is chunked and sent to Gemini to extract people names. This can be slower and use more tokens, but may find more names in messy files.
         </div>
 
         <div class="upload-area" id="uploadArea">
@@ -151,6 +159,8 @@
     // Mapping prep elements
     let selectedMappingFile = null;
     const mappingUploadArea = document.getElementById('mappingUploadArea');
+    // Gemini-only checkbox
+    const geminiOnlyCheckbox = document.getElementById('gemini-only');
     const mappingFileInput = document.getElementById('mappingFileInput');
     const mappingFileInfo = document.getElementById('mappingFileInfo');
     const mappingFileName = document.getElementById('mappingFileName');
@@ -305,6 +315,11 @@
         const base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
         const mode = getSelectedMode();
         const endpoint = mode === 'diaries' ? '/ai/extract-names-diaries' : '/ai/extract-names';
+
+        // If Gemini-only toggle is on (and using generic mode), tell backend to use Gemini-only
+        if (geminiOnlyCheckbox && geminiOnlyCheckbox.checked && mode === 'generic') {
+          formData.append('gemini_only', '1');
+        }
 
         const response = await fetch(base + endpoint, {
           method: 'POST',
