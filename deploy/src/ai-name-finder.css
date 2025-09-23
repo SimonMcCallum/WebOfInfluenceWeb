@@ -137,3 +137,18 @@
   box-shadow: none;
   filter: saturate(0.8);
 }
+
+/* Reset button */
+.small-reset-button{
+  flex:0 0 auto;             /* no grow/shrink */
+  width:auto;
+  padding: 0.5rem 1rem; 
+  background:#fa3f5b;
+  color:#fff;
+  border:none;
+  border-radius:0.5rem;
+  font-weight:600;
+  font-size:0.9rem;
+  line-height:1;
+  cursor:pointer;
+}

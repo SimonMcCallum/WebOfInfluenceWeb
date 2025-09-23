@@ -23,13 +23,11 @@
 
     <div class="config-section" id="toolInfoSection" style="margin-bottom: 1rem;">
       <div style="display:flex; align-items:center; justify-content:space-between; gap:.5rem;">
-        <h3 class="config-title" style="margin:0;">Which tool should I use?</h3>
-        <button id="toolInfoToggle" type="button" aria-expanded="false" aria-controls="toolInfoContent"
-          class="info-toggle-button"
-          style="display:inline-flex; align-items:center; gap:.35rem; padding:.35rem .6rem; border:1px solid #d1d5db; border-radius:.375rem; background:#fff; color:#374151; cursor:pointer;">
-          <span aria-hidden>ℹ️</span>
-          <span>Info</span>
-        </button>
+        <div style="display:flex; align-items:center; gap:.5rem;">
+          <div class="card-icon">ℹ️</div>
+          <h3 class="config-title" style="margin:0;">Which tool should I use?</h3>
+        </div>
+        <button id="toolInfoToggle" type="button" aria-expanded="false" aria-controls="toolInfoContent" class="small-reset-button">Info</button>
       </div>
       <div id="toolInfoContent" style="display:none; margin-top:.5rem;">
       <div style="color:#374151; line-height:1.55;">
@@ -89,10 +87,7 @@
           <h2 class="card-title">Name Finder</h2>
         </div>
         <div style="text-align:right; margin-top:-.25rem;">
-          <button type="button" class="reset-button" id="resetNameFinderBtn" title="Reset Name Finder" style="display:inline-flex; align-items:center; gap:.35rem; padding:.35rem .6rem; border:1px solid #d1d5db; border-radius:.375rem; background:#fff; color:#374151; cursor:pointer;">
-            <span>↺</span>
-            <span>Reset</span>
-          </button>
+          <button type="button" class="small-reset-button" id="resetNameFinderBtn" title="Reset Name Finder">Reset</button>
         </div>
 
         <!-- Mode selector -->
@@ -145,10 +140,7 @@
           <h2 class="card-title">Unclean CSV Mapping Prep</h2>
         </div>
         <div style="text-align:right; margin-top:-.25rem;">
-          <button type="button" class="reset-button" id="resetMappingPrepBtn" title="Reset Mapping Prep" style="display:inline-flex; align-items:center; gap:.35rem; padding:.35rem .6rem; border:1px solid #d1d5db; border-radius:.375rem; background:#fff; color:#374151; cursor:pointer;">
-            <span>↺</span>
-            <span>Reset</span>
-          </button>
+          <button type="button" class="small-reset-button" id="resetMappingPrepBtn" title="Reset Mapping Prep">Reset</button>
         </div>
         <div class="subtitle" style="margin-top:-.5rem; margin-bottom:.75rem; color:#6b7280;">
           <div>Use this to clean and standardize any CSV before importing via Admin → Add Data.</div>
