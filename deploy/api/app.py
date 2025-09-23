@@ -788,6 +788,9 @@ def ai_generate():
     data = request.get_json()
     if not data or 'prompt' not in data:
         return jsonify({"error": "Prompt is required"}), 400
+    prompt = (data.get('prompt') or '').strip()
+    if not prompt:
+        return jsonify({"error": "Prompt is required"}), 400
 
     api_key = get_gemini_api_key()
     if not api_key:
@@ -804,7 +807,13 @@ def ai_generate():
                     }
                 ]
             }
-        ]
+        ],
+        "generationConfig": {
+            "temperature": 0,
+            "topP": 1,
+            "topK": 1,
+            "candidateCount": 1
+        }
     }
 
     try:
@@ -922,15 +931,24 @@ def ai_extract_names():
     # Decide if this looks like CSV
     looks_like_csv = file.filename.lower().endswith('.csv') or (',' in content.splitlines()[0] if content else False)
 
-    names_set = {}
-    def add_name(n: str):
+    gemini_only_flag = (request.form.get('gemini_only') or '').strip().lower()
+    gemini_only = gemini_only_flag in ('1', 'true', 'yes', 'on')
+
+    heuristic_names = {}
+    def add_heuristic_name(n: str):
         key = re.sub(r'\s+', ' ', n.strip()).lower()
         if not key:
             return
-        # Normalize minor typos like double spaces around hyphen already handled
-        names_set[key] = n.strip()
+        heuristic_names[key] = n.strip()
 
-    if looks_like_csv:
+    ai_names_set = {}
+    def add_ai_name(n: str):
+        key = re.sub(r'\s+', ' ', n.strip()).lower()
+        if not key:
+            return
+        ai_names_set[key] = n.strip()
+
+    if looks_like_csv and not gemini_only:
         try:
             reader = csv.DictReader(io.StringIO(content))
             headers = reader.fieldnames or []
@@ -963,14 +981,14 @@ def ai_extract_names():
                         continue
                     # Primary: explicit attendees names list
                     for nm in split_possible_names(val):
-                        add_name(nm)
+                        add_heuristic_name(nm)
 
             # If very few names found, widen search by scanning all cells for person-like patterns
-            if len(names_set) < 5:
+            if len(heuristic_names) < 5:
                 for row in csv.reader(io.StringIO(content)):
                     for cell in row:
                         for nm in split_possible_names(cell):
-                            add_name(nm)
+                            add_heuristic_name(nm)
         except Exception:
             # If CSV parse fails, fall back to text mode below
             pass
@@ -1024,7 +1042,13 @@ def ai_extract_names():
                             {"text": prompt}
                         ]
                     }
-                ]
+                ],
+                "generationConfig": {
+                    "temperature": 0,
+                    "topP": 1,
+                    "topK": 1,
+                    "candidateCount": 1
+                }
             }
             try:
                 resp = requests.post(url, headers=headers, json=payload, timeout=20)
@@ -1049,10 +1073,12 @@ def ai_extract_names():
             for nm in ai_names:
                 cn = clean_name(nm)
                 if cn:
-                    add_name(cn)
+                    add_ai_name(cn)
 
-    # Build final unique, stable-ordered list (case-insensitive unique but keep original capitalization)
-    final_names = list(dict(sorted(names_set.items(), key=lambda kv: kv[0])).values())
+    # Build final unique, stable-ordered list
+    # Prefer AI-derived names for determinism; fall back to heuristics if AI empty or unavailable
+    base = ai_names_set if ai_names_set else heuristic_names
+    final_names = list(dict(sorted(base.items(), key=lambda kv: kv[0])).values())
 
     return jsonify({
         "names": final_names,
@@ -1147,6 +1173,43 @@ def ai_extract_names_diaries():
             end = m.group(2).upper().replace('  ', ' ').strip()
             return start, end
         return None, None
+
+    # Minimal person-name cleaner (diaries)
+    TITLES_RE_DIARIES = re.compile(r'\b(Rt\.?\s*Hon|Hon|Dr|Sir|Dame|Councillor|Minister|MP)\b\.?', re.IGNORECASE)
+    BAD_WORDS_DIARIES = set([
+        'attendees','attendee','event attendees','officials','ministers','committee','committee members',
+        'members','representatives','representative','delegation','chair','ce','ceo','advisor','advisors',
+        'department','ministry','council','association','university','board','professor','prof','press',
+        'media','news','herald'
+    ])
+    def clean_name_diaries(name: str) -> Optional[str]:
+        n = norm_ws(name)
+        if not n:
+            return None
+        n = n.strip('"\'')
+
+        n = re.sub(r'\([^)]*\)', ' ', n)
+        n = TITLES_RE_DIARIES.sub('', n)
+        n = re.sub(r'[(),]', ' ', n)
+        n = re.sub(r'\s*-\s*', '-', n)
+        n = norm_ws(n)
+        if not n:
+            return None
+
+        parts = n.split()
+        if len(parts) < 2:
+            return None
+
+        # Reject if any token is a known bad word or an all-caps acronym (length >= 2)
+        for p in parts:
+            pl = p.lower()
+            if pl in BAD_WORDS_DIARIES:
+                return None
+            if p.isupper() and len(p) >= 2:
+                return None
+            if not re.match(r"^[A-Za-z][A-Za-z'.-]*$", p):
+                return None
+        return n
 
     # Build minimal text per row for AI extraction (attendees + meeting title)
     ai_items = []  # [(id, text)]
@@ -1244,7 +1307,13 @@ def ai_extract_names_diaries():
                         }
                     ]
                 }
-            ]
+            ],
+            "generationConfig": {
+                "temperature": 0,
+                "topP": 1,
+                "topK": 1,
+                "candidateCount": 1
+            }
         }
         resp = requests.post(url, headers=headers, json=body)
         if resp.status_code != 200:
@@ -1266,8 +1335,14 @@ def ai_extract_names_diaries():
                     rid = item.get("id")
                     names = item.get("names") if isinstance(item, dict) else []
                     if isinstance(names, list):
-                        # Normalize names to strings
-                        out[rid] = [str(n) for n in names if isinstance(n, (str, int, float))]
+                        # Normalize names to strings then clean/filter person names
+                        cleaned_names = []
+                        for n in names:
+                            s = str(n)
+                            cn = clean_name_diaries(s)
+                            if cn:
+                                cleaned_names.append(cn)
+                        out[rid] = cleaned_names
             else:
                 out = {}
         except Exception:

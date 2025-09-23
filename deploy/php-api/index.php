@@ -2115,6 +2115,26 @@ function get_gemini_api_key(): ?string {
   return null;
 }
 
+/** Deterministic Gemini payload (temperature=0) */
+function gemini_make_body(string $instruction, int $maxTokens = 2048): string {
+  return json_encode([
+    'generationConfig' => [
+      'temperature' => 0,
+      'topP' => 0,
+      'topK' => 1,
+      'candidateCount' => 1,
+      'maxOutputTokens' => $maxTokens
+    ],
+    'contents' => [
+      [
+        'parts' => [
+          ['text' => $instruction]
+        ]
+      ]
+    ]
+  ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+
 /** AI key debug utilities */
 function get_gemini_key_status(): array {
   $env = getenv('GEMINI_API_KEY');
@@ -2724,9 +2744,8 @@ function handle_candidate_overview_import(string $tmpPath, string $table, bool $
 
       try {
         $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$geminiKey}";
-        $payload = json_encode([
-          'contents' => [[ 'parts' => [[ 'text' => $prompt ]]]]
-        ]);
+    $payload = gemini_make_body($prompt);
+        $payload = gemini_make_body($prompt);
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
@@ -3832,11 +3851,7 @@ function handle_ai_extract_names(): void {
         . 'Return STRICTLY VALID JSON as: {"names": ["First Last", "..."]} with no markdown or explanation. '
         . "Text:\n" . $chunk;
 
-      $payload = json_encode([
-        'contents' => [
-          [ 'parts' => [ [ 'text' => $instruction ] ] ]
-        ]
-      ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+      $payload = gemini_make_body($instruction);
 
       $ch = curl_init($endpoint);
       curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -4003,11 +4018,7 @@ function handle_ai_extract_names(): void {
           . 'Return STRICTLY VALID JSON as: {"names": ["First Last", "..."]} with no markdown or explanation. '
           . "Text:\n" . $chunk;
 
-        $payload = json_encode([
-          'contents' => [
-            [ 'parts' => [ [ 'text' => $instruction ] ] ]
-          ]
-        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $payload = gemini_make_body($instruction);
 
         $ch = curl_init($endpoint);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -4225,15 +4236,7 @@ function handle_ai_extract_names_diaries(): void {
       . "rows:\n"
       . json_encode(['rows' => $payloadRows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-    $body = json_encode([
-      'contents' => [
-        [
-          'parts' => [
-            ['text' => $instruction]
-          ]
-        ]
-      ]
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $body = gemini_make_body($instruction);
 
     $ch = curl_init($endpoint);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
@@ -4419,15 +4422,7 @@ function handle_ai_prepare_mapping_csv(): void {
       . "rows:\n"
       . json_encode(['rows' => $payloadRows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
-    $body = json_encode([
-      'contents' => [
-        [
-          'parts' => [
-            ['text' => $instruction]
-          ]
-        ]
-      ]
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    $body = gemini_make_body($instruction);
 
     $ch = curl_init($endpoint);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
