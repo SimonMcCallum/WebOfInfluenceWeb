@@ -3728,10 +3728,16 @@ function handle_ai_extract_names(): void {
     $n = preg_replace('/\s*-\s*/', '-', $n);
     $n = $norm_ws($n);
 
-    // Filter obvious non-person tokens
+    // Filter obvious non-person tokens (roles, groups, acronyms, org words)
     $bad = [
-      'attendees','event attendees','officials','ministers','multi ministers','committee members',
-      'representatives','chair','ce','ceo','advisor','advisors','representative','official',
+      'attendees','attendee','event attendees',
+      'officials','official',
+      'representatives','representative',
+      'delegation','members','committee','committee members',
+      'chair','co-chair','chairperson',
+      'ce','ceo','cfo','cto','gm','director','secretary','advisor','advisors',
+      'department','ministry','council','association','university','board','professor','prof','press','media','news',
+      'minister','ministers','mp','mlc',
       'ministers & officials','ministers and officials'
     ];
     if (in_array(mb_strtolower($n, 'UTF-8'), $bad, true)) return null;
@@ -3799,35 +3805,6 @@ function handle_ai_extract_names(): void {
   if ($forceGemini) {
     // Build text for AI (prefer likely name-bearing columns for CSVs)
     $aiText = $content;
-    if ($looksCsv) {
-      $mem = fopen('php://memory', 'r+');
-      fwrite($mem, $content);
-      rewind($mem);
-      $header = fgetcsv($mem);
-      if ($header) {
-        $norm = fn($s) => normalize_csv_header((string)$s);
-        $normToIdx = [];
-        foreach ($header as $i => $h) $normToIdx[$norm($h)] = $i;
-        $buf = [];
-        while (($row = fgetcsv($mem)) !== false) {
-          $snippet = [];
-          $keys = ['attendees_names','attendees','with','minister','who','title','notes'];
-          foreach ($keys as $key) {
-            if (isset($normToIdx[$key])) {
-              $snippet[] = (string)($row[$normToIdx[$key]] ?? '');
-            }
-          }
-          if (empty($snippet)) {
-            // Fallback: entire row text
-            $snippet = array_map('strval', $row);
-          }
-          $line = $norm_ws(implode(' | ', array_filter($snippet, fn($x) => (string)$x !== '')));
-          if ($line !== '') $buf[] = $line;
-        }
-        $aiText = implode("\n", $buf);
-      }
-      fclose($mem);
-    }
 
     // Chunk and call Gemini
     $apiKey = get_gemini_api_key();
@@ -3970,81 +3947,58 @@ function handle_ai_extract_names(): void {
     }
   }
 
-  // Optional AI augmentation if still small result
-  if (count($namesSet) < 5) {
-    $apiKey = get_gemini_api_key();
-    if ($apiKey) {
-      // Prefer building AI text from likely CSV columns to reduce noise
-      $aiText = $content;
-      if ($looksCsv) {
-        $mem = fopen('php://memory', 'r+');
-        fwrite($mem, $content);
-        rewind($mem);
-        $header = fgetcsv($mem);
-        if ($header) {
-          $norm = fn($s) => normalize_csv_header((string)$s);
-          $normToIdx = [];
-          foreach ($header as $i => $h) $normToIdx[$norm($h)] = $i;
-          $buf = [];
-          while (($row = fgetcsv($mem)) !== false) {
-            $snippet = [];
-            foreach (['attendees_names','attendees','with','minister'] as $key) {
-              if (isset($normToIdx[$key])) {
-                $snippet[] = (string)($row[$normToIdx[$key]] ?? '');
-              }
-            }
-            $line = $norm_ws(implode(' | ', array_filter($snippet, fn($x) => (string)$x !== '')));
-            if ($line !== '') $buf[] = $line;
-          }
-          $aiText = implode("\n", $buf);
+  // Always perform AI extraction when a Gemini key is available (deterministic), so both modes align
+  $aiSet = [];
+  $apiKey = get_gemini_api_key();
+  if ($apiKey) {
+    $aiText = $content; // use full original text for consistency across modes
+
+    // Chunk text to ~8k chars per request
+    $chunks = [];
+    $start = 0;
+    $limit = 8000;
+    $len = strlen($aiText);
+    while ($start < $len) {
+      $end = min($len, $start + $limit);
+      $chunks[] = substr($aiText, $start, $end - $start);
+      $start = $end;
+    }
+
+    $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}";
+    foreach ($chunks as $chunk) {
+      $instruction = 'Extract ONLY human person names from the following text. '
+        . 'Return STRICTLY VALID JSON as: {"names": ["First Last", "..."]} with no markdown or explanation. '
+        . "Text:\n" . $chunk;
+
+      $payload = gemini_make_body($instruction);
+
+      $ch = curl_init($endpoint);
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+      curl_setopt($ch, CURLOPT_POST, true);
+      curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+      curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+      $resp = curl_exec($ch);
+      $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+      curl_close($ch);
+
+      if ($code === 200 && $resp) {
+        $res = json_decode($resp, true);
+        $text = $res['candidates'][0]['content']['parts'][0]['text'] ?? '';
+        $text = preg_replace('/```\w*\n?/', '', (string)$text);
+        $data = json_decode(trim((string)$text), true);
+        $aiNames = [];
+        if (is_array($data) && isset($data['names']) && is_array($data['names'])) {
+          $aiNames = $data['names'];
+        } elseif (is_array($data)) {
+          $aiNames = $data;
         }
-        fclose($mem);
-      }
-
-      // Chunk text to ~8k chars per request
-      $chunks = [];
-      $start = 0;
-      $limit = 8000;
-      $len = strlen($aiText);
-      while ($start < $len) {
-        $end = min($len, $start + $limit);
-        $chunks[] = substr($aiText, $start, $end - $start);
-        $start = $end;
-      }
-
-      $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={$apiKey}";
-      foreach ($chunks as $chunk) {
-        $instruction = 'Extract ONLY human person names from the following text. '
-          . 'Return STRICTLY VALID JSON as: {"names": ["First Last", "..."]} with no markdown or explanation. '
-          . "Text:\n" . $chunk;
-
-        $payload = gemini_make_body($instruction);
-
-        $ch = curl_init($endpoint);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 20);
-        $resp = curl_exec($ch);
-        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-
-        if ($code === 200 && $resp) {
-          $res = json_decode($resp, true);
-          $text = $res['candidates'][0]['content']['parts'][0]['text'] ?? '';
-          $text = preg_replace('/```\w*\n?/', '', (string)$text);
-          $data = json_decode(trim((string)$text), true);
-          $aiNames = [];
-          if (is_array($data) && isset($data['names']) && is_array($data['names'])) {
-            $aiNames = $data['names'];
-          } elseif (is_array($data)) {
-            $aiNames = $data;
-          }
-          foreach ($aiNames as $nm) {
-            if (!is_string($nm) && !is_numeric($nm)) continue;
-            $cn = $cleanName((string)$nm);
-            if ($cn) $addName($cn);
+        foreach ($aiNames as $nm) {
+          if (!is_string($nm) && !is_numeric($nm)) continue;
+          $cn = $cleanName((string)$nm);
+          if ($cn) {
+            $key = mb_strtolower(preg_replace('/\s+/', ' ', trim($cn)), 'UTF-8');
+            if ($key !== '') $aiSet[$key] = $cn;
           }
         }
       }
@@ -4052,8 +4006,10 @@ function handle_ai_extract_names(): void {
   }
 
   // Final unique, case-insensitive ordered list
-  ksort($namesSet, SORT_NATURAL | SORT_FLAG_CASE);
-  $final = array_values($namesSet);
+  // Prefer AI-derived names when available to align counts with "Gemini-only" mode
+  $baseSet = !empty($aiSet) ? $aiSet : $namesSet;
+  ksort($baseSet, SORT_NATURAL | SORT_FLAG_CASE);
+  $final = array_values($baseSet);
 
   json_response([
     'names' => $final,

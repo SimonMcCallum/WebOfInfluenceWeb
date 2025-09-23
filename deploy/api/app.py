@@ -862,11 +862,13 @@ def ai_extract_names():
 
     # Remove common titles, parentheses, stray punctuation, keep hyphens
     TITLES_RE = re.compile(r'\b(Rt\.?\s*Hon|Hon|Dr|Sir|Dame|Councillor|Minister|MP)\b\.?', re.IGNORECASE)
-    BAD_TOKENS = {
-        'attendees','event attendees','officials','ministers','multi ministers','committee members',
-        'representatives','chair','ce','ceo','advisor','advisors','representative','official',
-        'ministers & officials','ministers and officials'
-    }
+    BAD_WORDS = set([
+        'attendees','attendee','event attendees',
+        'officials','official','representatives','representative','delegation','members','committee','committee members',
+        'chair','co-chair','chairperson','ce','ceo','cfo','cto','gm','director','advisor','advisors','secretary',
+        'department','ministry','council','association','university','board','professor','prof','press','media','news',
+        'minister','ministers','mp','mlc'
+    ])
 
     def clean_name(name: str) -> Optional[str]:
         n = norm_ws(name)
@@ -882,23 +884,22 @@ def ai_extract_names():
         n = re.sub(r'\s*-\s*', '-', n)  # normalize spaces around hyphens
         n = norm_ws(n)
 
-        lo = n.lower()
-        if lo in BAD_TOKENS:
-            return None
-
         # Expect at least 2 tokens to be a person name
         parts = n.split()
         if len(parts) < 2:
             return None
 
-        # basic token sanity: allow letters, dots and hyphens, roman "van/de/du/of" etc.
-        valid = True
+        # Token-level rejection: roles/orgs/acronyms
         for p in parts:
+            pl = p.lower()
+            if pl in BAD_WORDS:
+                return None
+            # reject obvious acronyms (e.g., MPI, FSANZ)
+            if p.isupper() and len(p) >= 2:
+                return None
+            # token sanity
             if not re.match(r"^[A-Za-z][A-Za-z'.-]*$", p):
-                valid = False
-                break
-        if not valid:
-            return None
+                return None
         return n
 
     def split_possible_names(text: str) -> List[str]:
@@ -999,26 +1000,7 @@ def ai_extract_names():
         def chunk_text(txt: str, limit: int = 8000) -> List[str]:
             if not txt:
                 return []
-            # Prefer using only potentially relevant columns for AI when CSV was detected
-            if looks_like_csv:
-                try:
-                    reader = csv.DictReader(io.StringIO(content))
-                    buf = []
-                    for r in reader:
-                        # build a compact line with likely columns to reduce noise
-                        line = ' | '.join([
-                            r.get('Attendees Names', '') or r.get('Attendees_Names', '') or r.get('Attendees', '') or r.get('With', ''),
-                            r.get('Minister', '') or '',
-                            r.get('Meeting', '') or ''
-                        ])
-                        s = norm_ws(line)
-                        if s:
-                            buf.append(s)
-                    txt = '\n'.join(buf)
-                except Exception:
-                    # keep original text if any parsing fails
-                    pass
-
+            # Use full original text to keep AI extraction consistent across modes
             chunks = []
             start = 0
             while start < len(txt):
