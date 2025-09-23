@@ -486,6 +486,14 @@ function render_admin(array $ctx = []): void {
       .info-box .info-subtitle { color: #93c5fd; font-size: .9rem; margin: .15rem 0 .35rem; }
       .info-box ul { margin: .4rem 0 .2rem 1.1rem; padding: 0; }
       .info-box li { margin: .2rem 0; }
+
+      /* Form-like bubble used for Mapping Instructions under Read-only Query */
+      .bubble { background: #ffffff; color: #111827; border: 1px solid #e0e0e0; border-radius: 6px; padding: .75rem .9rem; margin: .75rem 0; }
+      .bubble .info-title { font-weight: 700; margin-bottom: .25rem; color: #111827; letter-spacing: .2px; }
+      .bubble .info-content { color: #333333; font-size: .92rem; }
+      .bubble .info-subtitle { color: #374151; font-size: .9rem; margin: .15rem 0 .35rem; }
+      .bubble ul { margin: .4rem 0 .2rem 1.1rem; padding: 0; }
+      .bubble li { margin: .2rem 0; }
     </style>
   </head>
   <body>
@@ -495,7 +503,38 @@ function render_admin(array $ctx = []): void {
     <div class="row">
       <div>
         <h2>Read-only Query</h2>
-        <div id="mapping-instructions" class="info-box" aria-live="polite">
+        <form action="?route=/admin/query" method="post">
+          <label>SELECT Query (LIMIT enforced if missing)
+            <textarea name="query" rows="5" placeholder="SELECT * FROM woi.people LIMIT 50" required></textarea>
+          </label>
+          <button type="submit">Run Query</button>
+        </form>
+        <?php if (!empty($query_result) || !empty($error)) : ?>
+          <?php if (!empty($error)) : ?>
+            <div class="err"><?= htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
+          <?php else: ?>
+            <div class="ok">Returned <?= (int)$rows_count ?> rows.</div>
+            <table>
+              <thead>
+                <tr>
+                  <?php foreach ($columns as $col): ?><th><?= htmlspecialchars((string)$col, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></th><?php endforeach; ?>
+                </tr>
+              </thead>
+              <tbody>
+                <?php foreach ($query_result as $row): ?>
+                <tr>
+                  <?php foreach ($columns as $col): $val = $row[$col] ?? null; ?>
+                    <td><?= htmlspecialchars((string)$val, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
+                  <?php endforeach; ?>
+                </tr>
+                <?php endforeach; ?>
+              </tbody>
+            </table>
+          <?php endif; ?>
+        <?php endif; ?>
+      </div>
+
+        <div id="mapping-instructions" class="bubble" aria-live="polite">
           <div class="info-title">Mapping Instructions</div>
           <div class="info-subtitle" id="mapping-instructions-subtitle">
             Mapping instructions for <b><?= htmlspecialchars((string)($ctx['map_table'] ?? 'none selected'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></b>
@@ -539,36 +578,6 @@ function render_admin(array $ctx = []): void {
             <?php endif; ?>
           </div>
         </div>
-        <form action="?route=/admin/query" method="post">
-          <label>SELECT Query (LIMIT enforced if missing)
-            <textarea name="query" rows="5" placeholder="SELECT * FROM woi.people LIMIT 50" required></textarea>
-          </label>
-          <button type="submit">Run Query</button>
-        </form>
-        <?php if (!empty($query_result) || !empty($error)) : ?>
-          <?php if (!empty($error)) : ?>
-            <div class="err"><?= htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
-          <?php else: ?>
-            <div class="ok">Returned <?= (int)$rows_count ?> rows.</div>
-            <table>
-              <thead>
-                <tr>
-                  <?php foreach ($columns as $col): ?><th><?= htmlspecialchars((string)$col, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></th><?php endforeach; ?>
-                </tr>
-              </thead>
-              <tbody>
-                <?php foreach ($query_result as $row): ?>
-                <tr>
-                  <?php foreach ($columns as $col): $val = $row[$col] ?? null; ?>
-                    <td><?= htmlspecialchars((string)$val, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
-                  <?php endforeach; ?>
-                </tr>
-                <?php endforeach; ?>
-              </tbody>
-            </table>
-          <?php endif; ?>
-        <?php endif; ?>
-      </div>
 
       <div>
         <h2>CSV Upload → Table</h2>
@@ -746,8 +755,16 @@ function render_admin(array $ctx = []): void {
       <div>
         <h2>Maintenance</h2>
         <form action="?route=/admin/backfill-2023-original" method="post" style="margin-bottom: .75rem;">
-          <button type="submit">Backfill 2023 original_id from stg_overview_2023</button>
-          <p class="note">Requires you to import candidate_csv/2023_candidate_donations.csv into table "stg_overview_2023" via "Import CSVs from Server". You can re-run safely; this shows before/after counts.</p>
+          <button type="submit">Backfill 2023 original_id (link donations → candidates)</button>
+          <div class="note">
+            Purpose: populate candidate_overview.original_id for 2023 so donations files can be linked to the correct candidate rows.
+            <ul>
+              <li>Prerequisite: import candidate_csv/2023_candidate_donations.csv into a staging table named <b>stg_overview_2023</b> using “Import CSVs from Server”.</li>
+              <li>What it does: copies <code>candidatedonations2023test_id</code> from the staging table into <code>candidate_overview.original_id</code> when a match is found.</li>
+              <li>Matching order: Names + Party + Electorate, then Names + Electorate, then Names + Party, and finally Names only.</li>
+              <li>Idempotent: only fills NULL values and can be re-run safely; the message below shows before/after counts.</li>
+            </ul>
+          </div>
         </form>
         <?php if (!empty($ctx['table_action_msg'])): ?>
           <div class="<?= !empty($ctx['table_action_err']) ? 'err' : 'ok' ?>"><?= htmlspecialchars($ctx['table_action_msg'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
@@ -764,6 +781,13 @@ function render_admin(array $ctx = []): void {
       var custom = document.querySelector('input[name="table"]');
       var subtitleEl = document.getElementById('mapping-instructions-subtitle');
       var contentEl = document.getElementById('mapping-instructions-content');
+
+      // Mapping Instructions bubble appears under the Read-only Query form
+      var mapEl = document.getElementById('mapping-instructions');
+      var queryForm = document.querySelector('form[action="?route=/admin/query"]');
+      if (mapEl && queryForm && mapEl.previousElementSibling !== queryForm) {
+        queryForm.insertAdjacentElement('afterend', mapEl);
+      }
 
       function htmlDefault(){
         return '<p>Pick a destination table then upload a CSV. The next step lets you map CSV columns to database columns. Use "Ignore" for columns you do not want imported.</p>'
