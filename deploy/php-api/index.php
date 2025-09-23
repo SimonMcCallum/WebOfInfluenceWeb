@@ -543,32 +543,329 @@ function render_admin(array $ctx = []): void {
             <?php
               $mapTableLower = strtolower((string)($ctx['map_table'] ?? ''));
               if ($mapTableLower && strpos($mapTableLower, 'donation') !== false): ?>
-                <p>Donations import with candidate linking is supported.</p>
+                <p><b>Importing into donations (and auto-creating donors)</b></p>
+                <p><b>General rule</b></p>
                 <ul>
-                  <li>Required/recommended mappings: <b>amount</b> (or donationamount), <b>date</b> (or a <b>year</b> column), <b>notes</b> (optional), <b>location</b> (optional).</li>
-                  <li>Donor details: map <b>donor_first_name</b>/<b>donor_last_name</b> or <b>donor_org_name</b>. The importer creates donors automatically.</li>
-                  <li>Candidate linking: prefer <b>people_id</b> or <b>candidate_person_id</b>. Otherwise map candidate names or <b>original_id</b> using Helper tokens.</li>
-                  <li>Use “Ignore” for columns you don’t need. Use “Create column … (TEXT)” only to keep extra reference data.</li>
+                  <li>Donors are auto-created/linked in the <code>donors</code> table.</li>
+                  <li>Candidates are auto-linked via <code>people_id</code> or <code>original_id</code>.</li>
+                  <li>You just need to map the correct CSV columns.</li>
                 </ul>
-                <p>Why ignore? Unused columns clutter the normalized donations table and aren’t needed to reconstruct each donation record.</p>
+
+                <p><b>Case: (year)_donor_information_for_candidate.csv</b></p>
+                <ol>
+                  <li>In <b>Admin → CSV Upload → Table</b>:
+                    <ul>
+                      <li>Destination table: <b>donations</b></li>
+                      <li>Upload file: <b>(year)_donor_information_for_candidate.csv</b></li>
+                    </ul>
+                  </li>
+                  <li>On Mapping Screen — map columns as follows:</li>
+                </ol>
+
+                <p><b>Required / Recommended</b></p>
+                <ul>
+                  <li><code>_(year)CandidateDonations_Id</code> → <b>original_id</b><br>
+                    <small>Links each donation to the correct <code>candidate_overview</code> row for (year)</small>
+                  </li>
+                  <li><code>DateReceived</code> → <b>date</b></li>
+                  <li><code>DonationAmount</code> → <b>amount</b> <small>(auto‑strips $ and commas)</small></li>
+                  <li><code>MoneyOrGoodsServices</code> → <b>money_or_goods_services</b></li>
+                  <li><code>OtherDetail</code> → <b>notes</b></li>
+                </ul>
+
+                <p><b>Donor (auto‑created/linked in donors table)</b></p>
+                <ul>
+                  <li><code>DonorName_First</code> → <b>donor_first_name</b></li>
+                  <li><code>DonorName_Last</code> → <b>donor_last_name</b></li>
+                  <li><code>CompanyOrOrganisation</code> → <b>donor_org_name</b></li>
+                </ul>
+
+                <p><b>Address (builds “location” automatically)</b></p>
+                <ul>
+                  <li><code>Address_Line1</code> → <b>address_line1</b></li>
+                  <li><code>Address_Line2</code> → <b>address_line2</b></li>
+                  <li><code>Address_City</code> → <b>address_city</b></li>
+                  <li><code>Address_PostalCode</code> → <b>address_postalcode</b></li>
+                  <li><code>Address_Country</code> → <b>address_country</b></li>
+                </ul>
+
+                <p><b>Ignore (leave unmapped)</b></p>
+                <ul>
+                  <li><code>PartADonationEntry_Id</code></li>
+                  <li><code>DateRangeFinishDate</code></li>
+                  <li><code>AdditionalDateReceived</code>, <code>AdditionalDateReceived2..6</code></li>
+                  <li><code>Contributions</code> <small>(optional: map to notes if you want the text)</small></li>
+                  <li><code>DonorName_Prefix</code></li>
+                  <li>Any system fields (<code>donor_id</code>, <code>candidate_person_id</code>, <code>candidate_overview_id</code>, <code>created_at</code>)</li>
+                  <li><code>CandidateDonations2023Test_Id</code> <small>(not used for 2011–2020)</small></li>
+                </ul>
+
+                <p><b>Click “Import with Mapping”.</b> Optional: tick <b>Truncate table before insert</b> for a clean reload.</p>
+
+                <p><b>What Happens Automatically</b></p>
+                <ul>
+                  <li><b>Donors:</b> Auto‑created/linked using donor_first_name/donor_last_name or donor_org_name. A <code>normalized_name</code> prevents duplicate donors. If a donor is a person, a matching record is also ensured in <code>people</code>.</li>
+                  <li><b>Candidate linking priority:</b>
+                    <ol>
+                      <li><code>people_id</code> / <code>candidate_person_id</code> (not in your CSV)</li>
+                      <li>Candidate first/last name (if present)</li>
+                      <li><code>original_id</code> + <code>year</code> (preferred)</li>
+                    </ol>
+                  </li>
+                  <li><b>Year:</b> Taken from <code>DateReceived</code> where possible; otherwise inferred from filename/header (2011).</li>
+                  <li><b>Location:</b> Built automatically from the mapped address fields if no single location column is provided.</li>
+                  <li><b>Insert:</b> Creates rows in <code>donations</code> with year, date, amount, money_or_goods_services, notes, location, donor_id, candidate_person_id, candidate_overview_id.</li>
+                  <li><b>Re‑imports:</b> Uses INSERT (not upsert). If you re‑run, use <b>Truncate</b> first for a clean reload.</li>
+                </ul>
+
+                <p><b>Tips</b></p>
+                <ul>
+                  <li>Never map <code>_(year)CandidateDonations_Id</code> to <code>people_id</code>. Always map it to <code>original_id</code>.</li>
+                  <li>If a row’s <code>original_id</code> doesn’t match any <code>candidate_overview</code> for (year):
+                    <ul>
+                      <li>The donation and donor still insert.</li>
+                      <li><code>candidate_overview_id</code> remains NULL.</li>
+                    </ul>
+                  </li>
+                </ul>
+
+                <p><b>Optional Verification Queries</b></p>
+                <p>Run in <b>Admin → Read‑only Query</b>:</p>
+<pre>-- Check newly created donors
+SELECT id, first_name, last_name, org_name 
+FROM donors 
+ORDER BY id DESC LIMIT 10;
+
+-- Donations linked to a person
+SELECT COUNT(*) 
+FROM donations 
+WHERE year = 2011 
+  AND candidate_person_id IS NOT NULL;
+
+-- Donations linked to candidate_overview
+SELECT COUNT(*) 
+FROM donations 
+WHERE year = 2011 
+  AND candidate_overview_id IS NOT NULL;</pre>
             <?php elseif ($mapTableLower && strpos($mapTableLower, 'candidate_overview') !== false): ?>
-                <p>Candidate Overview uses an enhanced importer and ignores the manual mapping grid.</p>
+                <p><b>Importing candidate_overview CSVs</b></p>
+                <p><b>General rule</b></p>
                 <ul>
-                  <li>Ensure CSV has <b>candidate first</b> and <b>last</b> name, <b>party</b>, and <b>electorate</b> headers (common variants are detected automatically).</li>
-                  <li><b>year</b> is inferred from file/headers when missing; include if available.</li>
-                  <li><b>original_id</b> (e.g., 2011candidatedonations_id or candidatedonations2023test_id) helps link to donations.</li>
-                  <li>Totals (part_a, total_donations, total_expenses, etc.) are optional.</li>
+                  <li>Never do manual column mapping.</li>
+                  <li>Always leave every dropdown as <b>Ignore</b>.</li>
+                  <li>Click <b>Import with Mapping</b> — the enhanced importer automatically handles mappings.</li>
                 </ul>
-                <p>Why ignore? The importer reads known headers directly; extra fields are not used here.</p>
-            <?php elseif ($mapTableLower && strpos($mapTableLower, 'meetings') !== false): ?>
-                <p>Meetings import supports deriving fields from common diary CSVs.</p>
+
+                <p><b>Case 1: Cleaned 2023 Candidates File</b><br>File: Electorate-Candidates-2023-GE-9-October-cleaned.csv</p>
+                <ol>
+                  <li>Set destination table to <b>candidate_overview</b> and select the file; click <b>Continue to Mapping</b>.</li>
+                  <li>On Mapping Screen:
+                    <ul>
+                      <li>Info box confirms enhanced importer is active.</li>
+                      <li><b>Important:</b> leave all columns as <b>Ignore</b>.</li>
+                      <li>Optional: tick <b>Truncate table before insert</b> to clear the table.</li>
+                      <li>Click <b>Import with Mapping</b>.</li>
+                    </ul>
+                  </li>
+                </ol>
+                <p><b>Automatic Import Behaviour</b></p>
                 <ul>
-                  <li>Recommended mappings: <b>date</b>, <b>title</b>, <b>location</b>, <b>type</b>, <b>portfolio</b>, <b>with_text</b>.</li>
-                  <li><b>minister_person_id</b> can be left unmapped if your CSV has a “Minister” column—the importer resolves the person automatically.</li>
-                  <li><b>start_time</b>/<b>end_time</b> are derived from “Schedule Time” when present.</li>
-                  <li>Ignore unrelated columns; use “Create column” only if you need to preserve free text.</li>
+                  <li>First Name → people.first_name</li>
+                  <li>Last Name → people.last_name</li>
+                  <li>Electorate → resolves/creates electorates.name → electorate_id</li>
+                  <li>Party → resolves/creates parties.name → party_id</li>
+                  <li>year = 2023 inferred from filename</li>
+                  <li>Inserts into candidate_overview with people_id, party_id, electorate_id, year; totals stay NULL.</li>
                 </ul>
-            <?php else: ?>
+                <p><b>Notes</b></p>
+                <ul>
+                  <li>Header normalization happens automatically (e.g., "First Name" → first_name).</li>
+                  <li>Keep names consistent to avoid duplicate parties/electorates.</li>
+                  <li><code>original_id</code> not populated for this file (fine).</li>
+                </ul>
+
+                <p><b>Case 2: 2011–2024 Candidate Donations CSV</b><br>File: (year)_candidate_donations.csv (year = 2011, 2014, 2017, 2020, 2023)</p>
+                <ol>
+                  <li>In <b>Admin → CSV Upload → Table</b>:
+                    <ul>
+                      <li>Destination table: <b>candidate_overview</b></li>
+                      <li>Upload file: <b>(year)_candidate_donations.csv</b></li>
+                    </ul>
+                  </li>
+                  <li>On Mapping Screen:
+                    <ul>
+                      <li><b>Do not map anything</b>; the manual grid is ignored.</li>
+                      <li>Optional: tick <b>Truncate</b> to clear the table before insert.</li>
+                      <li>Click <b>Import with Mapping</b>.</li>
+                    </ul>
+                  </li>
+                </ol>
+                <p><b>Automatic Import Behaviour</b></p>
+                <ul>
+                  <li>Reads headers: <code>CandidateName_First</code>, <code>CandidateName_Last</code>, <code>Electorate</code>, <code>Party</code>.</li>
+                  <li>Creates/links people by candidate name → <code>people_id</code>.</li>
+                  <li>Creates/links party and electorate by name.</li>
+                  <li>Year detected from <code>_2011CandidateDonations_Id</code> (or year in filename).</li>
+                  <li><code>_2011CandidateDonations_Id</code> is stored in <code>candidate_overview.original_id</code>.</li>
+                  <li>Totals auto‑parsed (<code>TotalDonationsACD</code>, <code>PartA/B/C/D</code>, <code>Expenses</code>).</li>
+                  <li>De‑dupe: <code>UNIQUE(year, people_id)</code> + <code>INSERT IGNORE</code>.</li>
+                </ul>
+                <p><b>Important Correction</b></p>
+                <ul>
+                  <li><b>Never</b> map <code>_2011CandidateDonations_Id</code> to <code>people_id</code>. It is stored in <code>candidate_overview.original_id</code>.</li>
+                </ul>
+<?php elseif ($mapTableLower && strpos($mapTableLower, 'meetings') !== false): ?>
+                <p><b>Importing Ministerial Diaries into meetings Table</b></p>
+                <p><b>General Rule</b></p>
+                <ul>
+                  <li>Use the <b>AI Name Finder</b> first to enrich your CSV.</li>
+                  <li>Then import into <b>meetings</b>.</li>
+                  <li>The importer auto‑creates/links people for <b>minister</b> and <b>attendees</b>.</li>
+                </ul>
+
+                <p><b>Step 1 — Enrich CSV with AI Name Finder</b></p>
+                <ul>
+                  <li><b>Tool:</b> AI Name Finder</li>
+                  <li><b>Mode:</b> Ministerial Diaries CSV → enrich + flag attendees</li>
+                </ul>
+                <p><b>Input CSV headers (expected)</b></p>
+                <ul>
+                  <li>Minister</li>
+                  <li>Date</li>
+                  <li>Schedule Time</li>
+                  <li>Title</li>
+                  <li>Type</li>
+                  <li>Portfolio</li>
+                  <li>Location</li>
+                  <li>Notes</li>
+                  <li>With/Attendees</li>
+                </ul>
+                <p><b>Output (enriched CSV includes extra columns)</b></p>
+                <ul>
+                  <li><code>Attendees_Text</code>: normalized text of attendees</li>
+                  <li><code>Attendees_Names</code>: AI‑flagged person names, semicolon‑separated<br>
+                    <small>Example: "John Smith; Jane Doe"</small>
+                  </li>
+                </ul>
+
+                <p><b>Step 2 — Import Enriched CSV into meetings</b></p>
+                <ol>
+                  <li>In <b>Admin → CSV Upload → Table</b>:
+                    <ul>
+                      <li>Destination table: <b>meetings</b></li>
+                    </ul>
+                  </li>
+                  <li>On Mapping Screen — map columns as follows:</li>
+                </ol>
+                <p><b>Required mappings</b></p>
+                <ul>
+                  <li><code>Date</code> → <b>date</b></li>
+                  <li><code>Title</code> → <b>title</b></li>
+                  <li><code>Type</code> → <b>type</b></li>
+                  <li><code>Portfolio</code> → <b>portfolio</b></li>
+                  <li><code>Location</code> → <b>location</b></li>
+                  <li><code>Notes</code> → <b>notes</b></li>
+                  <li><code>Attendees_Text</code> → <b>with_text</b></li>
+                </ul>
+                <p><b>Leave as Ignore</b></p>
+                <ul>
+                  <li><code>Minister</code> → <b>Ignore</b> (importer derives <code>minister_person_id</code> automatically)</li>
+                  <li><code>Attendees_Names</code> → <b>Ignore</b> (importer reads and upserts people automatically)</li>
+                </ul>
+                <p><b>Time handling</b></p>
+                <ul>
+                  <li>If you only have <code>Schedule Time</code> (e.g., "9:30 AM - 10:00 AM"): <b>leave unmapped</b> — importer parses into <code>start_time</code> / <code>end_time</code>.</li>
+                  <li>If you already have <code>Start_Time</code> and <code>End_Time</code> columns:
+                    <ul>
+                      <li><code>Start_Time</code> → <b>start_time</b></li>
+                      <li><code>End_Time</code> → <b>end_time</b></li>
+                    </ul>
+                    <small>(Both approaches work)</small>
+                  </li>
+                </ul>
+
+                <p><b>What Happens Automatically</b></p>
+                <ul>
+                  <li><b>Minister linking</b>
+                    <ul>
+                      <li>Importer resolves <code>minister_person_id</code> from the <code>Minister</code> column (or AI‑enriched ai_first_name / ai_last_name).</li>
+                      <li>If the minister doesn’t exist in <code>people</code>, it creates them.</li>
+                    </ul>
+                  </li>
+                  <li><b>Attendees linking</b>
+                    <ul>
+                      <li>Importer reads <code>Attendees_Names</code>.</li>
+                      <li>Each name is split into first/last (best‑effort) and upserted into <code>people</code>, preventing duplicates.</li>
+                      <li>Attendees are then linked to the meeting.</li>
+                    </ul>
+                  </li>
+                </ul>
+<?php elseif ($mapTableLower && strpos($mapTableLower, 'people') !== false): ?>
+                <p><b>Importing into the people table</b></p>
+                <p><b>General rule</b></p>
+                <ul>
+                  <li>Use destination table: <b>people</b></li>
+                  <li>Map only the name fields.</li>
+                  <li>Leave other columns as <b>Ignore</b>.</li>
+                </ul>
+                <p><b>Steps</b></p>
+                <ol>
+                  <li>In <b>Admin → CSV Upload → Table</b>:
+                    <ul>
+                      <li>Destination table: <b>people</b></li>
+                      <li>Upload your CSV</li>
+                    </ul>
+                  </li>
+                  <li>On Mapping Screen (recommended): 
+                    <ul>
+                      <li><code>First_Name</code> (or <code>First Name</code>) → <b>first_name</b></li>
+                      <li><code>Last_Name</code> (or <code>Last Name</code>) → <b>last_name</b></li>
+                      <li><code>Prefix</code> / <code>CandidateName_Prefix</code> (if present) → <b>prefix</b> (or choose “Create column 'prefix' (TEXT)” if the column doesn’t exist)</li>
+                      <li><code>Electorate</code> → <b>Ignore</b></li>
+                      <li><code>Party</code> → <b>Ignore</b></li>
+                    </ul>
+                  </li>
+                  <li>Click <b>Import with Mapping</b>.</li>
+                </ol>
+                <p><b>What happens</b></p>
+                <ul>
+                  <li>Each row inserts one person with an auto-generated <code>people.id</code>.</li>
+                  <li>These records can be linked later by the <code>candidate_overview</code> importer.</li>
+                  <li>Matching is done case-insensitively on <code>first_name</code> + <code>last_name</code>.</li>
+                  <li>If a person is missing, <code>candidate_overview</code> will create them automatically.</li>
+                </ul>
+                <p><b>Avoiding duplicates</b></p>
+                <ul>
+                  <li>The generic importer uses <code>INSERT IGNORE</code>; without a <code>UNIQUE</code> constraint, exact duplicates may slip through.</li>
+                </ul>
+                <p>Optional checks (Admin → Read-only Query):</p>
+<pre>-- Find potential duplicates (case-insensitive)
+SELECT 
+  UPPER(first_name) AS fn, 
+  UPPER(last_name) AS ln, 
+  COUNT(*) AS c
+FROM people
+GROUP BY UPPER(first_name), UPPER(last_name)
+HAVING COUNT(*) > 1
+ORDER BY c DESC;</pre>
+                <p>Optional uniqueness enforcement (after cleaning duplicates):</p>
+<pre>ALTER TABLE people 
+ADD UNIQUE idx_people_name (first_name, last_name);</pre>
+                <p><b>Notes</b></p>
+                <ul>
+                  <li><b>Electorate</b> and <b>Party</b> are not part of the <code>people</code> table.
+                    <ul>
+                      <li>To load them, import into their own tables:
+                        <ul>
+                          <li><code>parties</code>: map <b>Party</b> → <b>name</b></li>
+                          <li><code>electorates</code>: map <b>Electorate</b> → <b>name</b></li>
+                        </ul>
+                      </li>
+                    </ul>
+                  </li>
+                  <li>You do not need to prefill <code>people</code> for <code>candidate_overview</code> imports—missing people are created automatically. Prefill only if you want specific capitalization or to control prefixes/titles.</li>
+                </ul>
+<?php else: ?>
                 <p>Pick a destination table then upload a CSV. The next step lets you map CSV columns to database columns. Use “Ignore” for columns you do not want imported.</p>
                 <ul>
                   <li>Avoid mapping id/primary key columns.</li>
@@ -799,15 +1096,83 @@ function render_admin(array $ctx = []): void {
       }
 
       function htmlDonations(){
-        return '<p>Donations import with candidate linking is supported.</p>'
+        return '<p><b>Importing into donations (and auto-creating donors)</b></p>'
+          + '<p><b>General rule</b></p>'
           + '<ul>'
-          + '<li>Required/recommended mappings: <b>amount</b> (or donationamount), <b>date</b> (or a <b>year</b> column), <b>notes</b> (optional), <b>location</b> (optional).</li>'
-          + '<li>Donor details: map <b>donor_first_name</b>/<b>donor_last_name</b> or <b>donor_org_name</b>. The importer creates donors automatically.</li>'
-          + '<li>Candidate linking: prefer <b>people_id</b> or <b>candidate_person_id</b>. Otherwise map candidate name columns (first/last) or <b>original_id</b> using the Helper tokens group.</li>'
-          + '<li>You can ignore unrelated columns. Use "Create column" only if you want to preserve extra data for reference.</li>'
+          + '<li>Donors are auto-created/linked in the <code>donors</code> table.</li>'
+          + '<li>Candidates are auto-linked via <code>people_id</code> or <code>original_id</code>.</li>'
+          + '<li>You just need to map the correct CSV columns.</li>'
           + '</ul>'
-          + '<p>Why ignore? Columns not mapped are not needed to build the normalized donations record and avoiding them keeps the table clean.</p>';
-      }
+          + '<p><b>Case: (year)_donor_information_for_candidate.csv</b></p>'
+          + '<ol>'
+          + '<li>In <b>Admin → CSV Upload → Table</b>:'
+          +   '<ul>'
+          +     '<li>Destination table: <b>donations</b></li>'
+          +     '<li>Upload file: <b>(year)_donor_information_for_candidate.csv</b></li>'
+          +   '</ul>'
+          + '</li>'
+          + '<li>On Mapping Screen — map columns as follows:</li>'
+          + '</ol>'
+          + '<p><b>Required / Recommended</b></p>'
+          + '<ul>'
+          + '<li><code>_(year)CandidateDonations_Id</code> → <b>original_id</b><br><small>Links each donation to the correct <code>candidate_overview</code> row for (year)</small></li>'
+          + '<li><code>DateReceived</code> → <b>date</b></li>'
+          + '<li><code>DonationAmount</code> → <b>amount</b> <small>(auto‑strips $ and commas)</small></li>'
+          + '<li><code>MoneyOrGoodsServices</code> → <b>money_or_goods_services</b></li>'
+          + '<li><code>OtherDetail</code> → <b>notes</b></li>'
+          + '</ul>'
+          + '<p><b>Donor (auto‑created/linked in donors table)</b></p>'
+          + '<ul>'
+          + '<li><code>DonorName_First</code> → <b>donor_first_name</b></li>'
+          + '<li><code>DonorName_Last</code> → <b>donor_last_name</b></li>'
+          + '<li><code>CompanyOrOrganisation</code> → <b>donor_org_name</b></li>'
+          + '</ul>'
+          + '<p><b>Address (builds “location” automatically)</b></p>'
+          + '<ul>'
+          + '<li><code>Address_Line1</code> → <b>address_line1</b></li>'
+          + '<li><code>Address_Line2</code> → <b>address_line2</b></li>'
+          + '<li><code>Address_City</code> → <b>address_city</b></li>'
+          + '<li><code>Address_PostalCode</code> → <b>address_postalcode</b></li>'
+          + '<li><code>Address_Country</code> → <b>address_country</b></li>'
+          + '</ul>'
+          + '<p><b>Ignore (leave unmapped)</b></p>'
+          + '<ul>'
+          + '<li><code>PartADonationEntry_Id</code></li>'
+          + '<li><code>DateRangeFinishDate</code></li>'
+          + '<li><code>AdditionalDateReceived</code>, <code>AdditionalDateReceived2..6</code></li>'
+          + '<li><code>Contributions</code> <small>(optional: map to notes if you want the text)</small></li>'
+          + '<li><code>DonorName_Prefix</code></li>'
+          + '<li>Any system fields (<code>donor_id</code>, <code>candidate_person_id</code>, <code>candidate_overview_id</code>, <code>created_at</code>)</li>'
+          + '<li><code>CandidateDonations2023Test_Id</code> <small>(not used for 2011–2020)</small></li>'
+          + '</ul>'
+          + '<p><b>Click “Import with Mapping”.</b> Optional: tick <b>Truncate table before insert</b> for a clean reload.</p>'
+          + '<p><b>What Happens Automatically</b></p>'
+          + '<ul>'
+          + '<li><b>Donors:</b> Auto‑created/linked using donor_first_name/donor_last_name or donor_org_name. A <code>normalized_name</code> prevents duplicate donors. If a donor is a person, a matching record is also ensured in <code>people</code>.</li>'
+          + '<li><b>Candidate linking priority:</b>'
+          +   '<ol>'
+          +     '<li><code>people_id</code> / <code>candidate_person_id</code> (not in your CSV)</li>'
+          +     '<li>Candidate first/last name (if present)</li>'
+          +     '<li><code>original_id</code> + <code>year</code> (preferred)</li>'
+          +   '</ol>'
+          + '</li>'
+          + '<li><b>Year:</b> Taken from <code>DateReceived</code> where possible; otherwise inferred from filename/header (2011).</li>'
+          + '<li><b>Location:</b> Built automatically from the mapped address fields if no single location column is provided.</li>'
+          + '<li><b>Insert:</b> Creates rows in <code>donations</code> with year, date, amount, money_or_goods_services, notes, location, donor_id, candidate_person_id, candidate_overview_id.</li>'
+          + '<li><b>Re‑imports:</b> Uses INSERT (not upsert). If you re‑run, use <b>Truncate</b> first for a clean reload.</li>'
+          + '</ul>'
+          + '<p><b>Tips</b></p>'
+          + '<ul>'
+          + '<li>Never map <code>_(year)CandidateDonations_Id</code> to <code>people_id</code>. Always map it to <code>original_id</code>.</li>'
+          + '<li>If a row’s <code>original_id</code> doesn’t match any <code>candidate_overview</code> for (year):'
+          +   '<ul>'
+          +     '<li>The donation and donor still insert.</li>'
+          +     '<li><code>candidate_overview_id</code> remains NULL.</li>'
+          +   '</ul>'
+          + '</li>'
+          + '</ul>'
+          + '<p><b>Optional Verification Queries</b></p>'
+          + '<pre>-- Check
 
       function htmlCandidateOverview(){
         return '<p>Candidate Overview uses an enhanced importer and ignores the manual mapping grid.</p>'
@@ -821,12 +1186,122 @@ function render_admin(array $ctx = []): void {
       }
 
       function htmlMeetings(){
-        return '<p>Meetings import supports deriving fields from common diary CSVs.</p>'
+        return '<p><b>Importing Ministerial Diaries into meetings Table</b></p>'
+          + '<p><b>General Rule</b></p>'
           + '<ul>'
-          + '<li>Recommended mappings: <b>date</b>, <b>title</b>, <b>location</b>, <b>type</b>, <b>portfolio</b>, <b>with_text</b>.</li>'
-          + '<li><b>minister_person_id</b> can be left unmapped if your CSV has a "Minister" column—the importer resolves the person automatically.</li>'
-          + '<li><b>start_time</b> and <b>end_time</b> are derived from "Schedule Time" when present.</li>'
-          + '<li>Ignore unrelated columns to avoid clutter. Use "Create column" only when you need to keep extra text.</li>'
+          + '<li>Use the <b>AI Name Finder</b> first to enrich your CSV.</li>'
+          + '<li>Then import into <b>meetings</b>.</li>'
+          + '<li>The importer auto‑creates/links people for <b>minister</b> and <b>attendees</b>.</li>'
+          + '</ul>'
+          + '<p><b>Step 1 — Enrich CSV with AI Name Finder</b></p>'
+          + '<ul>'
+          + '<li><b>Tool:</b> AI Name Finder</li>'
+          + '<li><b>Mode:</b> Ministerial Diaries CSV → enrich + flag attendees</li>'
+          + '</ul>'
+          + '<p><b>Input CSV headers (expected)</b></p>'
+          + '<ul>'
+          + '<li>Minister</li>'
+          + '<li>Date</li>'
+          + '<li>Schedule Time</li>'
+          + '<li>Title</li>'
+          + '<li>Type</li>'
+          + '<li>Portfolio</li>'
+          + '<li>Location</li>'
+          + '<li>Notes</li>'
+          + '<li>With/Attendees</li>'
+          + '</ul>'
+          + '<p><b>Output (enriched CSV includes extra columns)</b></p>'
+          + '<ul>'
+          + '<li><code>Attendees_Text</code>: normalized text of attendees</li>'
+          + '<li><code>Attendees_Names</code>: AI‑flagged person names, semicolon‑separated</li>'
+          + '</ul>'
+          + '<p><b>Step 2 — Import Enriched CSV into meetings</b></p>'
+          + '<ol>'
+          + '<li>In <b>Admin → CSV Upload → Table</b>: Destination table: <b>meetings</b></li>'
+          + '<li>On Mapping Screen — map columns as follows:</li>'
+          + '</ol>'
+          + '<p><b>Required mappings</b></p>'
+          + '<ul>'
+          + '<li><code>Date</code> → <b>date</b></li>'
+          + '<li><code>Title</code> → <b>title</b></li>'
+          + '<li><code>Type</code> → <b>type</b></li>'
+          + '<li><code>Portfolio</code> → <b>portfolio</b></li>'
+          + '<li><code>Location</code> → <b>location</b></li>'
+          + '<li><code>Notes</code> → <b>notes</b></li>'
+          + '<li><code>Attendees_Text</code> → <b>with_text</b></li>'
+          + '</ul>'
+          + '<p><b>Leave as Ignore</b></p>'
+          + '<ul>'
+          + '<li><code>Minister</code> → <b>Ignore</b> (importer derives <code>minister_person_id</code> automatically)</li>'
+          + '<li><code>Attendees_Names</code> → <b>Ignore</b> (importer reads and upserts people automatically)</li>'
+          + '</ul>'
+          + '<p><b>Time handling</b></p>'
+          + '<ul>'
+          + '<li>If only <code>Schedule Time</code> is present (e.g., "9:30 AM - 10:00 AM"), leave unmapped — importer parses into <code>start_time</code>/<code>end_time</code>.</li>'
+          + '<li>If you have <code>Start_Time</code> and <code>End_Time</code> columns, map them directly.</li>'
+          + '</ul>'
+          + '<p><b>What Happens Automatically</b></p>'
+          + '<ul>'
+          + '<li><b>Minister linking:</b> importer resolves <code>minister_person_id</code> from <code>Minister</code> (or AI ai_first_name/ai_last_name) and creates the person if missing.</li>'
+          + '<li><b>Attendees linking:</b> importer reads <code>Attendees_Names</code>, splits to first/last, upserts into <code>people</code>, and links attendees to the meeting.</li>'
+          + '</ul>';
+      }
+
+      function htmlPeople(){
+        return '<p><b>Importing into the people table</b></p>'
+          + '<p><b>General rule</b></p>'
+          + '<ul>'
+          + '<li>Use destination table: <b>people</b></li>'
+          + '<li>Map only the name fields.</li>'
+          + '<li>Leave other columns as <b>Ignore</b>.</li>'
+          + '</ul>'
+          + '<p><b>Steps</b></p>'
+          + '<ol>'
+          + '<li>In <b>Admin → CSV Upload → Table</b>:'
+          +   '<ul>'
+          +     '<li>Destination table: <b>people</b></li>'
+          +     '<li>Upload your CSV</li>'
+          +   '</ul>'
+          + '</li>'
+          + '<li>On Mapping Screen (recommended):'
+          +   '<ul>'
+          +     '<li><code>First_Name</code> (or <code>First Name</code>) → <b>first_name</b></li>'
+          +     '<li><code>Last_Name</code> (or <code>Last Name</code>) → <b>last_name</b></li>'
+          +     '<li><code>Prefix</code> / <code>CandidateName_Prefix</code> (if present) → <b>prefix</b> (or choose “Create column \'prefix\' (TEXT)” if needed)</li>'
+          +     '<li><code>Electorate</code> → <b>Ignore</b></li>'
+          +     '<li><code>Party</code> → <b>Ignore</b></li>'
+          +   '</ul>'
+          + '</li>'
+          + '<li>Click <b>Import with Mapping</b>.</li>'
+          + '</ol>'
+          + '<p><b>What happens</b></p>'
+          + '<ul>'
+          + '<li>Each row inserts one person with an auto-generated <code>people.id</code>.</li>'
+          + '<li>These records can be linked later by <code>candidate_overview</code>.</li>'
+          + '<li>Matching is case-insensitive on <code>first_name</code> + <code>last_name</code>.</li>'
+          + '<li>If a person is missing, <code>candidate_overview</code> will create them automatically.</li>'
+          + '</ul>'
+          + '<p><b>Avoiding duplicates</b></p>'
+          + '<ul>'
+          + '<li>Generic importer uses <code>INSERT IGNORE</code>; without a <code>UNIQUE</code> constraint, exact duplicates may slip through.</li>'
+          + '</ul>'
+          + '<p>Optional checks (Admin → Read-only Query):</p>'
+          + '<pre>-- Find potential duplicates (case-insensitive)\nSELECT \n  UPPER(first_name) AS fn, \n  UPPER(last_name) AS ln, \n  COUNT(*) AS c\nFROM people\nGROUP BY UPPER(first_name), UPPER(last_name)\nHAVING COUNT(*) > 1\nORDER BY c DESC;</pre>'
+          + '<p>Optional uniqueness enforcement (after cleaning duplicates):</p>'
+          + '<pre>ALTER TABLE people \nADD UNIQUE idx_people_name (first_name, last_name);</pre>'
+          + '<p><b>Notes</b></p>'
+          + '<ul>'
+          + '<li><b>Electorate</b> and <b>Party</b> are not part of <code>people</code>.'
+          +   '<ul>'
+          +     '<li>Import them separately:'
+          +       '<ul>'
+          +         '<li><code>parties</code>: map <b>Party</b> → <b>name</b></li>'
+          +         '<li><code>electorates</code>: map <b>Electorate</b> → <b>name</b></li>'
+          +       '</ul>'
+          +     '</li>'
+          +   '</ul>'
+          + '</li>'
+          + '<li>Prefill <code>people</code> only if you want specific capitalization or to control prefixes/titles—the <code>candidate_overview</code> importer creates missing people automatically.</li>'
           + '</ul>';
       }
 
@@ -857,6 +1332,7 @@ function render_admin(array $ctx = []): void {
         if (!chosen) { contentEl.innerHTML = htmlDefault(); return; }
         if (chosen.indexOf('donation') !== -1) { contentEl.innerHTML = htmlDonations(); return; }
         if (chosen.indexOf('meetings') !== -1) { contentEl.innerHTML = htmlMeetings(); return; }
+        if (chosen.indexOf('people') !== -1) { contentEl.innerHTML = htmlPeople(); return; }
         if (chosen.indexOf('candidate_overview') !== -1) { contentEl.innerHTML = htmlCandidateOverview(); return; }
         contentEl.innerHTML = htmlGeneric(chosen);
       }

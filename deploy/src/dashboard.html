@@ -79,14 +79,10 @@
       </div>
     </div>
 
-    <!-- Frontend Status -->
-    <div class="status warn">
-      <div class="status-text">⚠️ Frontend Build Status</div>
-      <p>The React app has not been built on this server because Node/npm is not available. You have two options:</p>
-      <ol style="margin-top: 1rem; padding-left: 1.5rem;">
-        <li>Install Node/npm on the cPanel build environment; the pipeline will run <code style="background: rgba(0,0,0,0.1); padding: 0.2rem 0.4rem; border-radius: 3px;">npm run build</code> automatically.</li>
-        <li>Build locally and commit the built assets in <code style="background: rgba(0,0,0,0.1); padding: 0.2rem 0.4rem; border-radius: 3px;">demo-cand/dist</code> to this repository.</li>
-      </ol>
+    <!-- Frontend Status (auto-detected) -->
+    <div class="status" id="frontend-status">
+      <div class="status-text">ℹ️ Frontend Build Status</div>
+      <p>Checking for built assets...</p>
     </div>
 
     <!-- Runtime Config -->
@@ -103,25 +99,146 @@
     var cfgEl = document.getElementById('cfg');
     cfgEl.textContent = JSON.stringify(window.__APP_CONFIG__ || {}, null, 2);
 
-    // API health test
+    // API health test (robust: handle php endpoint vs directory base)
     (function () {
       var statusEl = document.getElementById('api-status');
-      try {
-        var base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
-        fetch(base + '/', { cache: 'no-store' })
-          .then(function (r) { return r.text(); })
-          .then(function (t) {
-            statusEl.className = 'api-status ok';
-            statusEl.textContent = '✅ API Health: ' + t;
-          })
-          .catch(function (e) {
-            statusEl.className = 'api-status warn';
-            statusEl.textContent = '⚠️ API Health fetch failed: ' + e;
-          });
-      } catch (e) {
-        statusEl.className = 'api-status warn';
-        statusEl.textContent = '❌ API Health test error: ' + e;
+      var cfg = (window.__APP_CONFIG__ || {});
+      var base = (cfg.API_BASE || '/webofinfluence/php-api/index.php');
+
+      function normalizeHealthUrl(b) {
+        try {
+          var trimmed = String(b || '').trim();
+          // If base looks like a PHP file, use it as-is; otherwise ensure single trailing slash
+          if (/\.php(\?|$)/i.test(trimmed)) return trimmed;
+          return trimmed.replace(/\/+$/, '') + '/';
+        } catch (_) {
+          return '/webofinfluence/php-api/index.php';
+        }
       }
+
+      function setOK(url, text) {
+        statusEl.className = 'api-status ok';
+        statusEl.textContent = '✅ API Health (' + url + '): ' + text;
+      }
+      function setFail(url, err) {
+        statusEl.className = 'api-status warn';
+        statusEl.textContent = '⚠️ API Health fetch failed (' + url + '): ' + (err && err.message ? err.message : err);
+      }
+
+      // Derive deployment root (handles being served from /webofinfluence/*)
+      var root = (function(){
+        try {
+          var parts = location.pathname.split('/').filter(Boolean);
+          var idx = parts.indexOf('webofinfluence');
+          if (idx >= 0) return '/' + parts.slice(0, idx+1).join('/');
+        } catch(_) {}
+        return '/webofinfluence';
+      })();
+
+      var candidates = [];
+      // 1) Configured base (normalized)
+      candidates.push(normalizeHealthUrl(base));
+      // 2) Common fallbacks (try both php-api and api, with/without index.php)
+      candidates.push(root + '/php-api/index.php');
+      candidates.push(root + '/php-api/');
+      candidates.push(root + '/api/');
+      candidates.push(root + '/api/index.php');
+
+      (function tryNext(i){
+        if (i >= candidates.length) {
+          setFail(candidates[candidates.length - 1], 'All health endpoints failed');
+          return;
+        }
+        var url = candidates[i];
+        fetch(url, { cache: 'no-store' })
+          .then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.text().then(function(txt){ setOK(url, txt); });
+          })
+          .catch(function () {
+            // If PHP file and server dislikes trailing slash, retry without it once
+            if (/\/index\.php\/?$/.test(url)) {
+              var noSlash = url.replace(/\/+$/, '');
+              if (noSlash !== url) {
+                fetch(noSlash, { cache: 'no-store' })
+                  .then(function(r2){ if (!r2.ok) throw new Error('HTTP ' + r2.status); return r2.text().then(function(txt){ setOK(noSlash, txt); }); })
+                  .catch(function(){
+                    // Also try explicit route parameter form
+                    var withRoute = noSlash + '?route=/';
+                    fetch(withRoute, { cache: 'no-store' })
+                      .then(function(r3){ if (!r3.ok) throw new Error('HTTP ' + r3.status); return r3.text().then(function(txt){ setOK(withRoute, txt); }); })
+                      .catch(function(){ tryNext(i+1); });
+                  });
+                return;
+              }
+            }
+            // If directory-style base, try adding ?route=/
+            if (/\/(php-api|api)\/$/.test(url)) {
+              var withRouteDir = url.replace(/\/+$/, '') + '/?route=/';
+              fetch(withRouteDir, { cache: 'no-store' })
+                .then(function(r4){ if (!r4.ok) throw new Error('HTTP ' + r4.status); return r4.text().then(function(txt){ setOK(withRouteDir, txt); }); })
+                .catch(function(){ tryNext(i+1); });
+              return;
+            }
+            tryNext(i+1);
+          });
+      })(0);
+    })();
+
+    // Frontend build status check (detect if built dist exists on this server)
+    (function(){
+      var fsEl = document.getElementById('frontend-status');
+      if (!fsEl) return;
+
+      function setOk(foundPath){
+        fsEl.className = 'status ok';
+        fsEl.innerHTML =
+          '<div class="status-text">✅ Frontend Build Status</div>'
+          + '<p>Built assets detected at '
+          + '<code style="background: rgba(0,0,0,0.1); padding: 0.2rem 0.4rem; border-radius: 3px;">' + foundPath + '</code>. '
+          + 'The static build can be served directly.</p>'
+          + '<p style="margin-top:.5rem;"><a href="' + foundPath + '/index.html" style="display:inline-block;padding:.4rem .7rem;border-radius:6px;background:#2563eb;color:#fff;text-decoration:none;">Open built app →</a></p>';
+      }
+
+      function setWarn(){
+        fsEl.className = 'status warn';
+        fsEl.innerHTML =
+          '<div class="status-text">⚠️ Frontend Build Status</div>'
+          + '<p>The React app has not been built on this server because Node/npm is not available. You have two options:</p>'
+          + '<ol style="margin-top: 1rem; padding-left: 1.5rem;">'
+          +   '<li>Install Node/npm on the cPanel build environment; the pipeline will run '
+          +   '<code style="background: rgba(0,0,0,0.1); padding: 0.2rem 0.4rem; border-radius: 3px;">npm run build</code> automatically.</li>'
+          +   '<li>Build locally and commit the built assets in '
+          +   '<code style="background: rgba(0,0,0,0.1); padding: 0.2rem 0.4rem; border-radius: 3px;">dist</code> (or '
+          +   '<code style="background: rgba(0,0,0,0.1); padding: 0.2rem 0.4rem; border-radius: 3px;">demo-cand/dist</code>) to this repository.</li>'
+          + '</ol>';
+      }
+
+      // Determine deployment root and try multiple candidate paths; first 200 wins
+      var root = (function(){
+        try {
+          var parts = location.pathname.split('/').filter(Boolean);
+          var idx = parts.indexOf('webofinfluence');
+          if (idx >= 0) return '/' + parts.slice(0, idx+1).join('/');
+        } catch(_) {}
+        return '/webofinfluence';
+      })();
+
+      var candidates = [
+        root + '/dist/index.html',           // Vite build (deploy/vite.config.js outDir: "dist")
+        root + '/demo-cand/dist/index.html'  // alternative location if committed under demo-cand
+      ];
+
+      (function tryNext(i){
+        if (i >= candidates.length) { setWarn(); return; }
+        var path = candidates[i];
+        fetch(path, { method: 'GET', cache: 'no-store' })
+          .then(function(r){
+            if (r.ok) setOk(path.replace(/\/index\.html$/, ''));
+            else tryNext(i+1);
+          })
+          .catch(function(){ tryNext(i+1); });
+      })(0);
     })();
   </script>
 </body>
