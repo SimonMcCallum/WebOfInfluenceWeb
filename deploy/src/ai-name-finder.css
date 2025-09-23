@@ -138,7 +138,7 @@
   filter: saturate(0.8);
 }
 
-/* Reset button */
+/* Small button (used for compact Info toggle) */
 .small-reset-button{
   flex:0 0 auto;             /* no grow/shrink */
   width:auto;
@@ -154,4 +154,31 @@
 }
 .small-reset-button:hover {
   background-color: #be123c;
+}
+
+/* Match Donations Overview reset button exactly */
+.reset-button{
+  display:inline-flex;
+  align-items:center;
+  gap:0.5rem;
+  padding:0.5rem 1rem !important;
+  background-color:#ef4444 !important;
+  color:#fff !important;
+  border:none;
+  border-radius:0.5rem;
+  font-weight:500;
+  cursor:pointer;
+  transition:all 0.2s ease;
+  font-size:0.875rem !important;
+  white-space:nowrap;
+  flex-shrink:0;
+}
+.reset-button:hover{
+  background-color:#dc2626 !important;
+  transform:translateY(-1px);
+}
+.reset-button:focus{
+  background-color:#ef4444 !important;
+  outline:none;
+  box-shadow:0 0 0 3px rgba(239,68,68,.3);
 }

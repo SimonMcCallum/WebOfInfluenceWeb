@@ -82,12 +82,12 @@
 
     <div class="dashboard-grid" style="display:grid; grid-template-columns:minmax(320px, 420px) 1fr; gap:1rem; align-items:start;">
       <div class="dashboard-card" style="grid-column:1">
-        <div class="card-header">
-          <div class="card-icon">📄</div>
-          <h2 class="card-title">Name Finder</h2>
-        </div>
-        <div style="text-align:right; margin-top:-.25rem;">
-          <button type="button" class="small-reset-button" id="resetNameFinderBtn" title="Reset Name Finder">Reset</button>
+        <div class="card-header" style="display:flex; align-items:center; justify-content:space-between; gap:.5rem;">
+          <div style="display:flex; align-items:center; gap:.6rem;">
+            <div class="card-icon">📄</div>
+            <h2 class="card-title" style="margin:0;">Name Finder</h2>
+          </div>
+          <button type="button" class="reset-button" id="resetNameFinderBtn" title="Reset Name Finder">↺ Reset</button>
         </div>
 
         <!-- Mode selector -->
@@ -135,12 +135,12 @@
 
       <!-- New: Unclean CSV Mapping Prep -->
       <div class="dashboard-card" style="grid-column:1">
-        <div class="card-header">
-          <div class="card-icon">🧹</div>
-          <h2 class="card-title">Unclean CSV Mapping Prep</h2>
-        </div>
-        <div style="text-align:right; margin-top:-.25rem;">
-          <button type="button" class="small-reset-button" id="resetMappingPrepBtn" title="Reset Mapping Prep">Reset</button>
+        <div class="card-header" style="display:flex; align-items:center; justify-content:space-between; gap:.5rem;">
+          <div style="display:flex; align-items:center; gap:.6rem;">
+            <div class="card-icon">🧹</div>
+            <h2 class="card-title" style="margin:0;">Unclean CSV Mapping Prep</h2>
+          </div>
+          <button type="button" class="reset-button" id="resetMappingPrepBtn" title="Reset Mapping Prep">↺ Reset</button>
         </div>
         <div class="subtitle" style="margin-top:-.5rem; margin-bottom:.75rem; color:#6b7280;">
           <div>Use this to clean and standardize any CSV before importing via Admin → Add Data.</div>
