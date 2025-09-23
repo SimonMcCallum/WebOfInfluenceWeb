@@ -26,7 +26,7 @@ const HomePage = () => {
         <div className="header-content">
           <h1 className="title">Web of Influence Research Homepage</h1>
           <nav className="header-nav">
-            <Link to="/settings" className="nav-button settings-button">
+            <Link to="/settings" className="nav-button settings-button" target="_blank" rel="noopener noreferrer">
               <span className="button-icon">⚙️</span>
               Settings
             </Link>
