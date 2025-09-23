@@ -1321,9 +1321,26 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
 
       function getChosen(){
         var v = '';
-        if (custom && custom.value.trim() !== '') v = custom.value.trim();
-        else if (sel && sel.value) v = sel.value;
-        else if (initialTable) v = initialTable;
+        // 1) custom text input takes precedence
+        if (custom && typeof custom.value === 'string' && custom.value.trim() !== '') {
+          v = custom.value.trim();
+        }
+        // 2) select value, else fallback to selected option's text (strip " (1234)" etc.)
+        else if (sel) {
+          if (typeof sel.value === 'string' && sel.value.trim() !== '') {
+            v = sel.value.trim();
+          } else {
+            var opt = sel.options && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+            var txt = opt && opt.textContent ? opt.textContent.trim() : '';
+            // Extract leading identifier (letters/digits/underscore/dot) before any spaces/parentheses
+            var m = txt.match(/^[A-Za-z0-9_.]+/);
+            if (m) v = m[0];
+          }
+        }
+        // 3) server-provided initial table (when returning from mapping step)
+        else if (initialTable) {
+          v = initialTable;
+        }
         return (v || '').toLowerCase();
       }
 
@@ -1341,8 +1358,23 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
         contentEl.innerHTML = htmlGeneric(chosen);
       }
 
-      if (sel) { sel.addEventListener('change', render); sel.addEventListener('input', render); }
+      if (sel) { 
+        sel.addEventListener('change', render); 
+        sel.addEventListener('input', render); 
+        sel.addEventListener('click', render);
+      }
       if (custom) custom.addEventListener('input', render);
+
+      // Fallback: poll for selection changes (handles browser/UI quirks)
+      var __lastChosen = getChosen();
+      setInterval(function(){
+        var now = getChosen();
+        if (now !== __lastChosen) {
+          __lastChosen = now;
+          render();
+        }
+      }, 300);
+
       render();
     })();
     </script>
