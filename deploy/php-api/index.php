@@ -535,10 +535,11 @@ function render_admin(array $ctx = []): void {
       </div>
 
         <div id="mapping-instructions" class="bubble" aria-live="polite" style="order:3">
-          <div class="info-title">Mapping Instructions</div>
+          <h2 class="info-title">Mapping Instructions</h2>
           <div class="info-subtitle" id="mapping-instructions-subtitle">
             Mapping instructions for <b><?= htmlspecialchars((string)($ctx['map_table'] ?? 'none selected'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></b>
           </div>
+
           <div class="info-content" id="mapping-instructions-content">
             <?php
               $mapTableLower = strtolower((string)($ctx['map_table'] ?? ''));
@@ -1009,9 +1010,6 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
             <?php endforeach; ?>
           </tbody>
         </table>
-        <?php if (!empty($ctx['table_action_msg'])): ?>
-          <div class="<?= !empty($ctx['table_action_err']) ? 'err' : 'ok' ?>"><?= htmlspecialchars($ctx['table_action_msg'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
-        <?php endif; ?>
       </div>
 
       <div>
@@ -1351,7 +1349,12 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
         if (!contentEl) return;
         var chosen = getChosen();
         if (subtitleEl) {
-          subtitleEl.textContent = 'Mapping instructions for ' + (chosen || 'none selected');
+          subtitleEl.innerHTML = '';
+          subtitleEl.append('Mapping instructions for ', (function(){
+            var b = document.createElement('b');
+            b.textContent = chosen || 'none selected';
+            return b;
+          })());
         }
         if (!chosen) { contentEl.innerHTML = htmlDefault(); return; }
         if (chosen.indexOf('donation') !== -1) { contentEl.innerHTML = htmlDonations(); return; }
