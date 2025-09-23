@@ -65,37 +65,11 @@
             </table>
           </div>
         </div>
+        <div id="toolDetails" style="display:none; margin-top:.5rem;"></div>
       </div>
-      <div style="color:#374151; line-height:1.55;">
-        <ul style="margin:0 0 .5rem 1.1rem;">
-          <li style="margin:.2rem 0;">
-            <strong>Name Finder (Generic)</strong>
-            <ul style="margin:.25rem 0 .4rem 1.1rem;">
-              <li><strong>Output:</strong> a single, deduplicated list of person names across the whole file.</li>
-              <li><strong>Use when:</strong> you want a quick inventory of people present, dedupe/QA a corpus, or build a watchlist. It does not align names back to individual rows, nor split first/last, nor identify organizations.</li>
-              <li><strong>Note:</strong> Not meant for per-row import; use CSV AI Preprocessor for Admin imports.</li>
-            </ul>
-          </li>
-          <li style="margin:.2rem 0;">
-            <strong>Name Finder (Ministerial Diaries → enrich + flag attendees)</strong>
-            <ul style="margin:.25rem 0 .4rem 1.1rem;">
-              <li><strong>Output:</strong> per-row attendees_names (people only) for diaries, good for feeding the meetings importer.</li>
-              <li><strong>Use when:</strong> preparing ministerial diaries; it gives row-level people but not split into first/last and not organization detection.</li>
-            </ul>
-          </li>
-          <li style="margin:.2rem 0;">
-            <strong>CSV AI Preprocessor (adds mapping columns)</strong>
-            <ul style="margin:.25rem 0 .4rem 1.1rem;">
-              <li><strong>Output:</strong> returns your original CSV with new AI columns appended:</li>
-              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_first_name, ai_last_name (single "top" person per row when applicable)</li>
-              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_org_name</li>
-              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_person_names (multi-value; semicolon separated)</li>
-              <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_orgs (multi-value; semicolon separated)</li>
-              <li><strong>Use when:</strong> you plan to import via Admin → Add Data and need AI-assisted columns that map cleanly to DB fields (people.first_name/last_name, donors.org_name, etc.). This creates a prepared, importable CSV with explicit per-row columns.</li>
-            </ul>
-          </li>
-        </ul>
-
+      <div id="toolInfoStatic" style="color:#374151; line-height:1.55;">
+        <p>The two main tools here solve different but related problems around extracting and preparing people data for import:</p>
+        
         <h4 style="margin:.75rem 0 .25rem; color:#111827;">When to choose which</h4>
         <ul style="margin:0 0 .5rem 1.1rem;">
           <li>You're importing arbitrary CSVs into people/parties/electorates/donations/meetings via Admin: use CSV AI Preprocessor first to get ai_* columns, then map those columns in the Admin importer.</li>
@@ -359,6 +333,57 @@
       const recoEl = document.getElementById('toolRecommendation');
       const compareBtn = document.getElementById('compareToolsBtn');
       const compareEl = document.getElementById('compareTools');
+      const detailsEl = document.getElementById('toolDetails');
+      const staticEl = document.getElementById('toolInfoStatic');
+
+      function detailsFor(tool) {
+        if (tool === 'preprocessor') {
+          return `
+            <div class="dashboard-card" style="margin:0; border:1px solid #e5e7eb; background:#fff;">
+              <div class="card-header">
+                <div class="card-icon">🧹</div>
+                <h3 class="card-title" style="margin:0;">CSV AI Preprocessor (adds mapping columns)</h3>
+              </div>
+              <div style="padding:.5rem 0 0 0; color:#374151;">
+                <div><strong>Output:</strong> ai_first_name, ai_last_name, ai_org_name, ai_person_names, ai_orgs appended per row.</div>
+                <div><strong>Use when:</strong> Importing via Admin → Add Data and need clean mapping columns.</div>
+                <div><strong>Limitations:</strong> Not a global deduped list; designed for structured per-row imports.</div>
+                <div style="margin-top:.25rem; color:#6b7280;"><em>Note:</em> Use this before Admin → Add Data.</div>
+              </div>
+            </div>
+          `;
+        } else if (tool === 'diaries') {
+          return `
+            <div class="dashboard-card" style="margin:0; border:1px solid #e5e7eb; background:#fff;">
+              <div class="card-header">
+                <div class="card-icon">📅</div>
+                <h3 class="card-title" style="margin:0;">Name Finder (Diaries)</h3>
+              </div>
+              <div style="padding:.5rem 0 0 0; color:#374151;">
+                <div><strong>Output:</strong> attendees_names per row (people only) for ministerial diaries.</div>
+                <div><strong>Use when:</strong> Preparing diaries; need row-level attendees.</div>
+                <div><strong>Limitations:</strong> No organization detection; no first/last split.</div>
+                <div style="margin-top:.25rem; color:#6b7280;">Hint: If later you need first/last split, run CSV AI Preprocessor after this.</div>
+              </div>
+            </div>
+          `;
+        } else {
+          return `
+            <div class="dashboard-card" style="margin:0; border:1px solid #e5e7eb; background:#fff;">
+              <div class="card-header">
+                <div class="card-icon">🔎</div>
+                <h3 class="card-title" style="margin:0;">Name Finder (Generic)</h3>
+              </div>
+              <div style="padding:.5rem 0 0 0; color:#374151;">
+                <div><strong>Output:</strong> One deduplicated list of person names across the whole file.</div>
+                <div><strong>Use when:</strong> Discovery, watchlist building, or QA across a corpus.</div>
+                <div><strong>Limitations:</strong> Not per-row, no first/last split, no org detection.</div>
+                <div style="margin-top:.25rem; color:#6b7280;">Note: For Admin imports, use CSV AI Preprocessor.</div>
+              </div>
+            </div>
+          `;
+        }
+      }
 
       if (compareBtn && compareEl) {
         compareBtn.addEventListener('click', function(){
@@ -392,7 +417,13 @@
           diariesQ.style.display = (state.forAdminImport === false) ? 'block' : 'none';
         }
         const tool = recommendTool(state);
-        if (!tool) { recoEl.style.display = 'none'; recoEl.innerHTML = ''; return; }
+        if (!tool) {
+          recoEl.style.display = 'none';
+          recoEl.innerHTML = '';
+          if (detailsEl) { detailsEl.style.display = 'none'; detailsEl.innerHTML = ''; }
+          if (staticEl) staticEl.style.display = 'block';
+          return;
+        }
         let title = '';
         let body = '';
         let onClick = null;
@@ -401,20 +432,25 @@
           title = 'Recommended: CSV AI Preprocessor (adds mapping columns)';
           body = `
             <div style="color:#374151; line-height:1.55;">
-              <div><strong>Output:</strong> ai_first_name, ai_last_name, ai_org_name, ai_person_names, ai_orgs appended per row.</div>
-              <div><strong>Why:</strong> You indicated you are importing via Admin → Add Data; this tool creates clean mapping columns.</div>
+              <div><strong>Output:</strong> returns your original CSV with new AI columns appended:</div>
+              <ul style="margin:.25rem 0 .4rem 1.1rem;">
+                <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_first_name, ai_last_name (single "top" person per row when applicable)</li>
+                <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_org_name</li>
+                <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_person_names (multi-value; semicolon separated)</li>
+                <li style="list-style: circle; margin:.15rem 0 .15rem 1.25rem;">ai_orgs (multi-value; semicolon separated)</li>
+              </ul>
+              <div><strong>Use when:</strong> you plan to import via Admin → Add Data and need AI-assisted columns that map cleanly to DB fields (people.first_name/last_name, donors.org_name, etc.). This creates a prepared, importable CSV with explicit per-row columns.</div>
             </div>
           `;
           onClick = function(){
             scrollToId('mappingPrepCard');
           };
         } else if (tool === 'diaries') {
-          title = 'Recommended: Name Finder (Diaries)';
+          title = 'Recommended: Name Finder (Ministerial Diaries → enrich + flag attendees)';
           body = `
             <div style="color:#374151; line-height:1.55;">
-              <div><strong>Output:</strong> attendees_names per row (people only) for ministerial diaries.</div>
-              <div><strong>Why:</strong> You selected a diaries CSV and need row-level attendees.</div>
-              <div style="margin-top:.25rem; color:#6b7280;">Hint: If later you need first/last split, run CSV AI Preprocessor after this.</div>
+              <div><strong>Output:</strong> per-row attendees_names (people only) for diaries, good for feeding the meetings importer.</div>
+              <div><strong>Use when:</strong> preparing ministerial diaries; it gives row-level people but not split into first/last and not organization detection.</div>
             </div>
           `;
           onClick = function(){
@@ -429,9 +465,9 @@
           title = 'Recommended: Name Finder (Generic)';
           body = `
             <div style="color:#374151; line-height:1.55;">
-              <div><strong>Output:</strong> One deduplicated list of person names across the whole file.</div>
-              <div><strong>Why:</strong> Not for Admin import or diaries; you want quick discovery/QA.</div>
-              <div style="margin-top:.25rem; color:#6b7280;">Note: Not for per-row imports; for Admin imports use CSV AI Preprocessor.</div>
+              <div><strong>Output:</strong> a single, deduplicated list of person names across the whole file.</div>
+              <div><strong>Use when:</strong> you want a quick inventory of people present, dedupe/QA a corpus, or build a watchlist. It does not align names back to individual rows, nor split first/last, nor identify organizations.</div>
+              <div><strong>Note:</strong> Not meant for per-row import; use CSV AI Preprocessor for Admin imports.</div>
             </div>
           `;
           onClick = function(){
@@ -467,6 +503,12 @@
         `;
         const cta = document.getElementById('reco-cta');
         if (cta && onClick) cta.addEventListener('click', onClick);
+
+        if (detailsEl && staticEl) {
+          detailsEl.style.display = 'block';
+          detailsEl.innerHTML = detailsFor(tool);
+          staticEl.style.display = 'none';
+        }
       }
 
       [adminYes, adminNo, diariesYes, diariesNo].forEach(function(el){
