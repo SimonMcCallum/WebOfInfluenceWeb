@@ -534,7 +534,7 @@ function render_admin(array $ctx = []): void {
         <?php endif; ?>
       </div>
 
-        <div id="mapping-instructions" class="bubble" aria-live="polite">
+        <div id="mapping-instructions" class="bubble" aria-live="polite" style="order:3">
           <div class="info-title">Mapping Instructions</div>
           <div class="info-subtitle" id="mapping-instructions-subtitle">
             Mapping instructions for <b><?= htmlspecialchars((string)($ctx['map_table'] ?? 'none selected'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></b>
@@ -876,7 +876,7 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
           </div>
         </div>
 
-      <div>
+      <div style="order:2">
         <h2>CSV Upload → Table</h2>
         <form action="?route=/admin/upload-start" method="post" enctype="multipart/form-data">
           <label>Destination Table (pick existing)
@@ -1084,6 +1084,12 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
       var queryForm = document.querySelector('form[action*="/admin/query"]');
       if (mapEl && queryForm && mapEl.previousElementSibling !== queryForm) {
         queryForm.insertAdjacentElement('afterend', mapEl);
+      } else if (mapEl && !queryForm) {
+        // Fallback: place after the query textarea if form selector fails
+        var qta = document.querySelector('textarea[name="query"]');
+        if (qta && qta.parentElement) {
+          qta.parentElement.insertAdjacentElement('afterend', mapEl);
+        }
       }
 
       function htmlDefault(){
@@ -1172,8 +1178,7 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
           + '</li>'
           + '</ul>'
           + '<p><b>Optional Verification Queries</b></p>'
-          + '<pre>-- Check
-
+          + '<pre>-- Check newly created donors\nSELECT id, first_name, last_name, org_name \nFROM donors \nORDER BY id DESC LIMIT 10;\n\n-- Donations linked to a person\nSELECT COUNT(*) \nFROM donations \nWHERE year = 2011 \n  AND candidate_person_id IS NOT NULL;\n\n-- Donations linked to candidate_overview\nSELECT COUNT(*) \nFROM donations \nWHERE year = 2011 \n  AND candidate_overview_id IS NOT NULL;</pre>';
       function htmlCandidateOverview(){
         return '<p>Candidate Overview uses an enhanced importer and ignores the manual mapping grid.</p>'
           + '<ul>'
@@ -1326,8 +1331,7 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
         if (!contentEl) return;
         var chosen = getChosen();
         if (subtitleEl) {
-          var safe = (chosen || 'none selected').replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>');
-          subtitleEl.innerHTML = 'Mapping instructions for <b>' + safe + '</b>';
+          subtitleEl.textContent = 'Mapping instructions for ' + (chosen || 'none selected');
         }
         if (!chosen) { contentEl.innerHTML = htmlDefault(); return; }
         if (chosen.indexOf('donation') !== -1) { contentEl.innerHTML = htmlDonations(); return; }
@@ -1337,7 +1341,7 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
         contentEl.innerHTML = htmlGeneric(chosen);
       }
 
-      if (sel) sel.addEventListener('change', render);
+      if (sel) { sel.addEventListener('change', render); sel.addEventListener('input', render); }
       if (custom) custom.addEventListener('input', render);
       render();
     })();
