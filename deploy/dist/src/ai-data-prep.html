@@ -44,23 +44,50 @@
         </div>
         <div id="toolRecommendation" style="display:none; margin-top:.75rem;"></div>
         <div style="margin-top:.5rem;">
-          <button type="button" class="reset-button" id="compareToolsBtn">Compare tools</button>
+          <button type="button" class="reset-button" id="compareToolsBtn" style="padding:.6rem .9rem; border-radius:.5rem;">Compare tools</button>
         </div>
         <div id="compareTools" style="display:none; margin-top:.5rem;">
           <div class="table-responsive" style="overflow:auto;">
-            <table class="data-table" style="width:100%; border-collapse:collapse; font-size:.9rem;">
-              <thead><tr>
-                <th style="text-align:left; padding:.4rem;">Capability</th>
-                <th style="text-align:left; padding:.4rem;">CSV AI Preprocessor</th>
-                <th style="text-align:left; padding:.4rem;">Name Finder (Diaries)</th>
-                <th style="text-align:left; padding:.4rem;">Name Finder (Generic)</th>
-              </tr></thead>
+            <table class="data-table" style="width:100%; border-collapse:collapse; font-size:.9rem; border:1px solid #e5e7eb;">
+              <thead>
+                <tr>
+                  <th style="text-align:left; padding:.5rem .6rem; border:1px solid #e5e7eb; background:#f9fafb;">Capability</th>
+                  <th style="text-align:left; padding:.5rem .6rem; border:1px solid #e5e7eb; background:#f9fafb;">CSV AI Preprocessor</th>
+                  <th style="text-align:left; padding:.5rem .6rem; border:1px solid #e5e7eb; background:#f9fafb;">Name Finder (Diaries)</th>
+                  <th style="text-align:left; padding:.5rem .6rem; border:1px solid #e5e7eb; background:#f9fafb;">Name Finder (Generic)</th>
+                </tr>
+              </thead>
               <tbody>
-                <tr><td style="padding:.4rem;">Output</td><td style="padding:.4rem;">ai_* columns per row</td><td style="padding:.4rem;">attendees_names per row</td><td style="padding:.4rem;">deduped people list (aggregate)</td></tr>
-                <tr><td style="padding:.4rem;">Per-row vs Aggregate</td><td style="padding:.4rem;">Per-row</td><td style="padding:.4rem;">Per-row</td><td style="padding:.4rem;">Aggregate</td></tr>
-                <tr><td style="padding:.4rem;">First/Last split</td><td style="padding:.4rem;">Yes (ai_first_name/ai_last_name)</td><td style="padding:.4rem;">No</td><td style="padding:.4rem;">No</td></tr>
-                <tr><td style="padding:.4rem;">Org detection</td><td style="padding:.4rem;">Yes (ai_org_name / ai_orgs)</td><td style="padding:.4rem;">No</td><td style="padding:.4rem;">No</td></tr>
-                <tr><td style="padding:.4rem;">Best for</td><td style="padding:.4rem;">Admin import mapping</td><td style="padding:.4rem;">Diaries → Meetings importer</td><td style="padding:.4rem;">Discovery / QA</td></tr>
+                <tr>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Output</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">ai_* columns per row</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">attendees_names per row</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">deduped people list (aggregate)</td>
+                </tr>
+                <tr>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Per-row vs Aggregate</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Per-row</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Per-row</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Aggregate</td>
+                </tr>
+                <tr>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">First/Last split</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Yes (ai_first_name/ai_last_name)</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">No</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">No</td>
+                </tr>
+                <tr>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Org detection</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Yes (ai_org_name / ai_orgs)</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">No</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">No</td>
+                </tr>
+                <tr>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Best for</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Admin import mapping</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Diaries → Meetings importer</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Discovery / QA</td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -504,10 +531,12 @@
         const cta = document.getElementById('reco-cta');
         if (cta && onClick) cta.addEventListener('click', onClick);
 
-        if (detailsEl && staticEl) {
-          detailsEl.style.display = 'block';
-          detailsEl.innerHTML = detailsFor(tool);
-          staticEl.style.display = 'none';
+        if (detailsEl) {
+          detailsEl.style.display = 'none';
+          detailsEl.innerHTML = '';
+        }
+        if (staticEl) {
+          staticEl.style.display = 'block';
         }
       }
 
