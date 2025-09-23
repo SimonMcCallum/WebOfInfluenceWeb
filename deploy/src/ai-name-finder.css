@@ -152,3 +152,6 @@
   line-height:1;
   cursor:pointer;
 }
+.small-reset-button:hover {
+  background-color: #be123c;
+}
