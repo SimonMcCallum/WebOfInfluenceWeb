@@ -817,6 +817,7 @@ const PersonProfile = () => {
       .selectAll('line')
       .data(linksData)
       .join('line')
+      .attr('class', 'graph-link')
       .attr('stroke-width', (d) => (1 + (d.value || 1) * 0.5) * edgeScale);
 
     const node = zoomLayer
@@ -947,7 +948,21 @@ const PersonProfile = () => {
     return () => {
       simulation.stop();
     };
-  }, [graphData, edgeScale, connectionCap]);
+  }, [graphData, connectionCap]);
+
+  // Update only the link stroke widths when the thickness slider changes
+  // to avoid tearing down and rebuilding the whole graph (which could
+  // briefly drop nodes/links during re-init on some browsers).
+  useEffect(() => {
+    try {
+      const svg = d3.select(svgRef.current);
+      svg
+        .selectAll('line.graph-link')
+        .attr('stroke-width', (d) => (1 + (((d && d.value) || 1) * 0.5)) * edgeScale);
+    } catch {
+      // ignore if svg not ready yet
+    }
+  }, [edgeScale]);
 
   return (
     <div className="donations-page" ref={containerRef}>
