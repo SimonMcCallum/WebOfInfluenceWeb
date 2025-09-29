@@ -4652,6 +4652,49 @@ function handle_donations_by_donor(): void {
   json_response($rows);
 }
 
+/** Donors/org search */
+function handle_donors_search(): void {
+  $org   = $_GET['org_name']   ?? null;
+  $first = $_GET['first_name'] ?? null;
+  $last  = $_GET['last_name']  ?? null;
+
+  if (!$org && !$first && !$last) {
+    json_response(['error' => 'Provide org_name or first_name/last_name'], 400);
+  }
+
+  $conds = [];
+  $params = [];
+
+  if ($org) {
+    $conds[] = 'UPPER(org_name) LIKE UPPER(?)';
+    $params[] = '%' . $org . '%';
+  }
+  if ($first) {
+    $conds[] = 'UPPER(COALESCE(first_name, "")) LIKE UPPER(?)';
+    $params[] = '%' . $first . '%';
+  }
+  if ($last) {
+    $conds[] = 'UPPER(COALESCE(last_name, "")) LIKE UPPER(?)';
+    $params[] = '%' . $last . '%';
+  }
+
+  $sql = 'SELECT id, first_name, last_name, org_name 
+          FROM donors';
+  if (!empty($conds)) {
+    $sql .= ' WHERE ' . implode(' AND ', $conds);
+  }
+  $sql .= ' ORDER BY 
+              CASE WHEN org_name IS NOT NULL AND org_name <> "" THEN 0 ELSE 1 END,
+              org_name, last_name, first_name
+            LIMIT 50';
+
+  $stmt = pdo()->prepare($sql);
+  $stmt->execute($params);
+  $rows = $stmt->fetchAll();
+  if (!$rows) json_response([]);
+  json_response($rows);
+}
+
 /** Dispatch */
 try {
   if ($METHOD === 'GET' && $ROUTE === '/') handle_health();
@@ -4674,6 +4717,7 @@ try {
   if ($METHOD === 'GET' && $ROUTE === '/ministerial_diaries/search-cand-filter') handle_ministerial_diaries_search();
   if ($METHOD === 'GET' && $ROUTE === '/donations/by-person') handle_donations_by_person();
   if ($METHOD === 'GET' && $ROUTE === '/donations/by-donor') handle_donations_by_donor();
+  if ($METHOD === 'GET' && $ROUTE === '/donors/search') handle_donors_search();
 
   // AI
   if ($METHOD === 'POST' && $ROUTE === '/ai/extract-names') handle_ai_extract_names();

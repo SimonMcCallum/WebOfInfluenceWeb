@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import * as d3 from 'd3';
 import './PersonProfile.css';
 import { API_BASE } from './apiConfig';
+import MeetingsTable from './MeetingsTable.jsx';
 
 /**
  * PersonProfile (Web of Influence)
@@ -28,7 +29,8 @@ const PersonProfile = () => {
 
   const [searchQuery, setSearchQuery] = useState({
     firstName: '',
-    lastName: ''
+    lastName: '',
+    orgName: ''
   });
   const [activeFirstName, setActiveFirstName] = useState('');
   const [activeLastName, setActiveLastName] = useState('');
@@ -42,6 +44,20 @@ const PersonProfile = () => {
   const [meetings, setMeetings] = useState([]);
   const [suggestions, setSuggestions] = useState([]); // suggested matches from historical overviews
   const [selectedPeopleId, setSelectedPeopleId] = useState(null); // explicit person id chosen from suggestions
+  const [peopleMatches, setPeopleMatches] = useState([]); // direct matches from /candidates/search
+  const [orgResults, setOrgResults] = useState([]); // donors/orgs results
+  const [isOrgLoading, setIsOrgLoading] = useState(false);
+  const [orgError, setOrgError] = useState(null);
+  const [activeOrgPeers, setActiveOrgPeers] = useState({}); // donor_id -> peers (from /donations/by-donor)
+
+  // Expandable sections
+  const [showDonations, setShowDonations] = useState(false);
+  const [showMeetings, setShowMeetings] = useState(false);
+  const [selectedConnection, setSelectedConnection] = useState(null);
+  const [connectionDetails, setConnectionDetails] = useState([]);
+  // Graph sliders: edge thickness and number of connections to show (0 = all)
+  const [edgeScale, setEdgeScale] = useState(1);
+  const [connectionCap, setConnectionCap] = useState(0);
 
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -58,7 +74,7 @@ const PersonProfile = () => {
   const handleBackToHome = () => navigate('/home');
 
   const handleReset = () => {
-    setSearchQuery({ firstName: '', lastName: '' });
+    setSearchQuery({ firstName: '', lastName: '', orgName: '' });
     setActiveFirstName('');
     setActiveLastName('');
     setProfileData(null);
@@ -71,6 +87,13 @@ const PersonProfile = () => {
     setPartyGuess(null);
     setPartyId(null);
     setHasSearched(false);
+    setPeopleMatches([]);
+    setOrgResults([]);
+    setOrgError(null);
+    setIsOrgLoading(false);
+    setActiveOrgPeers({});
+    setShowDonations(false);
+    setShowMeetings(false);
   };
 
   const handleSearchChange = (event) => {
@@ -79,12 +102,46 @@ const PersonProfile = () => {
   };
 
   const handleSearchSubmit = () => {
+    const fn = (searchQuery.firstName || '').trim();
+    const ln = (searchQuery.lastName || '').trim();
+    const org = (searchQuery.orgName || '').trim();
+
+    const hasPerson = !!fn && !!ln;
+    const hasOrg = !!org;
+
+    if (!hasPerson && !hasOrg) {
+      setError('Please enter both first and last name, or an organisation.');
+      setHasSearched(false);
+      return;
+    }
+
     setError(null);
     setSuggestions([]);
     setSelectedPeopleId(null);
     setHasSearched(true);
-    setActiveFirstName(searchQuery.firstName.trim());
-    setActiveLastName(searchQuery.lastName.trim());
+
+    if (hasPerson) {
+      setActiveFirstName(fn);
+      setActiveLastName(ln);
+    } else {
+      // Clear any previous person search state if only org search is requested
+      setActiveFirstName('');
+      setActiveLastName('');
+      setProfileData(null);
+      setDonations([]);
+      setDonorPeers({});
+      setMeetings([]);
+    }
+
+    if (hasOrg) {
+      // Fire organisation search in parallel
+      handleOrgSearchSubmit();
+    } else {
+      // Clear previous org results if not searching orgs
+      setOrgResults([]);
+      setActiveOrgPeers({});
+      setOrgError(null);
+    }
   };
 
   // Choose a suggestion and refetch with known people_id
@@ -93,9 +150,105 @@ const PersonProfile = () => {
     setSelectedPeopleId(s.people_id ?? null);
     setActiveFirstName((s.first_name || '').trim());
     setActiveLastName((s.last_name || '').trim());
-    setSearchQuery({ firstName: s.first_name || '', lastName: s.last_name || '' });
+    setSearchQuery({ firstName: s.first_name || '', lastName: s.last_name || '', orgName: '' });
     setError(null);
     setHasSearched(true);
+  };
+
+  // Click a direct person match from /candidates/search
+  const handleClickPersonMatch = (p) => {
+    if (!p) return;
+    setSelectedPeopleId(p.id ?? null);
+    const fn = (p.first_name || '').trim();
+    const ln = (p.last_name || '').trim();
+    setActiveFirstName(fn);
+    setActiveLastName(ln);
+    setSearchQuery({ firstName: fn, lastName: ln, orgName: '' });
+    setError(null);
+    setHasSearched(true);
+  };
+
+  // Search organisations (donors) by org name
+  const handleOrgSearchSubmit = async () => {
+    const org = (searchQuery.orgName || '').trim();
+    setOrgError(null);
+    setOrgResults([]);
+    setActiveOrgPeers({});
+    if (!org) {
+      setOrgError('Please enter an organisation name.');
+      return;
+    }
+    try {
+      setIsOrgLoading(true);
+      const resp = await fetch(`${API_BASE}/donors/search?org_name=${encodeURIComponent(org)}`);
+      if (!resp.ok) {
+        try {
+          const er = await resp.json();
+          setOrgError(er?.error || 'Organisation search failed.');
+        } catch {
+          setOrgError('Organisation search failed.');
+        }
+        setOrgResults([]);
+      } else {
+        const rows = await resp.json();
+        setOrgResults(Array.isArray(rows) ? rows : []);
+      }
+    } catch (e) {
+      setOrgError('Organisation search failed.');
+      setOrgResults([]);
+    } finally {
+      setIsOrgLoading(false);
+    }
+  };
+
+  // Expand a donor to view connected people; clicking a person opens the Person form
+  const loadOrgPeers = async (donorId) => {
+    if (!donorId) return;
+    try {
+      const resp = await fetch(`${API_BASE}/donations/by-donor?donor_id=${encodeURIComponent(donorId)}`);
+      if (!resp.ok) {
+        setActiveOrgPeers((prev) => ({ ...prev, [donorId]: [] }));
+        return;
+      }
+      const rows = await resp.json();
+      setActiveOrgPeers((prev) => ({ ...prev, [donorId]: Array.isArray(rows) ? rows : [] }));
+    } catch {
+      setActiveOrgPeers((prev) => ({ ...prev, [donorId]: [] }));
+    }
+  };
+
+  // Click a connection to show underlying entries (meetings/donations/affiliation)
+  const handleClickConnection = (conn) => {
+    try {
+      setSelectedConnection(conn || null);
+      let details = [];
+      if (!conn) {
+        setConnectionDetails([]);
+        return;
+      }
+      const nodeType = (conn.nodeType || '').toLowerCase();
+      if (nodeType === 'attendee') {
+        const label = String(conn.label || '').trim().toLowerCase();
+        const matched = (meetings || []).filter((m) => {
+          const raw = m.attendees_names || m.with_text || '';
+          const hay = String(Array.isArray(raw) ? raw.join('; ') : raw).toLowerCase();
+          return label && hay.includes(label);
+        });
+        details = matched.map((m) => ({ kind: 'meeting', data: m }));
+      } else if (nodeType === 'donor') {
+        const donorId = (String(conn.id || '').startsWith('donor:') ? String(conn.id).split(':')[1] : null);
+        const matched = (donations || []).filter((d) => donorId && String(d.donor_id) === String(donorId));
+        details = matched.map((d) => ({ kind: 'donation', data: d }));
+      } else if (nodeType === 'party') {
+        details = [{ kind: 'party', data: { party: partyGuess, party_id: partyId } }];
+      } else if (nodeType === 'person') {
+        // For peer persons, we can show donations shared via donorPeers edges indirectly if needed.
+        details = [];
+      }
+      setConnectionDetails(details);
+    } catch {
+      setConnectionDetails([]);
+    }
   };
 
   // Fetch data whenever active names or selected person id change
@@ -121,6 +274,7 @@ const PersonProfile = () => {
         const personRows = personResp.ok ? await personResp.json() : [];
         const person = Array.isArray(personRows) && personRows.length > 0 ? personRows[0] : null;
         setProfileData(person);
+        setPeopleMatches(Array.isArray(personRows) ? personRows : []);
 
         // 2) Try to infer party for 2023
         try {
@@ -447,7 +601,28 @@ const PersonProfile = () => {
     return { nodes, links };
   }, [donations, donorPeers, meetings, profileData, activeFirstName, activeLastName, partyGuess, partyId, selectedPeopleId]);
 
-  // Build a simple connections list summarizing direct links from the selected person node
+  // Count direct connections for the selected person (for slider max)
+  const personDegree = useMemo(() => {
+    try {
+      const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
+      const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
+      const personLabel = profileLabel || inputLabel || 'Selected Person';
+      const pid = (selectedPeopleId != null)
+        ? `person:${selectedPeopleId}`
+        : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${personLabel}`);
+
+      let deg = 0;
+      for (const l of (graphData.links || [])) {
+        const s = (typeof l.source === 'object') ? l.source?.id : l.source;
+        const t = (typeof l.target === 'object') ? l.target?.id : l.target;
+        if (s === pid || t === pid) deg++;
+      }
+      return deg;
+    } catch {
+      return 0;
+    }
+  }, [graphData, profileData, activeFirstName, activeLastName, selectedPeopleId]);
+
   const connections = useMemo(() => {
     // Reconstruct current personId to match the graph
     const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
@@ -564,12 +739,64 @@ const PersonProfile = () => {
     const linkDistance = (l) => (l.type === 'donation' ? 80 + (l.value || 1) * 20 : 120);
 
     // Clone data to avoid mutating memoized objects and seed initial positions
-    const nodesData = graphData.nodes.map((d) => ({ ...d }));
-    const linksData = graphData.links.map((l) => ({ ...l }));
+    // Determine the selected person id (local in effect)
+    const personIdLocal = (() => {
+      const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
+      const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
+      const lbl = profileLabel || inputLabel || 'Selected Person';
+      return (selectedPeopleId != null)
+        ? `person:${selectedPeopleId}`
+        : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${lbl}`);
+    })();
+
+    const idOf = (endp) => (typeof endp === 'object' ? endp?.id : endp);
+
+    // Build list of links directly connected to the selected person
+    const edgesToPerson = graphData.links
+      .filter((l) => {
+        const s = idOf(l.source);
+        const t = idOf(l.target);
+        return s === personIdLocal || t === personIdLocal;
+      })
+      .map((l) => ({ ...l }));
+
+    // Sort direct connections by weight and apply cap based on slider (0 => show all)
+    edgesToPerson.sort((a, b) => (b.value || 1) - (a.value || 1));
+    const capBase = edgesToPerson.length;
+    const cap = connectionCap > 0 ? Math.min(connectionCap, capBase) : capBase;
+
+    // Pick top-k direct connections, then include any secondary links among the selected nodes
+    const selectedDirect = edgesToPerson.slice(0, cap);
+    const usedIds = new Set();
+    for (const l of selectedDirect) {
+      usedIds.add(idOf(l.source));
+      usedIds.add(idOf(l.target));
+    }
+    const linksData = graphData.links.filter((l) => {
+      const s = idOf(l.source);
+      const t = idOf(l.target);
+      return usedIds.has(s) && usedIds.has(t);
+    });
+
+    // Only keep nodes participating in the kept links (+ always keep the selected person node)
+    const nodesData = graphData.nodes
+      .filter((n) => usedIds.has(n.id) || n.type === 'person')
+      .map((d) => ({ ...d }));
     nodesData.forEach((n) => {
       if (n.x == null || Number.isNaN(n.x)) n.x = width / 2;
       if (n.y == null || Number.isNaN(n.y)) n.y = height / 2;
     });
+
+    // Compute current person id for click source-detection
+    const personIdForEdges = (() => {
+      const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
+      const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
+      const lbl = profileLabel || inputLabel || 'Selected Person';
+      return (selectedPeopleId != null)
+        ? `person:${selectedPeopleId}`
+        : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${lbl}`);
+    })();
+
     // Debug: ensure we have at least the person node
     try {
       // eslint-disable-next-line no-console
@@ -590,7 +817,7 @@ const PersonProfile = () => {
       .selectAll('line')
       .data(linksData)
       .join('line')
-      .attr('stroke-width', (d) => 1 + (d.value || 1) * 0.5);
+      .attr('stroke-width', (d) => (1 + (d.value || 1) * 0.5) * edgeScale);
 
     const node = zoomLayer
       .append('g')
@@ -620,7 +847,33 @@ const PersonProfile = () => {
             d.fx = null;
             d.fy = null;
           })
-      );
+      )
+      .on('click', (event, d) => {
+        try {
+          const destId = typeof d?.id === 'string' ? d.id : null;
+          const label = (d?.label ?? destId ?? '').toString();
+          const nodeType = (d?.type ?? '').toString();
+          const sources = [];
+          if (destId && Array.isArray(linksData)) {
+            for (const l of linksData) {
+              const srcId = (typeof l.source === 'object') ? l.source?.id : l.source;
+              const tgtId = (typeof l.target === 'object') ? l.target?.id : l.target;
+              let isEdgeToPerson = false;
+              if (srcId === personIdForEdges && tgtId === destId) isEdgeToPerson = true;
+              if (tgtId === personIdForEdges && srcId === destId) isEdgeToPerson = true;
+              if (isEdgeToPerson) {
+                const s = l.type === 'donation'
+                  ? 'Donation'
+                  : (l.type === 'meeting' ? 'Meeting' : (l.type === 'affiliation' ? 'Affiliation' : (l.type || 'Link')));
+                if (!sources.includes(s)) sources.push(s);
+              }
+            }
+          }
+          handleClickConnection({ id: destId, label, nodeType, sources });
+        } catch {
+          // ignore
+        }
+      });
 
     const labels = zoomLayer
       .append('g')
@@ -694,7 +947,7 @@ const PersonProfile = () => {
     return () => {
       simulation.stop();
     };
-  }, [graphData]);
+  }, [graphData, edgeScale, connectionCap]);
 
   return (
     <div className="donations-page" ref={containerRef}>
@@ -755,11 +1008,23 @@ const PersonProfile = () => {
                   className="input"
                 />
               </div>
+
+              <div className="field">
+                <span className="icon" aria-hidden>🏢</span>
+                <input
+                  type="text"
+                  name="orgName"
+                  placeholder="Organisation (Donor)"
+                  value={searchQuery.orgName}
+                  onChange={handleSearchChange}
+                  className="input"
+                />
+              </div>
             </div>
 
             {/* Search Button */}
-            <button type="button" className="search-button" onClick={handleSearchSubmit} disabled={isLoading}>
-              {isLoading ? (
+            <button type="button" className="search-button" onClick={handleSearchSubmit} disabled={isLoading || isOrgLoading}>
+              {(isLoading || isOrgLoading) ? (
                 <>
                   <span className="loading-spinner">⏳</span>
                   Searching...
@@ -767,7 +1032,7 @@ const PersonProfile = () => {
               ) : (
                 <>
                   <span>🔍</span>
-                  Search Person
+                  Search
                 </>
               )}
             </button>
@@ -799,6 +1064,99 @@ const PersonProfile = () => {
 
           {!isLoading && hasSearched && !error && (
             <div className="results-content">
+              {/* People Matches (click to open Person form) */}
+              {Array.isArray(peopleMatches) && peopleMatches.length > 1 && (
+                <div className="table-container" style={{ marginBottom: '1rem' }}>
+                  <h3 style={{ marginTop: 0, color: '#1f2937' }}>
+                    Matching People ({peopleMatches.length})
+                  </h3>
+                  <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.5rem' }}>
+                    {peopleMatches.map((p) => (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          className="search-button"
+                          onClick={() => handleClickPersonMatch(p)}
+                          title="Open person profile"
+                        >
+                          {(p.first_name || '') + ' ' + (p.last_name || '')}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Organisation Results */}
+              {(searchQuery.orgName || orgResults.length > 0 || orgError) && (
+                <div className="table-container" style={{ marginBottom: '1rem' }}>
+                  <h3 style={{ marginTop: 0, color: '#1f2937' }}>
+                    Organisation Results {isOrgLoading ? ' (loading...)' : ''}
+                  </h3>
+                  {orgError && (
+                    <div className="error-message">
+                      <span className="error-icon">⚠️</span>
+                      {orgError}
+                    </div>
+                  )}
+                  {!orgError && Array.isArray(orgResults) && orgResults.length > 0 && (
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.5rem' }}>
+                      {orgResults.map((d) => {
+                        const label = (d.org_name && d.org_name.trim() !== '')
+                          ? d.org_name
+                          : [d.first_name || '', d.last_name || ''].filter(Boolean).join(' ').trim() || `Donor ${d.id}`;
+                        const peers = activeOrgPeers?.[String(d.id)] || null;
+                        return (
+                          <li key={d.id} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.5rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 600 }}>{label}</span>
+                              <button
+                                type="button"
+                                className="reset-button"
+                                onClick={() => loadOrgPeers(d.id)}
+                                title="Show linked people (recipients of this donor)"
+                              >
+                                View linked people
+                              </button>
+                            </div>
+                            {Array.isArray(peers) && peers.length > 0 && (
+                              <div style={{ marginTop: '0.5rem' }}>
+                                <div style={{ fontSize: '0.9rem', color: '#374151', marginBottom: '0.25rem' }}>
+                                  Linked People ({peers.length})
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                  {peers.map((pr) => (
+                                    <button
+                                      key={pr.people_id}
+                                      type="button"
+                                      className="search-button"
+                                      onClick={() => handleClickPersonMatch({ id: pr.people_id, first_name: pr.first_name, last_name: pr.last_name })}
+                                      title="Open person profile"
+                                    >
+                                      {(pr.first_name || '') + ' ' + (pr.last_name || '')}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            {Array.isArray(peers) && peers.length === 0 && (
+                              <div style={{ marginTop: '0.25rem', fontSize: '0.9rem', color: '#6b7280' }}>
+                                No linked people found.
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  {!orgError && !isOrgLoading && Array.isArray(orgResults) && orgResults.length === 0 && searchQuery.orgName && (
+                    <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>
+                      No organisations found for "{searchQuery.orgName}".
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Graph */}
               <div style={{ marginBottom: '1rem' }}>
                 {(profileData?.first_name || activeFirstName || activeLastName) && (
@@ -829,11 +1187,68 @@ const PersonProfile = () => {
                     </button>
                   </div>
                 </div>
+
+                {/* Graph controls */}
+                <div className="graph-controls" style={{ display: 'grid', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <label style={{ minWidth: 160 }}>Edge thickness</label>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="3"
+                      step="0.1"
+                      value={edgeScale}
+                      onChange={(e) => setEdgeScale(parseFloat(e.target.value))}
+                    />
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{edgeScale.toFixed(1)}x</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <label style={{ minWidth: 160 }}>Connections shown</label>
+                    <input
+                      type="range"
+                      min="1"
+                      max={Math.max(1, personDegree || graphData.links.length)}
+                      step="1"
+                      value={Math.min(connectionCap > 0 ? connectionCap : (personDegree || graphData.links.length), (personDegree || graphData.links.length))}
+                      onChange={(e) => setConnectionCap(parseInt(e.target.value, 10) || 0)}
+                    />
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {Math.min(connectionCap > 0 ? connectionCap : (personDegree || graphData.links.length), (personDegree || graphData.links.length))}/{personDegree || graphData.links.length}
+                    </span>
+                  </div>
+                </div>
+
                 <p className="results-note">Colors: Person (blue), Party (purple), Donor (green), Attendee (teal). Drag nodes to explore. Zoom/pan with mouse.</p>
               </div>
 
+              {(Array.isArray(sortedDonations) && sortedDonations.length > 0) ||
+              (Array.isArray(sortedMeetings) && sortedMeetings.length > 0) ? (
+                <div className="section-toggles" style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                  {Array.isArray(sortedDonations) && sortedDonations.length > 0 && (
+                    <button
+                      type="button"
+                      className="search-button"
+                      onClick={() => setShowDonations((v) => !v)}
+                      title={showDonations ? 'Hide Donations' : 'Show Donations'}
+                    >
+                      {showDonations ? '▼ Hide Donations' : '▶ Show Donations'}
+                    </button>
+                  )}
+                  {Array.isArray(sortedMeetings) && sortedMeetings.length > 0 && (
+                    <button
+                      type="button"
+                      className="search-button"
+                      onClick={() => setShowMeetings((v) => !v)}
+                      title={showMeetings ? 'Hide Meetings' : 'Show Meetings'}
+                    >
+                      {showMeetings ? '▼ Hide Meetings' : '▶ Show Meetings'}
+                    </button>
+                  )}
+                </div>
+              ) : null}
+
               {/* Donations Table */}
-              {Array.isArray(sortedDonations) && sortedDonations.length > 0 && (
+              {showDonations && Array.isArray(sortedDonations) && sortedDonations.length > 0 && (
                 <>
                   <h3 style={{ marginTop: '1rem', color: '#1f2937' }}>Donation History (All Years)</h3>
                   <div className="table-container">
@@ -863,12 +1278,23 @@ const PersonProfile = () => {
                 </>
               )}
 
+              {/* Meetings Table */}
+              {showMeetings && Array.isArray(sortedMeetings) && sortedMeetings.length > 0 && (
+                <>
+                  <h3 style={{ marginTop: '1rem', color: '#1f2937' }}>Meetings</h3>
+                  <div className="table-container">
+                    <MeetingsTable meetings={sortedMeetings} />
+                  </div>
+                </>
+              )}
+
               {/* Connections (summary of direct links from the selected person) */}
               <div>
                 <h3 style={{ marginTop: '1rem', color: '#1f2937' }}>
                   Connections {Array.isArray(connections) ? `(${connections.length})` : ''}
                 </h3>
                 {Array.isArray(connections) && connections.length > 0 ? (
+                  <>
                   <div className="table-container">
                     <table className="min-w-full border">
                       <thead>
@@ -880,7 +1306,7 @@ const PersonProfile = () => {
                       </thead>
                       <tbody>
                         {connections.map((c) => (
-                          <tr key={c.id}>
+                          <tr key={c.id} onClick={() => handleClickConnection(c)} style={{ cursor: 'pointer' }} title="Click to view details">
                             <td>{c.label}</td>
                             <td style={{ textTransform: 'capitalize' }}>{c.nodeType || 'unknown'}</td>
                             <td>
@@ -898,6 +1324,43 @@ const PersonProfile = () => {
                       </tbody>
                     </table>
                   </div>
+                  {selectedConnection && Array.isArray(connectionDetails) && connectionDetails.length > 0 && (
+                    <div className="table-container" style={{ marginTop: '0.75rem' }}>
+                      <h4 style={{ margin: 0, color: '#111827' }}>
+                        Details for: {selectedConnection.label} — {selectedConnection.sources && selectedConnection.sources.join(', ')}
+                      </h4>
+                      <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.5rem', display: 'grid', gap: '0.5rem' }}>
+                        {connectionDetails.map((item, idx) => (
+                          <li key={idx} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.5rem' }}>
+                            {item.kind === 'meeting' ? (
+                              <div>
+                                <div><b>Date:</b> {item.data.date ? new Date(item.data.date).toLocaleDateString() : 'N/A'}</div>
+                                <div><b>Title:</b> {item.data.title || 'N/A'}</div>
+                                <div><b>Type:</b> {item.data.type || 'N/A'}</div>
+                                <div><b>Portfolio:</b> {item.data.portfolio || 'N/A'}</div>
+                                <div><b>Location:</b> {item.data.location || 'N/A'}</div>
+                                <div><b>Attendees:</b> {item.data.with_text ? String(item.data.with_text) : 'N/A'}</div>
+                                <div><b>Notes:</b> {item.data.notes || 'N/A'}</div>
+                              </div>
+                            ) : item.kind === 'donation' ? (
+                              <div>
+                                <div><b>Date:</b> {item.data.date ? new Date(item.data.date).toLocaleDateString() : (item.data.year || 'N/A')}</div>
+                                <div><b>Amount:</b> {typeof item.data.amount === 'number' ? `$${item.data.amount.toLocaleString()}` : `$${item.data.amount}`}</div>
+                                <div><b>Donor:</b> {[item.data.donor_first_name || '', item.data.donor_last_name || ''].filter(Boolean).join(' ') || (item.data.donor_org_name || 'N/A')}</div>
+                                <div><b>Location:</b> {item.data.location || 'N/A'}</div>
+                                <div><b>Notes:</b> {item.data.notes || 'N/A'}</div>
+                              </div>
+                            ) : (
+                              <div>
+                                <div><b>Party:</b> {partyGuess || 'N/A'}</div>
+                              </div>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  </>
                 ) : (
                   <p className="results-note">No direct connections were found for this person.</p>
                 )}
