@@ -228,11 +228,32 @@ const PersonProfile = () => {
       }
       const nodeType = (conn.nodeType || '').toLowerCase();
       if (nodeType === 'attendee') {
-        const label = String(conn.label || '').trim().toLowerCase();
+        // Robust text matching for attendee names across diaries data
+        const normalize = (s) =>
+          String(s || '')
+            .toLowerCase()
+            .replace(/&|&/g, ' and ')
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        // Prefer the canonical name embedded in the node id (attendee:NAME)
+        const rawFromId =
+          typeof conn.id === 'string' && conn.id.startsWith('attendee:')
+            ? conn.id.slice('attendee:'.length)
+            : conn.label;
+
+        const target = normalize(rawFromId);
         const matched = (meetings || []).filter((m) => {
           const raw = m.attendees_names || m.with_text || '';
-          const hay = String(Array.isArray(raw) ? raw.join('; ') : raw).toLowerCase();
-          return label && hay.includes(label);
+          const hay = Array.isArray(raw) ? raw.join('; ') : String(raw);
+          const nHay = normalize(hay);
+
+          if (target && nHay.includes(target)) return true;
+
+          // Also try tokenized compare against attendees list
+          const tokens = String(hay).split(/;|,|&| and |\/|\+/gi).map((t) => normalize(t));
+          return target && tokens.some((t) => t && (t === target || nHay.includes(t)));
         });
         details = matched.map((m) => ({ kind: 'meeting', data: m }));
       } else if (nodeType === 'donor') {
@@ -772,10 +793,18 @@ const PersonProfile = () => {
       usedIds.add(idOf(l.source));
       usedIds.add(idOf(l.target));
     }
-    const linksData = (graphData.links || []).map((l) => ({ ...l }));
+    const linksData = (graphData.links || [])
+      .filter((l) => {
+        const s = idOf(l.source);
+        const t = idOf(l.target);
+        return usedIds.has(s) && usedIds.has(t);
+      })
+      .map((l) => ({ ...l }));
 
     // Only keep nodes participating in the kept links (+ always keep the selected person node)
-    const nodesData = (graphData.nodes || []).map((d) => ({ ...d }));
+    const nodesData = (graphData.nodes || [])
+      .filter((n) => usedIds.has(n.id) || n.type === 'person')
+      .map((d) => ({ ...d }));
     nodesData.forEach((n) => {
       if (n.x == null || Number.isNaN(n.x)) n.x = width / 2;
       if (n.y == null || Number.isNaN(n.y)) n.y = height / 2;
@@ -944,7 +973,7 @@ const PersonProfile = () => {
     return () => {
       simulation.stop();
     };
-  }, [graphData]);
+  }, [graphData, connectionCap]);
 
   // Update only the link stroke widths when the thickness slider changes
   // to avoid tearing down and rebuilding the whole graph (which could
@@ -1074,7 +1103,7 @@ const PersonProfile = () => {
                 <input
                   type="text"
                   name="orgName"
-                  placeholder="Organisation (Donor)"
+                  placeholder="Organisation"
                   value={searchQuery.orgName}
                   onChange={handleSearchChange}
                   className="input"
@@ -1277,6 +1306,43 @@ const PersonProfile = () => {
                     </span>
                   </div>
                 </div>
+
+                {selectedConnection && Array.isArray(connectionDetails) && connectionDetails.length > 0 && (
+                  <div className="table-container" style={{ marginTop: '0.75rem' }}>
+                    <h4 style={{ margin: 0, color: '#111827' }}>
+                      Details for: {selectedConnection.label} — {selectedConnection.sources && selectedConnection.sources.join(', ')}
+                    </h4>
+                    <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.5rem', display: 'grid', gap: '0.5rem' }}>
+                      {connectionDetails.map((item, idx) => (
+                        <li key={idx} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.5rem' }}>
+                          {item.kind === 'meeting' ? (
+                            <div>
+                              <div><b>Date:</b> {item.data.date ? new Date(item.data.date).toLocaleDateString() : 'N/A'}</div>
+                              <div><b>Title:</b> {item.data.title || 'N/A'}</div>
+                              <div><b>Type:</b> {item.data.type || 'N/A'}</div>
+                              <div><b>Portfolio:</b> {item.data.portfolio || 'N/A'}</div>
+                              <div><b>Location:</b> {item.data.location || 'N/A'}</div>
+                              <div><b>Attendees:</b> {item.data.with_text ? String(item.data.with_text) : 'N/A'}</div>
+                              <div><b>Notes:</b> {item.data.notes || 'N/A'}</div>
+                            </div>
+                          ) : item.kind === 'donation' ? (
+                            <div>
+                              <div><b>Date:</b> {item.data.date ? new Date(item.data.date).toLocaleDateString() : (item.data.year || 'N/A')}</div>
+                              <div><b>Amount:</b> {typeof item.data.amount === 'number' ? `$${item.data.amount.toLocaleString()}` : `$${item.data.amount}`}</div>
+                              <div><b>Donor:</b> {[item.data.donor_first_name || '', item.data.donor_last_name || ''].filter(Boolean).join(' ') || (item.data.donor_org_name || 'N/A')}</div>
+                              <div><b>Location:</b> {item.data.location || 'N/A'}</div>
+                              <div><b>Notes:</b> {item.data.notes || 'N/A'}</div>
+                            </div>
+                          ) : (
+                            <div>
+                              <div><b>Party:</b> {partyGuess || 'N/A'}</div>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 <p className="results-note">Colors: Person (blue), Party (purple), Donor (green), Attendee (teal). Drag nodes to explore. Zoom/pan with mouse.</p>
               </div>
