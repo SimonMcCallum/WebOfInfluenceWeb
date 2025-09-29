@@ -236,10 +236,16 @@ const PersonProfile = () => {
         const normalize = (s) =>
           String(s || '')
             .toLowerCase()
-            .replace(/&|&/g, ' and ')
+            .replace(/&/g, ' and ')
             .replace(/[^a-z0-9\s]/g, ' ')
             .replace(/\s+/g, ' ')
             .trim();
+
+        // naive singularize to help "representatives" ~ "representative"
+        const singularize = (s) =>
+          s.replace(/\b(\w{4,})s\b/g, '$1');
+
+        const normSing = (s) => singularize(normalize(s));
 
         // Prefer the canonical name embedded in the node id (attendee:NAME)
         const rawFromId =
@@ -247,17 +253,22 @@ const PersonProfile = () => {
             ? conn.id.slice('attendee:'.length)
             : conn.label;
 
-        const target = normalize(rawFromId);
+        const target = normSing(rawFromId);
         const matched = (meetings || []).filter((m) => {
           const raw = m.attendees_names || m.with_text || '';
+          // try structured attendees list if available
+          if (Array.isArray(m.attendees_names) && m.attendees_names.length > 0) {
+            const names = m.attendees_names.map((x) => normSing(x));
+            if (names.some((n) => n === target || n.includes(target) || target.includes(n))) return true;
+          }
+          // fallback to free-text match
           const hay = Array.isArray(raw) ? raw.join('; ') : String(raw);
-          const nHay = normalize(hay);
-
+          const nHay = normSing(hay);
           if (target && nHay.includes(target)) return true;
 
-          // Also try tokenized compare against attendees list
-          const tokens = String(hay).split(/;|,|&| and |\/|\+/gi).map((t) => normalize(t));
-          return target && tokens.some((t) => t && (t === target || nHay.includes(t)));
+          // Also try tokenized compare against attendees list text - compare tokens to target (not hay)
+          const tokens = String(hay).split(/;|,|&| and |\/|\+/gi).map((t) => normSing(t));
+          return target && tokens.some((t) => t && (t === target || t.includes(target) || target.includes(t)));
         });
         details = matched.map((m) => ({ kind: 'meeting', data: m }));
       } else if (nodeType === 'donor') {
@@ -1042,6 +1053,36 @@ const PersonProfile = () => {
     }
   }, [connectionCap, graphData, activeFirstName, activeLastName, profileData, selectedPeopleId]);
 
+  // Highlight selected connection in graph (node + edge to person)
+  useEffect(() => {
+    try {
+      const svg = d3.select(svgRef.current);
+      const selId = selectedConnection?.id || null;
+
+      // Recompute current person id for matching
+      const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
+      const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
+      const personIdLocal = (selectedPeopleId != null)
+        ? `person:${selectedPeopleId}`
+        : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${(profileLabel || inputLabel || 'Selected Person')}`);
+
+      const idOf = (endp) => (typeof endp === 'object' ? endp?.id : endp);
+
+      svg.selectAll('circle.graph-node')
+        .classed('graph-node--selected', (d) => !!selId && d && d.id === selId);
+
+      svg.selectAll('line.graph-link')
+        .classed('graph-link--selected', (d) => {
+          if (!selId || !d) return false;
+          const s = idOf(d.source);
+          const t = idOf(d.target);
+          return (s === personIdLocal && t === selId) || (t === personIdLocal && s === selId);
+        });
+    } catch {
+      // ignore if svg not ready
+    }
+  }, [selectedConnection, graphData, activeFirstName, activeLastName, profileData, selectedPeopleId]);
+
   return (
     <div className="donations-page" ref={containerRef}>
       {/* Header Section */}
@@ -1452,7 +1493,13 @@ const PersonProfile = () => {
                       </thead>
                       <tbody>
                         {connections.map((c) => (
-                          <tr key={c.id} onClick={() => handleClickConnection(c)} style={{ cursor: 'pointer' }} title="Click to view details">
+                          <tr
+                            key={c.id}
+                            className={selectedConnection?.id === c.id ? 'conn-row conn-row--selected' : 'conn-row'}
+                            onClick={() => handleClickConnection(c)}
+                            style={{ cursor: 'pointer' }}
+                            title="Click to view details"
+                          >
                             <td>{c.label}</td>
                             <td style={{ textTransform: 'capitalize' }}>{c.nodeType || 'unknown'}</td>
                             <td>
