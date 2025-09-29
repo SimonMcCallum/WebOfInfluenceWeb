@@ -993,17 +993,17 @@ const PersonProfile = () => {
 
       const svg = d3.select(svgRef.current);
       svg.selectAll('line.graph-link')
-        .style('display', function(d) {
+        .classed('graph-link--hidden', function(d) {
           const s = idOf(d.source);
           const t = idOf(d.target);
-          return (usedIds.has(s) && usedIds.has(t)) ? null : 'none';
+          return !(usedIds.has(s) && usedIds.has(t));
         });
 
       svg.selectAll('circle.graph-node')
-        .style('display', (d) => (usedIds.has(d.id) || d.type === 'person') ? null : 'none');
+        .classed('graph-node--hidden', (d) => !(usedIds.has(d.id) || d.type === 'person'));
 
       svg.selectAll('text.graph-label')
-        .style('display', (d) => (usedIds.has(d.id) || d.type === 'person') ? null : 'none');
+        .classed('graph-label--hidden', (d) => !(usedIds.has(d.id) || d.type === 'person'));
     } catch {
       // ignore if not ready
     }

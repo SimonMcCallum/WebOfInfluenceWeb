@@ -481,6 +481,11 @@
   pointer-events: none;
 }
 
+/* Hide/show via JS-applied classes (overrides earlier visibility rules) */
+.person-graph line.graph-link--hidden { display: none; }
+.person-graph circle.graph-node--hidden { display: none !important; }
+.person-graph text.graph-label--hidden { display: none; }
+
 /* Graph zoom controls */
 .graph-wrap {
   position: relative;
