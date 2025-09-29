@@ -221,6 +221,8 @@ const PersonProfile = () => {
   const handleClickConnection = (conn) => {
     try {
       setSelectedConnection(conn || null);
+      // Clear previous details to ensure immediate UI refresh on new selection
+      setConnectionDetails([]);
       let details = [];
       if (!conn) {
         setConnectionDetails([]);
@@ -1307,40 +1309,44 @@ const PersonProfile = () => {
                   </div>
                 </div>
 
-                {selectedConnection && Array.isArray(connectionDetails) && connectionDetails.length > 0 && (
-                  <div className="table-container" style={{ marginTop: '0.75rem' }}>
+                {selectedConnection && (
+                  <div key={(selectedConnection.id || selectedConnection.label || 'sel')} className="table-container" style={{ marginTop: '0.75rem' }}>
                     <h4 style={{ margin: 0, color: '#111827' }}>
                       Details for: {selectedConnection.label} — {selectedConnection.sources && selectedConnection.sources.join(', ')}
                     </h4>
-                    <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.5rem', display: 'grid', gap: '0.5rem' }}>
-                      {connectionDetails.map((item, idx) => (
-                        <li key={idx} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.5rem' }}>
-                          {item.kind === 'meeting' ? (
-                            <div>
-                              <div><b>Date:</b> {item.data.date ? new Date(item.data.date).toLocaleDateString() : 'N/A'}</div>
-                              <div><b>Title:</b> {item.data.title || 'N/A'}</div>
-                              <div><b>Type:</b> {item.data.type || 'N/A'}</div>
-                              <div><b>Portfolio:</b> {item.data.portfolio || 'N/A'}</div>
-                              <div><b>Location:</b> {item.data.location || 'N/A'}</div>
-                              <div><b>Attendees:</b> {item.data.with_text ? String(item.data.with_text) : 'N/A'}</div>
-                              <div><b>Notes:</b> {item.data.notes || 'N/A'}</div>
-                            </div>
-                          ) : item.kind === 'donation' ? (
-                            <div>
-                              <div><b>Date:</b> {item.data.date ? new Date(item.data.date).toLocaleDateString() : (item.data.year || 'N/A')}</div>
-                              <div><b>Amount:</b> {typeof item.data.amount === 'number' ? `$${item.data.amount.toLocaleString()}` : `$${item.data.amount}`}</div>
-                              <div><b>Donor:</b> {[item.data.donor_first_name || '', item.data.donor_last_name || ''].filter(Boolean).join(' ') || (item.data.donor_org_name || 'N/A')}</div>
-                              <div><b>Location:</b> {item.data.location || 'N/A'}</div>
-                              <div><b>Notes:</b> {item.data.notes || 'N/A'}</div>
-                            </div>
-                          ) : (
-                            <div>
-                              <div><b>Party:</b> {partyGuess || 'N/A'}</div>
-                            </div>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
+                    {Array.isArray(connectionDetails) && connectionDetails.length > 0 ? (
+                      <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.5rem', display: 'grid', gap: '0.5rem' }}>
+                        {connectionDetails.map((item, idx) => (
+                          <li key={idx} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.5rem' }}>
+                            {item.kind === 'meeting' ? (
+                              <div>
+                                <div><b>Date:</b> {item.data.date ? new Date(item.data.date).toLocaleDateString() : 'N/A'}</div>
+                                <div><b>Title:</b> {item.data.title || 'N/A'}</div>
+                                <div><b>Type:</b> {item.data.type || 'N/A'}</div>
+                                <div><b>Portfolio:</b> {item.data.portfolio || 'N/A'}</div>
+                                <div><b>Location:</b> {item.data.location || 'N/A'}</div>
+                                <div><b>Attendees:</b> {item.data.with_text ? String(item.data.with_text) : 'N/A'}</div>
+                                <div><b>Notes:</b> {item.data.notes || 'N/A'}</div>
+                              </div>
+                            ) : item.kind === 'donation' ? (
+                              <div>
+                                <div><b>Date:</b> {item.data.date ? new Date(item.data.date).toLocaleDateString() : (item.data.year || 'N/A')}</div>
+                                <div><b>Amount:</b> {typeof item.data.amount === 'number' ? `$${item.data.amount.toLocaleString()}` : `$${item.data.amount}`}</div>
+                                <div><b>Donor:</b> {[item.data.donor_first_name || '', item.data.donor_last_name || ''].filter(Boolean).join(' ') || (item.data.donor_org_name || 'N/A')}</div>
+                                <div><b>Location:</b> {item.data.location || 'N/A'}</div>
+                                <div><b>Notes:</b> {item.data.notes || 'N/A'}</div>
+                              </div>
+                            ) : (
+                              <div>
+                                <div><b>Party:</b> {partyGuess || 'N/A'}</div>
+                              </div>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div style={{ padding: '0.5rem', color: '#6b7280' }}>No entries found for this selection.</div>
+                    )}
                   </div>
                 )}
 
