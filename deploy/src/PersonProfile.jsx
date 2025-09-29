@@ -772,16 +772,10 @@ const PersonProfile = () => {
       usedIds.add(idOf(l.source));
       usedIds.add(idOf(l.target));
     }
-    const linksData = graphData.links.filter((l) => {
-      const s = idOf(l.source);
-      const t = idOf(l.target);
-      return usedIds.has(s) && usedIds.has(t);
-    });
+    const linksData = (graphData.links || []).map((l) => ({ ...l }));
 
     // Only keep nodes participating in the kept links (+ always keep the selected person node)
-    const nodesData = graphData.nodes
-      .filter((n) => usedIds.has(n.id) || n.type === 'person')
-      .map((d) => ({ ...d }));
+    const nodesData = (graphData.nodes || []).map((d) => ({ ...d }));
     nodesData.forEach((n) => {
       if (n.x == null || Number.isNaN(n.x)) n.x = width / 2;
       if (n.y == null || Number.isNaN(n.y)) n.y = height / 2;
@@ -827,7 +821,8 @@ const PersonProfile = () => {
       .selectAll('circle')
       .data(nodesData)
       .join('circle')
-      .attr('r', (d) => (d.type === 'person' ? 10 : 6))
+      .attr('class', 'graph-node')
+      .attr('r', (d) => (d.type === 'person' ? 15 : 9))
       .attr('fill', (d) => color(d.type))   // attribute fill for maximum compatibility
       .style('fill', (d) => color(d.type))  // inline style fill to override any CSS
       .style('opacity', 1)
@@ -881,6 +876,7 @@ const PersonProfile = () => {
       .selectAll('text')
       .data(nodesData)
       .join('text')
+      .attr('class', 'graph-label')
       .text((d) => d.label)
       .attr('font-size', 10)
       .attr('dx', 10)
@@ -948,7 +944,7 @@ const PersonProfile = () => {
     return () => {
       simulation.stop();
     };
-  }, [graphData, connectionCap]);
+  }, [graphData]);
 
   // Update only the link stroke widths when the thickness slider changes
   // to avoid tearing down and rebuilding the whole graph (which could
@@ -963,6 +959,55 @@ const PersonProfile = () => {
       // ignore if svg not ready yet
     }
   }, [edgeScale]);
+
+  // Show/hide edges and nodes based on "Connections shown" without re-initializing the graph
+  useEffect(() => {
+    try {
+      const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
+      const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
+      const personIdLocal = (selectedPeopleId != null)
+        ? `person:${selectedPeopleId}`
+        : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${(profileLabel || inputLabel || 'Selected Person')}`);
+
+      const idOf = (endp) => (typeof endp === 'object' ? endp?.id : endp);
+
+      const allLinks = graphData?.links || [];
+      const edgesToPerson = allLinks
+        .filter((l) => {
+          const s = idOf(l.source);
+          const t = idOf(l.target);
+          return s === personIdLocal || t === personIdLocal;
+        })
+        .map((l) => ({ ...l }));
+
+      edgesToPerson.sort((a, b) => (b.value || 1) - (a.value || 1));
+      const capBase = edgesToPerson.length;
+      const cap = connectionCap > 0 ? Math.min(connectionCap, capBase) : capBase;
+
+      const selectedDirect = edgesToPerson.slice(0, cap);
+      const usedIds = new Set([personIdLocal]);
+      for (const l of selectedDirect) {
+        usedIds.add(idOf(l.source));
+        usedIds.add(idOf(l.target));
+      }
+
+      const svg = d3.select(svgRef.current);
+      svg.selectAll('line.graph-link')
+        .style('display', function(d) {
+          const s = idOf(d.source);
+          const t = idOf(d.target);
+          return (usedIds.has(s) && usedIds.has(t)) ? null : 'none';
+        });
+
+      svg.selectAll('circle.graph-node')
+        .style('display', (d) => (usedIds.has(d.id) || d.type === 'person') ? null : 'none');
+
+      svg.selectAll('text.graph-label')
+        .style('display', (d) => (usedIds.has(d.id) || d.type === 'person') ? null : 'none');
+    } catch {
+      // ignore if not ready
+    }
+  }, [connectionCap, graphData, activeFirstName, activeLastName, profileData, selectedPeopleId]);
 
   return (
     <div className="donations-page" ref={containerRef}>
