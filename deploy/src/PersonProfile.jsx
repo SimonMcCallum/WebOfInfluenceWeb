@@ -80,7 +80,6 @@ const PersonProfile = () => {
   const [showDonorIndividuals, setShowDonorIndividuals] = useState(true);
   const [showDonorOrganisations, setShowDonorOrganisations] = useState(true);
   const [showPartiesLayer, setShowPartiesLayer] = useState(true);
-  const [proximityByAmount, setProximityByAmount] = useState(true);
 
   // D3 refs
   const svgRef = useRef(null);
@@ -123,7 +122,6 @@ const PersonProfile = () => {
     setShowDonorIndividuals(true);
     setShowDonorOrganisations(true);
     setShowPartiesLayer(true);
-    setProximityByAmount(true);
   };
 
   const handleSearchChange = (event) => {
@@ -745,26 +743,31 @@ const PersonProfile = () => {
       }
     };
 
-    const addAttendeeLink = (label) => {
-      const name = (label || '').trim();
-      if (!name) return;
-      // skip generic placeholders
-      if (/^(attendees|officials|multiple ministers|ministers|delegation|representatives|committee|board|council|group|members|staff)$/i.test(name)) {
-        return;
-      }
-      const id = `attendee:${name}`;
-      ensureNode(id, name, 'attendee');
-      if (personId) {
-        links.push({ source: personId, target: id, type: 'meeting', value: 1 });
-      }
-    };
+    // Aggregate meeting frequencies per attendee and weight edges by frequency (log-scale)
+    const meetCountById = new Map();
 
     for (const m of meetings || []) {
       const raw = m.attendees_names || m.with_text || '';
       if (!raw) continue;
       const parts = String(raw).split(/;|,|&| and |\/|\+/gi);
       for (let p of parts) {
-        addAttendeeLink(p);
+        const name = (p || '').trim();
+        if (!name) continue;
+        // skip generic placeholders
+        if (/^(attendees|officials|multiple ministers|ministers|delegation|representatives|committee|board|council|group|members|staff)$/i.test(name)) {
+          continue;
+        }
+        const id = `attendee:${name}`;
+        meetCountById.set(id, (meetCountById.get(id) || 0) + 1);
+      }
+    }
+    // Emit attendee nodes and links to center, weighted by meeting frequency (log-scale)
+    for (const [id, count] of meetCountById.entries()) {
+      const label = id.slice('attendee:'.length);
+      ensureNode(id, label, 'attendee');
+      if (personId) {
+        const value = Math.max(1, Math.log10(count + 1));
+        links.push({ source: personId, target: id, type: 'meeting', value });
       }
     }
 
@@ -905,23 +908,34 @@ const PersonProfile = () => {
       .domain(['person', 'party', 'donor', 'attendee', 'org', 'region'])
       .range(['#1f77b4', '#9467bd', '#2ca02c', '#17becf', '#ff7f0e', '#8c564b']);
 
-    // Edge weighting: proximity by amount pulls stronger connections closer when enabled
+    // Edge weighting (always on):
+    // - Donations: weighted by total amount (log-scaled). Higher amount => closer/stronger link.
+    // - Meetings: weighted by meeting frequency (log-scaled). More meetings => closer/stronger link.
     const linkStrength = (l) => {
-      if (l.type !== 'donation') return 0.1;
-      if (!proximityByAmount) return 0.2;
-      const v = Math.max(0, l.value || 0);          // l.value is already log-scale
-      const w = Math.min(1, v / 3);                 // normalize roughly over [0..3]
-      return 0.2 + 0.3 * w;
+      if (l.type === 'donation') {
+        const v = Math.max(0, l.value || 0); // l.value is log scale of total amount
+        const w = Math.min(1, v / 3);
+        return 0.2 + 0.3 * w;
+      }
+      if (l.type === 'meeting') {
+        const v = Math.max(0, l.value || 0); // l.value is log scale of meeting count
+        const w = Math.min(1, v / 2);
+        return 0.1 + 0.25 * w;
+      }
+      return 0.1; // affiliation/others
     };
     const linkDistance = (l) => {
-      if (l.type !== 'donation') return 140;
-      if (!proximityByAmount) return 80 + (l.value || 1) * 20;
-      const v = Math.max(0, l.value || 0);
-      const w = Math.min(1, v / 3);
-      const base = 140;
-      const gain = 90;
-      const min = 30;
-      return Math.max(min, base - gain * w);
+      if (l.type === 'donation') {
+        const v = Math.max(0, l.value || 0);
+        const w = Math.min(1, v / 3);
+        return Math.max(30, 140 - 90 * w);
+      }
+      if (l.type === 'meeting') {
+        const v = Math.max(0, l.value || 0);
+        const w = Math.min(1, v / 2);
+        return Math.max(30, 160 - 100 * w);
+      }
+      return 140;
     };
 
     // Clone data to avoid mutating memoized objects and seed initial positions
@@ -1728,22 +1742,9 @@ const PersonProfile = () => {
                     )}
                   </div>
 
-                  {/* Weighting toggle */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                    <label
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, cursor: 'pointer' }}
-                      title="When on, donation edges are weighted by amount. Larger totals shorten and strengthen donation links so connected nodes sit closer. Meeting/party links are unaffected."
-                    >
-                      <input
-                        type="checkbox"
-                        checked={proximityByAmount}
-                        onChange={(e) => setProximityByAmount(e.target.checked)}
-                      />
-                      Proximity by amount
-                    </label>
-                    <span style={{ color: '#6b7280' }}>
-                      When on, donation amounts weight edges: larger totals pull connected nodes closer. Meeting/party links are unaffected.
-                    </span>
+                  {/* Edge weighting note (always on) */}
+                  <div style={{ color: '#6b7280', fontSize: '0.9rem' }}>
+                    Edge weighting is always on: Donations by total amount; Meetings by frequency. Higher values pull nodes closer.
                   </div>
                 </div>
 
