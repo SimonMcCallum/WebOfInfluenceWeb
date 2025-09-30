@@ -1729,14 +1729,21 @@ const PersonProfile = () => {
                   </div>
 
                   {/* Weighting toggle */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <label style={{ minWidth: 160 }}>Proximity by amount</label>
-                    <input
-                      type="checkbox"
-                      checked={proximityByAmount}
-                      onChange={(e) => setProximityByAmount(e.target.checked)}
-                    />
-                    <span style={{ color: '#6b7280' }}>(Stronger links pull nodes closer)</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <label
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, cursor: 'pointer' }}
+                      title="When on, donation edges are weighted by amount. Larger totals shorten and strengthen donation links so connected nodes sit closer. Meeting/party links are unaffected."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={proximityByAmount}
+                        onChange={(e) => setProximityByAmount(e.target.checked)}
+                      />
+                      Proximity by amount
+                    </label>
+                    <span style={{ color: '#6b7280' }}>
+                      When on, donation amounts weight edges: larger totals pull connected nodes closer. Meeting/party links are unaffected.
+                    </span>
                   </div>
                 </div>
 
