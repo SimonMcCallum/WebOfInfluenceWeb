@@ -68,6 +68,20 @@ const PersonProfile = () => {
   // Sorting config for tables
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'asc' });
 
+  // View modes and org-centric state
+  const [viewMode, setViewMode] = useState('person'); // 'person' | 'org'
+  const [activeDonor, setActiveDonor] = useState(null); // selected donor object from /donors/search
+  const [orgRecipients, setOrgRecipients] = useState([]); // [{people_id, first_name, last_name}]
+  const [orgDonationRows, setOrgDonationRows] = useState([]); // donation rows filtered for activeDonor
+  const [orgTotalsByPerson, setOrgTotalsByPerson] = useState({}); // people_id -> total amount
+
+  // Graph layer toggles and proximity weighting
+  const [showPeopleLayer, setShowPeopleLayer] = useState(true);
+  const [showDonorIndividuals, setShowDonorIndividuals] = useState(true);
+  const [showDonorOrganisations, setShowDonorOrganisations] = useState(true);
+  const [showPartiesLayer, setShowPartiesLayer] = useState(true);
+  const [proximityByAmount, setProximityByAmount] = useState(true);
+
   // D3 refs
   const svgRef = useRef(null);
   const containerRef = useRef(null);
@@ -96,6 +110,20 @@ const PersonProfile = () => {
     setActiveOrgPeers({});
     setShowDonations(false);
     setShowMeetings(false);
+
+    // Org view/state
+    setViewMode('person');
+    setActiveDonor(null);
+    setOrgRecipients([]);
+    setOrgDonationRows([]);
+    setOrgTotalsByPerson({});
+
+    // Graph toggles
+    setShowPeopleLayer(true);
+    setShowDonorIndividuals(true);
+    setShowDonorOrganisations(true);
+    setShowPartiesLayer(true);
+    setProximityByAmount(true);
   };
 
   const handleSearchChange = (event) => {
@@ -115,6 +143,21 @@ const PersonProfile = () => {
       setError('Please enter both first and last name, or an organisation.');
       setHasSearched(false);
       return;
+    }
+
+    // Set view mode
+    if (hasPerson) {
+      setViewMode('person');
+      setActiveDonor(null);
+      setOrgRecipients([]);
+      setOrgDonationRows([]);
+      setOrgTotalsByPerson({});
+    } else if (hasOrg) {
+      setViewMode('org');
+      setActiveDonor(null);
+      setOrgRecipients([]);
+      setOrgDonationRows([]);
+      setOrgTotalsByPerson({});
     }
 
     setError(null);
@@ -216,6 +259,57 @@ const PersonProfile = () => {
       setActiveOrgPeers((prev) => ({ ...prev, [donorId]: Array.isArray(rows) ? rows : [] }));
     } catch {
       setActiveOrgPeers((prev) => ({ ...prev, [donorId]: [] }));
+    }
+  };
+
+  // Select a donor to open Organisation View graph and tables
+  const handleSelectOrg = async (donor) => {
+    if (!donor || donor.id == null) return;
+    try {
+      setViewMode('org');
+      setActiveDonor(donor);
+      setIsOrgLoading(true);
+      setSelectedConnection(null);
+      setConnectionDetails([]);
+
+      // 1) Load recipients (people funded by this donor)
+      let recipients = [];
+      try {
+        const resp = await fetch(`${API_BASE}/donations/by-donor?donor_id=${encodeURIComponent(donor.id)}`);
+        if (resp.ok) {
+          const rows = await resp.json();
+          recipients = Array.isArray(rows) ? rows : [];
+        }
+      } catch {
+        recipients = [];
+      }
+      setOrgRecipients(recipients);
+
+      // 2) Fallback: fetch donation rows per recipient, filter by donor_id (N+1 but acceptable for small sets)
+      const allRows = [];
+      const totals = {};
+      for (const r of recipients) {
+        const pid = r?.people_id;
+        if (!pid) continue;
+        try {
+          const perResp = await fetch(`${API_BASE}/donations/by-person?people_id=${encodeURIComponent(pid)}`);
+          if (!perResp.ok) continue;
+          const perRows = await perResp.json();
+          const filtered = (Array.isArray(perRows) ? perRows : []).filter((dr) => String(dr.donor_id) === String(donor.id));
+          for (const fr of filtered) {
+            allRows.push(fr);
+            const amt = Number(fr.amount) || 0;
+            const key = String(pid);
+            totals[key] = (totals[key] || 0) + amt;
+          }
+        } catch {
+          // ignore per person failure
+        }
+      }
+      setOrgDonationRows(allRows);
+      setOrgTotalsByPerson(totals);
+    } finally {
+      setIsOrgLoading(false);
     }
   };
 
@@ -522,6 +616,46 @@ const PersonProfile = () => {
     const nodes = [];
     const links = [];
 
+    // Organisation-centric graph (when only org is searched and a donor is selected)
+    if (viewMode === 'org' && activeDonor && activeDonor.id != null) {
+      const donorNodeId = `donor:${activeDonor.id}`;
+      const donorLabel =
+        (activeDonor.org_name && String(activeDonor.org_name).trim() !== '')
+          ? activeDonor.org_name
+          : [activeDonor.first_name || '', activeDonor.last_name || ''].filter(Boolean).join(' ').trim() || `Donor ${activeDonor.id}`;
+
+      nodes.push({
+        id: donorNodeId,
+        label: donorLabel,
+        type: 'donor',
+        isOrg: Boolean(activeDonor.org_name && String(activeDonor.org_name).trim() !== '')
+      });
+
+      // Build recipients from orgRecipients and totals
+      const totalsMap = orgTotalsByPerson || {};
+      const recs = Array.isArray(orgRecipients) ? orgRecipients : [];
+
+      for (const r of recs) {
+        const pid = r?.people_id;
+        if (!pid) continue;
+        const label = [r.first_name || '', r.last_name || ''].filter(Boolean).join(' ').trim() || `Person ${pid}`;
+        const personNodeId = `person:${pid}`;
+        if (!nodes.some((n) => n.id === personNodeId)) {
+          nodes.push({ id: personNodeId, label, type: 'person' });
+        }
+        const total = Number(totalsMap[String(pid)] || 0);
+        const value = Math.max(1, Math.log10(Math.abs(total) + 1));
+        links.push({
+          source: donorNodeId,
+          target: personNodeId,
+          type: 'donation',
+          value
+        });
+      }
+
+      return { nodes, links };
+    }
+
     const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
     const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
     const personLabel = profileLabel || inputLabel || 'Selected Person';
@@ -574,7 +708,7 @@ const PersonProfile = () => {
       const donorNodeId = `donor:${did}`;
 
       if (!nodes.some((n) => n.id === donorNodeId)) {
-        nodes.push({ id: donorNodeId, label, type: 'donor' });
+        nodes.push({ id: donorNodeId, label, type: 'donor', isOrg: Boolean(org && org.trim() !== '') });
       }
 
       if (personId) {
@@ -635,7 +769,7 @@ const PersonProfile = () => {
     }
 
     return { nodes, links };
-  }, [donations, donorPeers, meetings, profileData, activeFirstName, activeLastName, partyGuess, partyId, selectedPeopleId]);
+  }, [donations, donorPeers, meetings, profileData, activeFirstName, activeLastName, partyGuess, partyId, selectedPeopleId, viewMode, activeDonor, orgRecipients, orgTotalsByPerson]);
 
   // Count direct connections for the selected person (for slider max)
   const personDegree = useMemo(() => {
@@ -771,12 +905,31 @@ const PersonProfile = () => {
       .domain(['person', 'party', 'donor', 'attendee', 'org', 'region'])
       .range(['#1f77b4', '#9467bd', '#2ca02c', '#17becf', '#ff7f0e', '#8c564b']);
 
-    const linkStrength = (l) => (l.type === 'donation' ? 0.2 : 0.1);
-    const linkDistance = (l) => (l.type === 'donation' ? 80 + (l.value || 1) * 20 : 120);
+    // Edge weighting: proximity by amount pulls stronger connections closer when enabled
+    const linkStrength = (l) => {
+      if (l.type !== 'donation') return 0.1;
+      if (!proximityByAmount) return 0.2;
+      const v = Math.max(0, l.value || 0);          // l.value is already log-scale
+      const w = Math.min(1, v / 3);                 // normalize roughly over [0..3]
+      return 0.2 + 0.3 * w;
+    };
+    const linkDistance = (l) => {
+      if (l.type !== 'donation') return 140;
+      if (!proximityByAmount) return 80 + (l.value || 1) * 20;
+      const v = Math.max(0, l.value || 0);
+      const w = Math.min(1, v / 3);
+      const base = 140;
+      const gain = 90;
+      const min = 30;
+      return Math.max(min, base - gain * w);
+    };
 
     // Clone data to avoid mutating memoized objects and seed initial positions
-    // Determine the selected person id (local in effect)
-    const personIdLocal = (() => {
+    // Determine the selected graph center id (person or donor) for top-K filtering
+    const centerIdLocal = (() => {
+      if (viewMode === 'org' && activeDonor && activeDonor.id != null) {
+        return `donor:${activeDonor.id}`;
+      }
       const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
       const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
       const lbl = profileLabel || inputLabel || 'Selected Person';
@@ -787,23 +940,23 @@ const PersonProfile = () => {
 
     const idOf = (endp) => (typeof endp === 'object' ? endp?.id : endp);
 
-    // Build list of links directly connected to the selected person
-    const edgesToPerson = graphData.links
+    // Build list of links directly connected to the selected center node
+    const edgesToCenter = (graphData.links || [])
       .filter((l) => {
         const s = idOf(l.source);
         const t = idOf(l.target);
-        return s === personIdLocal || t === personIdLocal;
+        return s === centerIdLocal || t === centerIdLocal;
       })
       .map((l) => ({ ...l }));
 
     // Sort direct connections by weight and apply cap based on slider (0 => show all)
-    edgesToPerson.sort((a, b) => (b.value || 1) - (a.value || 1));
-    const capBase = edgesToPerson.length;
+    edgesToCenter.sort((a, b) => (b.value || 1) - (a.value || 1));
+    const capBase = edgesToCenter.length;
     const cap = connectionCap > 0 ? Math.min(connectionCap, capBase) : capBase;
 
     // Pick top-k direct connections, then include any secondary links among the selected nodes
-    const selectedDirect = edgesToPerson.slice(0, cap);
-    const usedIds = new Set();
+    const selectedDirect = edgesToCenter.slice(0, cap);
+    const usedIds = new Set([centerIdLocal]);
     for (const l of selectedDirect) {
       usedIds.add(idOf(l.source));
       usedIds.add(idOf(l.target));
@@ -816,24 +969,17 @@ const PersonProfile = () => {
       })
       .map((l) => ({ ...l }));
 
-    // Only keep nodes participating in the kept links (+ always keep the selected person node)
+    // Only keep nodes participating in the kept links (always keep the center node)
     const nodesData = (graphData.nodes || [])
-      .filter((n) => usedIds.has(n.id) || n.type === 'person')
+      .filter((n) => usedIds.has(n.id))
       .map((d) => ({ ...d }));
     nodesData.forEach((n) => {
       if (n.x == null || Number.isNaN(n.x)) n.x = width / 2;
       if (n.y == null || Number.isNaN(n.y)) n.y = height / 2;
     });
 
-    // Compute current person id for click source-detection
-    const personIdForEdges = (() => {
-      const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
-      const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
-      const lbl = profileLabel || inputLabel || 'Selected Person';
-      return (selectedPeopleId != null)
-        ? `person:${selectedPeopleId}`
-        : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${lbl}`);
-    })();
+    // Compute current center id for click source-detection
+    const centerIdForEdges = centerIdLocal;
 
     // Debug: ensure we have at least the person node
     try {
@@ -899,8 +1045,8 @@ const PersonProfile = () => {
               const srcId = (typeof l.source === 'object') ? l.source?.id : l.source;
               const tgtId = (typeof l.target === 'object') ? l.target?.id : l.target;
               let isEdgeToPerson = false;
-              if (srcId === personIdForEdges && tgtId === destId) isEdgeToPerson = true;
-              if (tgtId === personIdForEdges && srcId === destId) isEdgeToPerson = true;
+              if (srcId === centerIdForEdges && tgtId === destId) isEdgeToPerson = true;
+              if (tgtId === centerIdForEdges && srcId === destId) isEdgeToPerson = true;
               if (isEdgeToPerson) {
                 const s = l.type === 'donation'
                   ? 'Donation'
@@ -922,7 +1068,7 @@ const PersonProfile = () => {
       .join('text')
       .attr('class', 'graph-label')
       .text((d) => d.label)
-      .attr('font-size', 10)
+      .attr('font-size', 15)
       .attr('dx', 10)
       .attr('dy', 4)
       .attr('fill', '#333');
@@ -1004,54 +1150,148 @@ const PersonProfile = () => {
     }
   }, [edgeScale]);
 
-  // Show/hide edges and nodes based on "Connections shown" without re-initializing the graph
+  // Show/hide edges and nodes based on cap and layer toggles (without re-initializing the graph)
   useEffect(() => {
     try {
-      const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
-      const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
-      const personIdLocal = (selectedPeopleId != null)
-        ? `person:${selectedPeopleId}`
-        : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${(profileLabel || inputLabel || 'Selected Person')}`);
+      const centerIdLocal = (() => {
+        if (viewMode === 'org' && activeDonor && activeDonor.id != null) {
+          return `donor:${activeDonor.id}`;
+        }
+        const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
+        const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
+        return (selectedPeopleId != null)
+          ? `person:${selectedPeopleId}`
+          : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${(profileLabel || inputLabel || 'Selected Person')}`);
+      })();
 
       const idOf = (endp) => (typeof endp === 'object' ? endp?.id : endp);
 
+      // Determine per-type visibility based on toggles
+      // Attendees are treated as People; donors are split into individuals vs organisations
+      const isTypeVisible = (type) => {
+        if (type === 'person' || type === 'attendee') return showPeopleLayer;
+        if (type === 'party') return showPartiesLayer;
+        return true; // donor visibility handled per-node via isNodeLayerVisibleById
+      };
+
+      // Build top-K usedIds around center
       const allLinks = graphData?.links || [];
-      const edgesToPerson = allLinks
+      const edgesToCenter = allLinks
         .filter((l) => {
           const s = idOf(l.source);
           const t = idOf(l.target);
-          return s === personIdLocal || t === personIdLocal;
+          return s === centerIdLocal || t === centerIdLocal;
         })
         .map((l) => ({ ...l }));
 
-      edgesToPerson.sort((a, b) => (b.value || 1) - (a.value || 1));
-      const capBase = edgesToPerson.length;
+      edgesToCenter.sort((a, b) => (b.value || 1) - (a.value || 1));
+      const capBase = edgesToCenter.length;
       const cap = connectionCap > 0 ? Math.min(connectionCap, capBase) : capBase;
 
-      const selectedDirect = edgesToPerson.slice(0, cap);
-      const usedIds = new Set([personIdLocal]);
+      const selectedDirect = edgesToCenter.slice(0, cap);
+      const usedIds = new Set([centerIdLocal]);
       for (const l of selectedDirect) {
         usedIds.add(idOf(l.source));
         usedIds.add(idOf(l.target));
       }
 
       const svg = d3.select(svgRef.current);
-      svg.selectAll('line.graph-link')
-        .classed('graph-link--hidden', function(d) {
+
+      // Hide links if either endpoint is outside usedIds or hidden by layer toggle
+      svg.selectAll('line.graph-link').classed('graph-link--hidden', function (d) {
+        const s = idOf(d.source);
+        const t = idOf(d.target);
+        if (!(usedIds.has(s) && usedIds.has(t))) return true;
+        // Need node types for layer filtering; we can infer by matching node selection
+        // Pull node data bound to circles into a map for quick lookup
+        // To avoid performance issues, compute once
+        return false;
+      });
+
+      // Build a quick lookup for node type and donor org flag by id
+      const nodeTypeById = {};
+      const nodeIsOrgById = {};
+      svg.selectAll('circle.graph-node').each(function (nd) {
+        if (nd && nd.id) {
+          nodeTypeById[nd.id] = nd.type || '';
+          nodeIsOrgById[nd.id] = !!nd.isOrg;
+        }
+      });
+
+      // Resolve per-node layer visibility (splits donors by individuals vs organisations)
+      const isNodeLayerVisibleById = (id) => {
+        const t = nodeTypeById[id] || '';
+        if (t === 'donor') {
+          const isOrg = nodeIsOrgById[id] === true;
+          return isOrg ? showDonorOrganisations : showDonorIndividuals;
+        }
+        return isTypeVisible(t);
+      };
+
+      // Re-apply link visibility with layer conditions
+      svg.selectAll('line.graph-link').classed('graph-link--hidden', function (d) {
+        const s = idOf(d.source);
+        const t = idOf(d.target);
+        if (!(usedIds.has(s) && usedIds.has(t))) return true;
+        if (!isNodeLayerVisibleById(s) || !isNodeLayerVisibleById(t)) return true;
+        return false;
+      });
+
+      // Build a set of node ids that still have at least one visible link
+      const visibleLinkNodeIds = new Set();
+      svg.selectAll('line.graph-link').each(function (d) {
+        // Only collect endpoints for links that are NOT hidden
+        if (!this.classList.contains('graph-link--hidden')) {
           const s = idOf(d.source);
           const t = idOf(d.target);
-          return !(usedIds.has(s) && usedIds.has(t));
-        });
+          visibleLinkNodeIds.add(s);
+          visibleLinkNodeIds.add(t);
+        }
+      });
 
-      svg.selectAll('circle.graph-node')
-        .classed('graph-node--hidden', (d) => !(usedIds.has(d.id) || d.type === 'person'));
+      // Determine if center node itself should be visible (based on layer toggle)
+      const centerIsLayerVisible = isNodeLayerVisibleById(centerIdLocal);
 
-      svg.selectAll('text.graph-label')
-        .classed('graph-label--hidden', (d) => !(usedIds.has(d.id) || d.type === 'person'));
+      // Node visibility:
+      // - must be within usedIds
+      // - layer for its type must be visible
+      // - and must be attached to at least one visible link
+      //   (exception: keep center visible only if its layer is visible)
+      svg.selectAll('circle.graph-node').classed('graph-node--hidden', (n) => {
+        if (!n || !n.id) return true;
+        if (!usedIds.has(n.id)) return true;
+        const typeOk = isNodeLayerVisibleById(n.id);
+        if (!typeOk) return true;
+        if (n.id === centerIdLocal) return !centerIsLayerVisible;
+        return !visibleLinkNodeIds.has(n.id);
+      });
+
+      // Label visibility mirrors node visibility rules
+      svg.selectAll('text.graph-label').classed('graph-label--hidden', function (n) {
+        if (!n || !n.id) return true;
+        if (!usedIds.has(n.id)) return true;
+        const typeOk = isNodeLayerVisibleById(n.id);
+        if (!typeOk) return true;
+        if (n.id === centerIdLocal) return !centerIsLayerVisible;
+        return !visibleLinkNodeIds.has(n.id);
+      });
     } catch {
       // ignore if not ready
     }
-  }, [connectionCap, graphData, activeFirstName, activeLastName, profileData, selectedPeopleId]);
+  }, [
+    connectionCap,
+    graphData,
+    activeFirstName,
+    activeLastName,
+    profileData,
+    selectedPeopleId,
+    viewMode,
+    activeDonor,
+    showPeopleLayer,
+    showDonorIndividuals,
+    showDonorOrganisations,
+    showPartiesLayer
+  ]);
 
   // Highlight selected connection in graph (node + edge to person)
   useEffect(() => {
@@ -1078,6 +1318,10 @@ const PersonProfile = () => {
           const t = idOf(d.target);
           return (s === personIdLocal && t === selId) || (t === personIdLocal && s === selId);
         });
+
+      // Also highlight the label of the selected node
+      svg.selectAll('text.graph-label')
+        .classed('graph-label--selected', (d) => !!selId && d && d.id === selId);
     } catch {
       // ignore if svg not ready
     }
@@ -1252,6 +1496,14 @@ const PersonProfile = () => {
                               >
                                 View linked people
                               </button>
+                              <button
+                                type="button"
+                                className="search-button"
+                                onClick={() => handleSelectOrg(d)}
+                                title="Open organisation profile"
+                              >
+                                Open organisation view
+                              </button>
                             </div>
                             {Array.isArray(peers) && peers.length > 0 && (
                               <div style={{ marginTop: '0.5rem' }}>
@@ -1288,6 +1540,90 @@ const PersonProfile = () => {
                       No organisations found for "{searchQuery.orgName}".
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Organisation View summary */}
+              {viewMode === 'org' && activeDonor && (
+                <div className="table-container" style={{ marginBottom: '1rem' }}>
+                  <h3 style={{ marginTop: 0, color: '#1f2937' }}>
+                    Organisation Profile — {activeDonor.org_name || ([activeDonor.first_name || '', activeDonor.last_name || ''].filter(Boolean).join(' ').trim() || `Donor ${activeDonor.id}`)}
+                  </h3>
+
+                  {/* People funded (aggregated) */}
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <h4 style={{ margin: '0 0 0.5rem 0', color: '#111827' }}>People funded</h4>
+                    <table className="min-w-full border">
+                      <thead>
+                        <tr>
+                          <th>Recipient</th>
+                          <th style={{ textAlign: 'right' }}>Total Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Array.isArray(orgRecipients) && orgRecipients.length > 0 ? (
+                          orgRecipients.map((r) => {
+                            const name = [r.first_name || '', r.last_name || ''].filter(Boolean).join(' ').trim() || `Person ${r.people_id}`;
+                            const total = Number(orgTotalsByPerson?.[String(r.people_id)] || 0);
+                            return (
+                              <tr key={r.people_id}>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="search-button"
+                                    onClick={() => handleClickPersonMatch({ id: r.people_id, first_name: r.first_name, last_name: r.last_name })}
+                                    title="Open person profile"
+                                  >
+                                    {name}
+                                  </button>
+                                </td>
+                                <td style={{ textAlign: 'right' }}>${total.toLocaleString()}</td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={2} style={{ color: '#6b7280' }}>No recipients found.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Donations by this organisation */}
+                  <div style={{ marginTop: '1rem' }}>
+                    <h4 style={{ margin: '0 0 0.5rem 0', color: '#111827' }}>Donations</h4>
+                    <table className="min-w-full border">
+                      <thead>
+                        <tr>
+                          <th>Date/Year</th>
+                          <th style={{ textAlign: 'right' }}>Amount</th>
+                          <th>Recipient</th>
+                          <th>Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Array.isArray(orgDonationRows) && orgDonationRows.length > 0 ? (
+                          orgDonationRows.map((d, idx) => {
+                            const recipient = (d.recipient_name) ||
+                              [d.first_name || d.recipient_first_name || '', d.last_name || d.recipient_last_name || ''].filter(Boolean).join(' ').trim();
+                            return (
+                              <tr key={idx}>
+                                <td>{d.date ? new Date(d.date).toLocaleDateString() : (d.year || '')}</td>
+                                <td style={{ textAlign: 'right' }}>${(Number(d.amount) || 0).toLocaleString()}</td>
+                                <td>{recipient}</td>
+                                <td>{d.notes || ''}</td>
+                              </tr>
+                            );
+                          })
+                        ) : (
+                          <tr>
+                            <td colSpan={4} style={{ color: '#6b7280' }}>No donations found for this organisation (in current dataset).</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
 
@@ -1336,6 +1672,7 @@ const PersonProfile = () => {
                     />
                     <span style={{ fontVariantNumeric: 'tabular-nums' }}>{edgeScale.toFixed(1)}x</span>
                   </div>
+
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <label style={{ minWidth: 160 }}>Connections shown</label>
                     <input
@@ -1349,6 +1686,42 @@ const PersonProfile = () => {
                     <span style={{ fontVariantNumeric: 'tabular-nums' }}>
                       {Math.min(connectionCap > 0 ? connectionCap : (personDegree || graphData.links.length), (personDegree || graphData.links.length))}/{personDegree || graphData.links.length}
                     </span>
+                  </div>
+
+                  {/* Layer toggles */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                    <div style={{ fontWeight: 600 }}>Show layers:</div>
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <input type="checkbox" checked={showPeopleLayer} onChange={(e) => setShowPeopleLayer(e.target.checked)} />
+                      People (incl. attendees)
+                    </label>
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <input type="checkbox" checked={showDonorIndividuals} onChange={(e) => setShowDonorIndividuals(e.target.checked)} />
+                      Donor Individuals
+                    </label>
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <input type="checkbox" checked={showDonorOrganisations} onChange={(e) => setShowDonorOrganisations(e.target.checked)} />
+                      Donor Organisations
+                    </label>
+                    {viewMode === 'person' && (
+                      <>
+                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                          <input type="checkbox" checked={showPartiesLayer} onChange={(e) => setShowPartiesLayer(e.target.checked)} />
+                          Parties
+                        </label>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Weighting toggle */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <label style={{ minWidth: 160 }}>Proximity by amount</label>
+                    <input
+                      type="checkbox"
+                      checked={proximityByAmount}
+                      onChange={(e) => setProximityByAmount(e.target.checked)}
+                    />
+                    <span style={{ color: '#6b7280' }}>(Stronger links pull nodes closer)</span>
                   </div>
                 </div>
 

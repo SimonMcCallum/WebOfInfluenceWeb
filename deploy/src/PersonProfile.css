@@ -486,6 +486,23 @@
 .person-graph circle.graph-node--hidden { display: none !important; }
 .person-graph text.graph-label--hidden { display: none; }
 
+/* Selection highlight */
+.person-graph circle.graph-node--selected {
+  stroke: #111827;
+  stroke-width: 3;
+}
+.person-graph line.graph-link--selected {
+  stroke: #111827;
+  stroke-width: 3;
+}
+.person-graph text.graph-label--selected {
+  font-weight: 700;
+  fill: #111827;
+  stroke: #ffffff;
+  stroke-width: 2px;
+  paint-order: stroke fill;
+}
+
 /* Graph zoom controls */
 .graph-wrap {
   position: relative;
