@@ -561,6 +561,21 @@
   color: #5b21b6;
 }
 
+/* Selected connection row highlight in Connections table */
+.table-container tr.conn-row--selected,
+.table-container tr.conn-row--selected:hover {
+  background-color: #fef3c7; /* amber-100 */
+}
+.table-container tr.conn-row--selected td {
+  border-bottom-color: #fde68a;
+}
+.table-container tr.conn-row--selected td:first-child {
+  font-weight: 700;
+  color: #111827;
+  border-left: 4px solid #f59e0b; /* amber-500 */
+  padding-left: 0.75rem;
+}
+
 /* Responsive Design */
 @media (max-width: 1200px) {
   .donations-container {

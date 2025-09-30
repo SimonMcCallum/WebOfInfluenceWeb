@@ -1327,6 +1327,21 @@ const PersonProfile = () => {
     }
   }, [selectedConnection, graphData, activeFirstName, activeLastName, profileData, selectedPeopleId]);
 
+  // Ensure the corresponding Connections table row is emphasized and scrolled into view when a node is selected
+  useEffect(() => {
+    try {
+      const selId = selectedConnection?.id;
+      if (!selId) return;
+      // Attribute selector with quotes avoids escaping issues for characters like ":" and spaces
+      const el = document.querySelector(`.table-container tr.conn-row[data-id="${selId}"]`);
+      if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    } catch {
+      // ignore
+    }
+  }, [selectedConnection]);
+
   return (
     <div className="donations-page" ref={containerRef}>
       {/* Header Section */}
@@ -1693,7 +1708,7 @@ const PersonProfile = () => {
                     <div style={{ fontWeight: 600 }}>Show layers:</div>
                     <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
                       <input type="checkbox" checked={showPeopleLayer} onChange={(e) => setShowPeopleLayer(e.target.checked)} />
-                      People (incl. attendees)
+                      People
                     </label>
                     <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
                       <input type="checkbox" checked={showDonorIndividuals} onChange={(e) => setShowDonorIndividuals(e.target.checked)} />
@@ -1701,7 +1716,7 @@ const PersonProfile = () => {
                     </label>
                     <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
                       <input type="checkbox" checked={showDonorOrganisations} onChange={(e) => setShowDonorOrganisations(e.target.checked)} />
-                      Donor Organisations
+                      Organisations
                     </label>
                     {viewMode === 'person' && (
                       <>
@@ -1868,10 +1883,12 @@ const PersonProfile = () => {
                         {connections.map((c) => (
                           <tr
                             key={c.id}
+                            data-id={c.id}
                             className={selectedConnection?.id === c.id ? 'conn-row conn-row--selected' : 'conn-row'}
                             onClick={() => handleClickConnection(c)}
                             style={{ cursor: 'pointer' }}
                             title="Click to view details"
+                            aria-selected={selectedConnection?.id === c.id}
                           >
                             <td>{c.label}</td>
                             <td style={{ textTransform: 'capitalize' }}>{c.nodeType || 'unknown'}</td>
