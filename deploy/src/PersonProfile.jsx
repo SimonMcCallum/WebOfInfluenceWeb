@@ -6,6 +6,108 @@ import { API_BASE } from './apiConfig';
 import MeetingsTable from './MeetingsTable.jsx';
 
 /**
+ * Organisation aliasing (canonicalise multiple names into one group)
+ * - Minimal curated map for known variants
+ * - Safe normaliser for matching keys (lowercase, strip punctuation/extra spaces)
+ */
+const normaliseOrgKey = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const ORG_ALIAS_PATTERNS = [
+  {
+    canonical: 'Conservative Party',
+    patterns: [
+      'conservative party',
+      'the conservative party',
+      'conservative party hq',
+      'conservative party of new zealand',
+      'conservative party of nz',
+      'conservative party nz',
+      'conservative party (nz)'
+    ]
+  }
+  // Add more organisations here as needed
+];
+
+const ORG_ALIAS_MAP = (() => {
+  const map = new Map();
+  for (const entry of ORG_ALIAS_PATTERNS) {
+    const canKey = normaliseOrgKey(entry.canonical);
+    map.set(canKey, entry.canonical); // ensure canonical resolves to itself
+    for (const p of entry.patterns) {
+      map.set(normaliseOrgKey(p), entry.canonical);
+    }
+  }
+  return map;
+})();
+
+/**
+ * Group donor search results by canonical organisation name.
+ * Returns items shaped as:
+ * {
+ *   key: 'org:conservative party',
+ *   displayName: 'Conservative Party',
+ *   aliasNames: ['Conservative Party', 'Conservative Party HQ', ...],
+ *   ids: [123, 456, ...],          // donor ids in this group
+ *   donors: [original donor rows], // original rows
+ *   peerKey: 'group:123+456'       // key used for caching linked people
+ * }
+ * Individuals (no org_name) return per-row groups with key 'ind:<id>'
+ */
+function groupDonorOrgs(rows) {
+  const groups = new Map();
+
+  const addToGroup = (key, displayName, row, aliasName) => {
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        displayName,
+        aliasNames: new Set(),
+        ids: [],
+        donors: [],
+        peerKey: null
+      });
+    }
+    const g = groups.get(key);
+    if (aliasName) g.aliasNames.add(aliasName);
+    if (row?.id != null) g.ids.push(row.id);
+    g.donors.push(row);
+  };
+
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const org = (r && r.org_name && String(r.org_name).trim() !== '') ? String(r.org_name).trim() : '';
+    if (org) {
+      const norm = normaliseOrgKey(org);
+      const canonical = ORG_ALIAS_MAP.get(norm) || org;
+      const canKey = normaliseOrgKey(canonical);
+      addToGroup(`org:${canKey}`, canonical, r, org);
+    } else {
+      // Treat individual donors as their own groups (do not merge)
+      const full = [r?.first_name || '', r?.last_name || ''].filter(Boolean).join(' ').trim() || `Donor ${r?.id}`;
+      addToGroup(`ind:${r?.id}`, full, r, full);
+    }
+  }
+
+  // Finalise alias lists and peer keys
+  const result = [];
+  for (const g of groups.values()) {
+    g.aliasNames = Array.from(g.aliasNames).filter((n) => !!n && n !== g.displayName);
+    g.ids = Array.from(new Set(g.ids.map((x) => String(x)))).map((x) => Number(x));
+    const sortedIds = [...g.ids].sort((a, b) => a - b);
+    g.peerKey = `${g.key}:${sortedIds.join('+')}`;
+    result.push(g);
+  }
+  // Sort groups by display name
+  result.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  return result;
+}
+
+/**
  * PersonProfile (Web of Influence)
  * - Search by first/last name
  * - Builds a connections graph:
@@ -234,7 +336,9 @@ const PersonProfile = () => {
         setOrgResults([]);
       } else {
         const rows = await resp.json();
-        setOrgResults(Array.isArray(rows) ? rows : []);
+        // Group results into canonical organisations with aliases
+        const groups = groupDonorOrgs(Array.isArray(rows) ? rows : []);
+        setOrgResults(groups);
       }
     } catch (e) {
       setOrgError('Organisation search failed.');
@@ -245,45 +349,89 @@ const PersonProfile = () => {
   };
 
   // Expand a donor to view connected people; clicking a person opens the Person form
-  const loadOrgPeers = async (donorId) => {
-    if (!donorId) return;
+  // donorIdOrIds: number | string | Array<number|string>
+  const loadOrgPeers = async (donorIdOrIds) => {
+    if (donorIdOrIds == null) return;
+    const ids = Array.isArray(donorIdOrIds) ? donorIdOrIds : [donorIdOrIds];
+    const normIds = ids.map((x) => String(x));
+    const groupKey = `group:${normIds.slice().sort().join('+')}`;
+
     try {
-      const resp = await fetch(`${API_BASE}/donations/by-donor?donor_id=${encodeURIComponent(donorId)}`);
-      if (!resp.ok) {
-        setActiveOrgPeers((prev) => ({ ...prev, [donorId]: [] }));
-        return;
+      const results = await Promise.all(
+        normIds.map(async (id) => {
+          try {
+            const resp = await fetch(`${API_BASE}/donations/by-donor?donor_id=${encodeURIComponent(id)}`);
+            if (!resp.ok) return [];
+            const rows = await resp.json();
+            return Array.isArray(rows) ? rows : [];
+          } catch {
+            return [];
+          }
+        })
+      );
+      // Flatten and de-duplicate recipients by people_id
+      const combined = [];
+      const seen = new Set();
+      for (const arr of results) {
+        for (const r of arr) {
+          const pid = r?.people_id != null ? String(r.people_id) : null;
+          const key = pid ? `${pid}` : JSON.stringify(r);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          combined.push(r);
+        }
       }
-      const rows = await resp.json();
-      setActiveOrgPeers((prev) => ({ ...prev, [donorId]: Array.isArray(rows) ? rows : [] }));
+      setActiveOrgPeers((prev) => ({ ...prev, [groupKey]: combined }));
     } catch {
-      setActiveOrgPeers((prev) => ({ ...prev, [donorId]: [] }));
+      setActiveOrgPeers((prev) => ({ ...prev, [groupKey]: [] }));
     }
   };
 
   // Select a donor to open Organisation View graph and tables
-  const handleSelectOrg = async (donor) => {
-    if (!donor || donor.id == null) return;
+  const handleSelectOrg = async (donorGroup) => {
+    if (!donorGroup) return;
+    // donorGroup may be a grouped organisation with ids[], or a single donor object with id
+    const ids = Array.isArray(donorGroup.ids) && donorGroup.ids.length > 0
+      ? donorGroup.ids
+      : (donorGroup.id != null ? [donorGroup.id] : []);
+
+    if (ids.length === 0) return;
+
     try {
       setViewMode('org');
-      setActiveDonor(donor);
+      setActiveDonor({
+        org_name: donorGroup.displayName || donorGroup.org_name || null,
+        ids,
+        id: ids.length === 1 ? ids[0] : null
+      });
       setIsOrgLoading(true);
       setSelectedConnection(null);
       setConnectionDetails([]);
 
-      // 1) Load recipients (people funded by this donor)
-      let recipients = [];
-      try {
-        const resp = await fetch(`${API_BASE}/donations/by-donor?donor_id=${encodeURIComponent(donor.id)}`);
-        if (resp.ok) {
+      // 1) Load recipients across all donor ids
+      const recipientsMap = new Map();
+      for (const id of ids) {
+        try {
+          const resp = await fetch(`${API_BASE}/donations/by-donor?donor_id=${encodeURIComponent(id)}`);
+          if (!resp.ok) continue;
           const rows = await resp.json();
-          recipients = Array.isArray(rows) ? rows : [];
+          const arr = Array.isArray(rows) ? rows : [];
+          for (const r of arr) {
+            const pid = r?.people_id != null ? Number(r.people_id) : null;
+            if (!pid) continue;
+            if (!recipientsMap.has(pid)) {
+              recipientsMap.set(pid, { people_id: pid, first_name: r.first_name, last_name: r.last_name });
+            }
+          }
+        } catch {
+          // ignore
         }
-      } catch {
-        recipients = [];
       }
+      const recipients = Array.from(recipientsMap.values());
       setOrgRecipients(recipients);
 
-      // 2) Fallback: fetch donation rows per recipient, filter by donor_id (N+1 but acceptable for small sets)
+      // 2) Fetch donation rows per recipient and filter by any donor id in the group
+      const idSet = new Set(ids.map((x) => String(x)));
       const allRows = [];
       const totals = {};
       for (const r of recipients) {
@@ -293,7 +441,7 @@ const PersonProfile = () => {
           const perResp = await fetch(`${API_BASE}/donations/by-person?people_id=${encodeURIComponent(pid)}`);
           if (!perResp.ok) continue;
           const perRows = await perResp.json();
-          const filtered = (Array.isArray(perRows) ? perRows : []).filter((dr) => String(dr.donor_id) === String(donor.id));
+          const filtered = (Array.isArray(perRows) ? perRows : []).filter((dr) => dr?.donor_id != null && idSet.has(String(dr.donor_id)));
           for (const fr of filtered) {
             allRows.push(fr);
             const amt = Number(fr.amount) || 0;
@@ -622,12 +770,13 @@ const PersonProfile = () => {
     const links = [];
 
     // Organisation-centric graph (when only org is searched and a donor is selected)
-    if (viewMode === 'org' && activeDonor && activeDonor.id != null) {
-      const donorNodeId = `donor:${activeDonor.id}`;
+    if (viewMode === 'org' && activeDonor && (activeDonor.id != null || (Array.isArray(activeDonor.ids) && activeDonor.ids.length > 0))) {
+      const ids = Array.isArray(activeDonor.ids) && activeDonor.ids.length > 0 ? activeDonor.ids : [activeDonor.id];
+      const donorNodeId = `donor:${ids.slice().sort((a,b)=>a-b).join('+')}`;
       const donorLabel =
         (activeDonor.org_name && String(activeDonor.org_name).trim() !== '')
           ? activeDonor.org_name
-          : [activeDonor.first_name || '', activeDonor.last_name || ''].filter(Boolean).join(' ').trim() || `Donor ${activeDonor.id}`;
+          : [activeDonor.first_name || '', activeDonor.last_name || ''].filter(Boolean).join(' ').trim() || `Donor ${ids[0]}`;
 
       nodes.push({
         id: donorNodeId,
@@ -948,8 +1097,9 @@ const PersonProfile = () => {
     // Clone data to avoid mutating memoized objects and seed initial positions
     // Determine the selected graph center id (person or donor) for top-K filtering
     const centerIdLocal = (() => {
-      if (viewMode === 'org' && activeDonor && activeDonor.id != null) {
-        return `donor:${activeDonor.id}`;
+      if (viewMode === 'org' && activeDonor && (activeDonor.id != null || (Array.isArray(activeDonor.ids) && activeDonor.ids.length > 0))) {
+        const ids = Array.isArray(activeDonor.ids) && activeDonor.ids.length > 0 ? activeDonor.ids : [activeDonor.id];
+        return `donor:${ids.slice().sort((a, b) => a - b).join('+')}`;
       }
       const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
       const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
@@ -1175,8 +1325,9 @@ const PersonProfile = () => {
   useEffect(() => {
     try {
       const centerIdLocal = (() => {
-        if (viewMode === 'org' && activeDonor && activeDonor.id != null) {
-          return `donor:${activeDonor.id}`;
+        if (viewMode === 'org' && activeDonor && (activeDonor.id != null || (Array.isArray(activeDonor.ids) && activeDonor.ids.length > 0))) {
+          const ids = Array.isArray(activeDonor.ids) && activeDonor.ids.length > 0 ? activeDonor.ids : [activeDonor.id];
+          return `donor:${ids.slice().sort((a, b) => a - b).join('+')}`;
         }
         const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
         const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
@@ -1515,31 +1666,36 @@ const PersonProfile = () => {
                   )}
                   {!orgError && Array.isArray(orgResults) && orgResults.length > 0 && (
                     <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.5rem' }}>
-                      {orgResults.map((d) => {
-                        const label = (d.org_name && d.org_name.trim() !== '')
-                          ? d.org_name
-                          : [d.first_name || '', d.last_name || ''].filter(Boolean).join(' ').trim() || `Donor ${d.id}`;
-                        const peers = activeOrgPeers?.[String(d.id)] || null;
+                      {orgResults.map((g) => {
+                        const label = g.displayName || g.org_name || [g.first_name || '', g.last_name || ''].filter(Boolean).join(' ').trim() || `Donor Group`;
+                        const peers = activeOrgPeers?.[g.peerKey] || activeOrgPeers?.[`group:${(Array.isArray(g.ids) ? g.ids.map((x)=>String(x)).sort().join('+') : '')}`] || null;
                         return (
-                          <li key={d.id} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.5rem' }}>
+                          <li key={g.key} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.5rem' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                              <span style={{ fontWeight: 600 }}>{label}</span>
-                              <button
-                                type="button"
-                                className="reset-button"
-                                onClick={() => loadOrgPeers(d.id)}
-                                title="Show linked people (recipients of this donor)"
-                              >
-                                View linked people
-                              </button>
-                              <button
-                                type="button"
-                                className="search-button"
-                                onClick={() => handleSelectOrg(d)}
-                                title="Open organisation profile"
-                              >
-                                Open organisation view
-                              </button>
+                              <span style={{ fontWeight: 700 }}>{label}</span>
+                              {Array.isArray(g.aliasNames) && g.aliasNames.length > 0 && (
+                                <span style={{ color: '#6b7280', fontSize: '0.9rem' }}>
+                                  Also known as: {g.aliasNames.join(', ')}
+                                </span>
+                              )}
+                              <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <button
+                                  type="button"
+                                  className="reset-button"
+                                  onClick={() => loadOrgPeers(g.ids)}
+                                  title="Show linked people (recipients of this organisation)"
+                                >
+                                  View linked people
+                                </button>
+                                <button
+                                  type="button"
+                                  className="search-button"
+                                  onClick={() => handleSelectOrg(g)}
+                                  title="Open organisation profile"
+                                >
+                                  Open organisation view
+                                </button>
+                              </div>
                             </div>
                             {Array.isArray(peers) && peers.length > 0 && (
                               <div style={{ marginTop: '0.5rem' }}>
