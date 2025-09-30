@@ -166,6 +166,7 @@ const PersonProfile = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState(null);
+  const isSearching = isLoading || isOrgLoading;
 
   // Sorting config for tables
   const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'asc' });
@@ -176,6 +177,8 @@ const PersonProfile = () => {
   const [orgRecipients, setOrgRecipients] = useState([]); // [{people_id, first_name, last_name}]
   const [orgDonationRows, setOrgDonationRows] = useState([]); // donation rows filtered for activeDonor
   const [orgTotalsByPerson, setOrgTotalsByPerson] = useState({}); // people_id -> total amount
+  const [orgDonationsByRecipient, setOrgDonationsByRecipient] = useState({}); // people_id -> donation rows
+  const [showOrgProfile, setShowOrgProfile] = useState(false);
 
   // Graph layer toggles and proximity weighting
   const [showPeopleLayer, setShowPeopleLayer] = useState(true);
@@ -218,6 +221,7 @@ const PersonProfile = () => {
     setOrgRecipients([]);
     setOrgDonationRows([]);
     setOrgTotalsByPerson({});
+    setOrgDonationsByRecipient({});
 
     // Graph toggles
     setShowPeopleLayer(true);
@@ -252,12 +256,14 @@ const PersonProfile = () => {
       setOrgRecipients([]);
       setOrgDonationRows([]);
       setOrgTotalsByPerson({});
+      setOrgDonationsByRecipient({});
     } else if (hasOrg) {
       setViewMode('org');
       setActiveDonor(null);
       setOrgRecipients([]);
       setOrgDonationRows([]);
       setOrgTotalsByPerson({});
+      setOrgDonationsByRecipient({});
     }
 
     setError(null);
@@ -402,7 +408,8 @@ const PersonProfile = () => {
       setActiveDonor({
         org_name: donorGroup.displayName || donorGroup.org_name || null,
         ids,
-        id: ids.length === 1 ? ids[0] : null
+        id: ids.length === 1 ? ids[0] : null,
+        aliasNames: Array.isArray(donorGroup.aliasNames) ? donorGroup.aliasNames : []
       });
       setIsOrgLoading(true);
       setSelectedConnection(null);
@@ -434,6 +441,7 @@ const PersonProfile = () => {
       const idSet = new Set(ids.map((x) => String(x)));
       const allRows = [];
       const totals = {};
+      const byRecipient = {};
       for (const r of recipients) {
         const pid = r?.people_id;
         if (!pid) continue;
@@ -447,6 +455,8 @@ const PersonProfile = () => {
             const amt = Number(fr.amount) || 0;
             const key = String(pid);
             totals[key] = (totals[key] || 0) + amt;
+            if (!byRecipient[key]) byRecipient[key] = [];
+            byRecipient[key].push(fr);
           }
         } catch {
           // ignore per person failure
@@ -454,10 +464,18 @@ const PersonProfile = () => {
       }
       setOrgDonationRows(allRows);
       setOrgTotalsByPerson(totals);
+      setOrgDonationsByRecipient(byRecipient);
     } finally {
       setIsOrgLoading(false);
     }
   };
+
+  // Auto-select organisation when only one match (graph should show immediately for org searches)
+  useEffect(() => {
+    if (viewMode === 'org' && !activeDonor && Array.isArray(orgResults) && orgResults.length === 1) {
+      handleSelectOrg(orgResults[0]);
+    }
+  }, [orgResults, viewMode, activeDonor]);
 
   // Click a connection to show underlying entries (meetings/donations/affiliation)
   const handleClickConnection = (conn) => {
@@ -525,14 +543,43 @@ const PersonProfile = () => {
       } else if (nodeType === 'party') {
         details = [{ kind: 'party', data: { party: partyGuess, party_id: partyId } }];
       } else if (nodeType === 'person') {
-        // For peer persons, we can show donations shared via donorPeers edges indirectly if needed.
-        details = [];
+        if (viewMode === 'org') {
+          // In org view, show donations from this organisation to the selected recipient
+          const pid = (() => {
+            if (typeof conn.id === 'string' && conn.id.startsWith('person:')) {
+              const raw = conn.id.split(':')[1];
+              const n = Number(raw);
+              return Number.isFinite(n) ? n : null;
+            }
+            // Fallback: try to match by label (exact match)
+            const m = (orgRecipients || []).find((r) => {
+              const name = [r.first_name || '', r.last_name || ''].filter(Boolean).join(' ').trim();
+              return name === conn.label;
+            });
+            return m ? Number(m.people_id) : null;
+          })();
+
+          const rows = (pid != null && orgDonationsByRecipient) ? (orgDonationsByRecipient[String(pid)] || []) : [];
+          details = rows.map((d) => ({ kind: 'donation', data: d }));
+        } else {
+          // In person view, clicking a peer person has no direct detail rows
+          details = [];
+        }
       }
       setConnectionDetails(details);
     } catch {
       setConnectionDetails([]);
     }
   };
+
+  // In org view, default Organisation Profile to collapsed after each org selection
+  useEffect(() => {
+    if (viewMode === 'org' && activeDonor) {
+      setShowOrgProfile(false);
+    } else if (viewMode !== 'org') {
+      setShowOrgProfile(false);
+    }
+  }, [viewMode, activeDonor]);
 
   // Fetch data whenever active names or selected person id change
   useEffect(() => {
@@ -953,38 +1000,42 @@ const PersonProfile = () => {
   }, [graphData, profileData, activeFirstName, activeLastName, selectedPeopleId]);
 
   const connections = useMemo(() => {
-    // Reconstruct current personId to match the graph
-    const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
-    const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
-    const personLabel = profileLabel || inputLabel || 'Selected Person';
-    const pid = (selectedPeopleId != null)
-      ? `person:${selectedPeopleId}`
-      : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${personLabel}`);
+    // Determine current graph center id (person or donor)
+    const centerIdLocal = (() => {
+      if (viewMode === 'org' && activeDonor && (activeDonor.id != null || (Array.isArray(activeDonor.ids) && activeDonor.ids.length > 0))) {
+        const ids = Array.isArray(activeDonor.ids) && activeDonor.ids.length > 0 ? activeDonor.ids : [activeDonor.id];
+        return `donor:${ids.slice().sort((a, b) => a - b).join('+')}`;
+      }
+      const profileLabel = profileData ? `${profileData.first_name ?? ''} ${profileData.last_name ?? ''}`.trim() : '';
+      const inputLabel = `${activeFirstName ?? ''} ${activeLastName ?? ''}`.trim();
+      const personLabel = profileLabel || inputLabel || 'Selected Person';
+      return (selectedPeopleId != null)
+        ? `person:${selectedPeopleId}`
+        : ((profileData && profileData.id != null) ? `person:${profileData.id}` : `person:${personLabel}`);
+    })();
 
-    // Recreate current graph nodes/links (depends on same deps as graphData)
+    const idOf = (endp) => (typeof endp === 'object' ? endp?.id : endp);
+
+    // Build a map of nodes for label/type lookup
     const nodes = new Map();
-    // Reuse graphData if possible for efficiency
     try {
       (graphData.nodes || []).forEach(n => nodes.set(n.id, n));
     } catch {
       // noop
     }
+
     const list = [];
-    const seen = new Map(); // id -> {label, types:Set}
+    const seen = new Map(); // id -> {label, nodeType, sources:Set}
 
     try {
       for (const l of (graphData.links || [])) {
+        const s = idOf(l.source);
+        const t = idOf(l.target);
         let otherId = null;
-        if (l.source && typeof l.source === 'object' && l.source.id === pid) {
-          otherId = typeof l.target === 'object' ? l.target.id : l.target;
-        } else if (l.target && typeof l.target === 'object' && l.target.id === pid) {
-          otherId = typeof l.source === 'object' ? l.source.id : l.source;
-        } else if (l.source === pid) {
-          otherId = l.target;
-        } else if (l.target === pid) {
-          otherId = l.source;
-        }
+        if (s === centerIdLocal) otherId = t;
+        else if (t === centerIdLocal) otherId = s;
         if (!otherId) continue;
+
         const n = nodes.get(otherId);
         if (!n) continue;
 
@@ -1018,7 +1069,7 @@ const PersonProfile = () => {
       return a.label.localeCompare(b.label);
     });
     return list;
-  }, [graphData, profileData, activeFirstName, activeLastName, selectedPeopleId]);
+  }, [graphData, viewMode, activeDonor, profileData, activeFirstName, activeLastName, selectedPeopleId]);
 
   // Render D3 force-directed graph
   useEffect(() => {
@@ -1620,14 +1671,14 @@ const PersonProfile = () => {
             </div>
           )}
 
-          {isLoading && (
+          {isSearching && (
             <div className="loading-message">
               <span className="loading-spinner">⏳</span>
               Loading results...
             </div>
           )}
 
-          {!isLoading && hasSearched && !error && (
+          {!isSearching && hasSearched && !error && (
             <div className="results-content">
               {/* People Matches (click to open Person form) */}
               {Array.isArray(peopleMatches) && peopleMatches.length > 1 && (
@@ -1652,172 +1703,8 @@ const PersonProfile = () => {
                 </div>
               )}
 
-              {/* Organisation Results */}
-              {(searchQuery.orgName || orgResults.length > 0 || orgError) && (
-                <div className="table-container" style={{ marginBottom: '1rem' }}>
-                  <h3 style={{ marginTop: 0, color: '#1f2937' }}>
-                    Organisation Results {isOrgLoading ? ' (loading...)' : ''}
-                  </h3>
-                  {orgError && (
-                    <div className="error-message">
-                      <span className="error-icon">⚠️</span>
-                      {orgError}
-                    </div>
-                  )}
-                  {!orgError && Array.isArray(orgResults) && orgResults.length > 0 && (
-                    <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: '0.5rem' }}>
-                      {orgResults.map((g) => {
-                        const label = g.displayName || g.org_name || [g.first_name || '', g.last_name || ''].filter(Boolean).join(' ').trim() || `Donor Group`;
-                        const peers = activeOrgPeers?.[g.peerKey] || activeOrgPeers?.[`group:${(Array.isArray(g.ids) ? g.ids.map((x)=>String(x)).sort().join('+') : '')}`] || null;
-                        return (
-                          <li key={g.key} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.5rem' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                              <span style={{ fontWeight: 700 }}>{label}</span>
-                              {Array.isArray(g.aliasNames) && g.aliasNames.length > 0 && (
-                                <span style={{ color: '#6b7280', fontSize: '0.9rem' }}>
-                                  Also known as: {g.aliasNames.join(', ')}
-                                </span>
-                              )}
-                              <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                <button
-                                  type="button"
-                                  className="reset-button"
-                                  onClick={() => loadOrgPeers(g.ids)}
-                                  title="Show linked people (recipients of this organisation)"
-                                >
-                                  View linked people
-                                </button>
-                                <button
-                                  type="button"
-                                  className="search-button"
-                                  onClick={() => handleSelectOrg(g)}
-                                  title="Open organisation profile"
-                                >
-                                  Open organisation view
-                                </button>
-                              </div>
-                            </div>
-                            {Array.isArray(peers) && peers.length > 0 && (
-                              <div style={{ marginTop: '0.5rem' }}>
-                                <div style={{ fontSize: '0.9rem', color: '#374151', marginBottom: '0.25rem' }}>
-                                  Linked People ({peers.length})
-                                </div>
-                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                  {peers.map((pr) => (
-                                    <button
-                                      key={pr.people_id}
-                                      type="button"
-                                      className="search-button"
-                                      onClick={() => handleClickPersonMatch({ id: pr.people_id, first_name: pr.first_name, last_name: pr.last_name })}
-                                      title="Open person profile"
-                                    >
-                                      {(pr.first_name || '') + ' ' + (pr.last_name || '')}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            {Array.isArray(peers) && peers.length === 0 && (
-                              <div style={{ marginTop: '0.25rem', fontSize: '0.9rem', color: '#6b7280' }}>
-                                No linked people found.
-                              </div>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                  {!orgError && !isOrgLoading && Array.isArray(orgResults) && orgResults.length === 0 && searchQuery.orgName && (
-                    <div style={{ fontSize: '0.9rem', color: '#6b7280' }}>
-                      No organisations found for "{searchQuery.orgName}".
-                    </div>
-                  )}
-                </div>
-              )}
 
-              {/* Organisation View summary */}
-              {viewMode === 'org' && activeDonor && (
-                <div className="table-container" style={{ marginBottom: '1rem' }}>
-                  <h3 style={{ marginTop: 0, color: '#1f2937' }}>
-                    Organisation Profile — {activeDonor.org_name || ([activeDonor.first_name || '', activeDonor.last_name || ''].filter(Boolean).join(' ').trim() || `Donor ${activeDonor.id}`)}
-                  </h3>
-
-                  {/* People funded (aggregated) */}
-                  <div style={{ marginTop: '0.5rem' }}>
-                    <h4 style={{ margin: '0 0 0.5rem 0', color: '#111827' }}>People funded</h4>
-                    <table className="min-w-full border">
-                      <thead>
-                        <tr>
-                          <th>Recipient</th>
-                          <th style={{ textAlign: 'right' }}>Total Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {Array.isArray(orgRecipients) && orgRecipients.length > 0 ? (
-                          orgRecipients.map((r) => {
-                            const name = [r.first_name || '', r.last_name || ''].filter(Boolean).join(' ').trim() || `Person ${r.people_id}`;
-                            const total = Number(orgTotalsByPerson?.[String(r.people_id)] || 0);
-                            return (
-                              <tr key={r.people_id}>
-                                <td>
-                                  <button
-                                    type="button"
-                                    className="search-button"
-                                    onClick={() => handleClickPersonMatch({ id: r.people_id, first_name: r.first_name, last_name: r.last_name })}
-                                    title="Open person profile"
-                                  >
-                                    {name}
-                                  </button>
-                                </td>
-                                <td style={{ textAlign: 'right' }}>${total.toLocaleString()}</td>
-                              </tr>
-                            );
-                          })
-                        ) : (
-                          <tr>
-                            <td colSpan={2} style={{ color: '#6b7280' }}>No recipients found.</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Donations by this organisation */}
-                  <div style={{ marginTop: '1rem' }}>
-                    <h4 style={{ margin: '0 0 0.5rem 0', color: '#111827' }}>Donations</h4>
-                    <table className="min-w-full border">
-                      <thead>
-                        <tr>
-                          <th>Date/Year</th>
-                          <th style={{ textAlign: 'right' }}>Amount</th>
-                          <th>Recipient</th>
-                          <th>Notes</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {Array.isArray(orgDonationRows) && orgDonationRows.length > 0 ? (
-                          orgDonationRows.map((d, idx) => {
-                            const recipient = (d.recipient_name) ||
-                              [d.first_name || d.recipient_first_name || '', d.last_name || d.recipient_last_name || ''].filter(Boolean).join(' ').trim();
-                            return (
-                              <tr key={idx}>
-                                <td>{d.date ? new Date(d.date).toLocaleDateString() : (d.year || '')}</td>
-                                <td style={{ textAlign: 'right' }}>${(Number(d.amount) || 0).toLocaleString()}</td>
-                                <td>{recipient}</td>
-                                <td>{d.notes || ''}</td>
-                              </tr>
-                            );
-                          })
-                        ) : (
-                          <tr>
-                            <td colSpan={4} style={{ color: '#6b7280' }}>No donations found for this organisation (in current dataset).</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+              {/* Organisation View summary moved below the graph */}
 
               {/* Graph */}
               <div style={{ marginBottom: '1rem' }}>
@@ -1825,6 +1712,11 @@ const PersonProfile = () => {
                   <h3 style={{ margin: 0, marginBottom: '0.5rem', color: '#1f2937' }}>
                     {(profileData?.first_name || activeFirstName) + ' ' + (profileData?.last_name || activeLastName)}
                   </h3>
+                )}
+                {viewMode === 'org' && activeDonor?.aliasNames?.length > 0 && (
+                  <div style={{ color: '#6b7280', marginBottom: '0.25rem' }}>
+                    Also known as: {activeDonor.aliasNames.join(', ')}
+                  </div>
                 )}
                 <div className="graph-wrap">
                   <svg ref={svgRef} className="person-graph" />
@@ -1910,6 +1802,103 @@ const PersonProfile = () => {
                     Donations by total amount; Meetings by frequency. Higher values pull nodes closer.
                   </div>
                 </div>
+
+                {/* Toggle for Organisation Profile */}
+                {viewMode === 'org' && activeDonor && (
+                  <div className="section-toggles" style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="search-button"
+                      onClick={() => setShowOrgProfile((v) => !v)}
+                      title={showOrgProfile ? 'Hide Organisation Profile' : 'Show Organisation Profile'}
+                    >
+                      {showOrgProfile ? '▼ Hide Organisation Profile' : '▶ Show Organisation Profile'}
+                    </button>
+                  </div>
+                )}
+
+                {/* Organisation Profile (shown below the graph for organisation view) */}
+                {viewMode === 'org' && activeDonor && showOrgProfile && (
+                  <div className="table-container" style={{ marginTop: '0.75rem' }}>
+                    <h3 style={{ marginTop: 0, color: '#1f2937' }}>
+                      Organisation Profile — {activeDonor.org_name || ([activeDonor.first_name || '', activeDonor.last_name || ''].filter(Boolean).join(' ').trim() || (activeDonor.id ? `Donor ${activeDonor.id}` : ''))}
+                    </h3>
+
+                    {/* People funded (aggregated) */}
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <table className="min-w-full border">
+                        <thead>
+                          <tr>
+                            <th>Recipient</th>
+                            <th style={{ textAlign: 'right' }}>Total Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Array.isArray(orgRecipients) && orgRecipients.length > 0 ? (
+                            orgRecipients.map((r) => {
+                              const name = [r.first_name || '', r.last_name || ''].filter(Boolean).join(' ').trim() || `Person ${r.people_id}`;
+                              const total = Number(orgTotalsByPerson?.[String(r.people_id)] || 0);
+                              return (
+                                <tr key={r.people_id}>
+                                  <td>
+                                    <button
+                                      type="button"
+                                      className="search-button"
+                                      onClick={() => handleClickPersonMatch({ id: r.people_id, first_name: r.first_name, last_name: r.last_name })}
+                                      title="Open person profile"
+                                    >
+                                      {name}
+                                    </button>
+                                  </td>
+                                  <td style={{ textAlign: 'right' }}>${total.toLocaleString()}</td>
+                                </tr>
+                              );
+                            })
+                          ) : (
+                            <tr>
+                              <td colSpan={2} style={{ color: '#6b7280' }}>No recipients found.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Donations by this organisation */}
+                    <div style={{ marginTop: '1rem' }}>
+                      <h4 style={{ margin: '0 0 0.5rem 0', color: '#111827' }}>Donations</h4>
+                      <table className="min-w-full border">
+                        <thead>
+                          <tr>
+                            <th>Date/Year</th>
+                            <th style={{ textAlign: 'right' }}>Amount</th>
+                            <th>Recipient</th>
+                            <th>Notes</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Array.isArray(orgDonationRows) && orgDonationRows.length > 0 ? (
+                            orgDonationRows.map((d, idx) => {
+                              const recipient = (d.recipient_name) ||
+                                [d.first_name || d.recipient_first_name || '', d.last_name || d.recipient_last_name || ''].filter(Boolean).join(' ').trim();
+                              return (
+                                <tr key={idx}>
+                                  <td>{d.date ? new Date(d.date).toLocaleDateString() : (d.year || '')}</td>
+                                  <td style={{ textAlign: 'right' }}>${(Number(d.amount) || 0).toLocaleString()}</td>
+                                  <td>{recipient}</td>
+                                  <td>{d.notes || ''}</td>
+                                </tr>
+                              );
+                            })
+                          ) : (
+                            <tr>
+                              <td colSpan={4} style={{ color: '#6b7280' }}>No donations found for this organisation (in current dataset).</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
 
                 {selectedConnection && (
                   <div key={(selectedConnection.id || selectedConnection.label || 'sel')} className="table-container" style={{ marginTop: '0.75rem' }}>
@@ -2078,54 +2067,7 @@ const PersonProfile = () => {
                       </tbody>
                     </table>
                   </div>
-                  {selectedConnection && Array.isArray(connectionDetails) && connectionDetails.length > 0 && (
-                    <div className="table-container" style={{ marginTop: '0.75rem' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-                        <h4 style={{ margin: 0, color: '#111827' }}>
-                          Details for: {selectedConnection.label} — {selectedConnection.sources && selectedConnection.sources.join(', ')}
-                        </h4>
-                        <button
-                          type="button"
-                          className="reset-button"
-                          onClick={() => setShowConnectionsDetails((v) => !v)}
-                          title={showConnectionsDetails ? 'Hide details' : 'Show details'}
-                        >
-                          {showConnectionsDetails ? 'Hide' : 'Show'}
-                        </button>
-                      </div>
-                      {showConnectionsDetails && (
-                        <ul style={{ listStyle: 'none', padding: 0, marginTop: '0.5rem', display: 'grid', gap: '0.5rem' }}>
-                          {connectionDetails.map((item, idx) => (
-                            <li key={idx} style={{ border: '1px solid #e5e7eb', borderRadius: 6, padding: '0.5rem' }}>
-                              {item.kind === 'meeting' ? (
-                                <div>
-                                  <div><b>Date:</b> {item.data.date ? new Date(item.data.date).toLocaleDateString() : 'N/A'}</div>
-                                  <div><b>Title:</b> {item.data.title || 'N/A'}</div>
-                                  <div><b>Type:</b> {item.data.type || 'N/A'}</div>
-                                  <div><b>Portfolio:</b> {item.data.portfolio || 'N/A'}</div>
-                                  <div><b>Location:</b> {item.data.location || 'N/A'}</div>
-                                  <div><b>Attendees:</b> {item.data.with_text ? String(item.data.with_text) : 'N/A'}</div>
-                                  <div><b>Notes:</b> {item.data.notes || 'N/A'}</div>
-                                </div>
-                              ) : item.kind === 'donation' ? (
-                                <div>
-                                  <div><b>Date:</b> {item.data.date ? new Date(item.data.date).toLocaleDateString() : (item.data.year || 'N/A')}</div>
-                                  <div><b>Amount:</b> {typeof item.data.amount === 'number' ? `$${item.data.amount.toLocaleString()}` : `$${item.data.amount}`}</div>
-                                  <div><b>Donor:</b> {[item.data.donor_first_name || '', item.data.donor_last_name || ''].filter(Boolean).join(' ') || (item.data.donor_org_name || 'N/A')}</div>
-                                  <div><b>Location:</b> {item.data.location || 'N/A'}</div>
-                                  <div><b>Notes:</b> {item.data.notes || 'N/A'}</div>
-                                </div>
-                              ) : (
-                                <div>
-                                  <div><b>Party:</b> {partyGuess || 'N/A'}</div>
-                                </div>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
+                  
                   </>
                 ) : (
                   <p className="results-note">No direct connections were found for this person.</p>
@@ -2133,7 +2075,8 @@ const PersonProfile = () => {
               </div>
 
               {/* No results after search */}
-              {(!sortedDonations || sortedDonations.length === 0) &&
+              {viewMode === 'person' &&
+                (!sortedDonations || sortedDonations.length === 0) &&
                 (!sortedMeetings || sortedMeetings.length === 0) &&
                 !profileData && (
                   <div className="no-results">
