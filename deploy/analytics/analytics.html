@@ -31,6 +31,7 @@
   <main>
     <div class="tab-nav">
       <button data-tab="donations" class="active">Donations Overview</button>
+      <button data-tab="orgs">Organizations</button>
       <button data-tab="meetings">Meetings Search</button>
       <button data-tab="candidates">Candidates</button>
     </div>
@@ -76,6 +77,62 @@
       
       <div id="donationsStatus" class="status"></div>
       <p class="note">Use Donations Overview for charts. This dashboard shows results without bar charts.</p>
+    </section>
+
+    <!-- Organizations -->
+    <section id="tab-orgs" class="panel" hidden>
+      <h2>Organizations</h2>
+      <div class="search-form">
+        <div class="row">
+          <div class="col-8">
+            <label>Organization Name</label>
+            <input id="orgName" placeholder="e.g., FOUNDATION">
+          </div>
+          <div class="col-4">
+            <label>&nbsp;</label>
+            <button id="btnSearchOrgs" class="btn primary">Search</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="orgsStatus" class="status"></div>
+
+      <div class="panel" style="overflow:auto; max-height: 400px;">
+        <table id="orgsTable">
+          <thead><tr><th>ID</th><th>Name</th><th>Open</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div id="orgDetails" class="panel" hidden>
+        <h3 style="margin-top:0;">Organization: <span id="orgTitle"></span></h3>
+
+        <div class="panel" style="overflow:auto; max-height: 400px;">
+          <h4>Recipients (Aggregated)</h4>
+          <table id="orgRecipientsTable">
+            <thead><tr><th>Recipient</th><th style="text-align:right;">Total Amount</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="panel" style="overflow:auto; max-height: 400px;">
+          <h4>Donations</h4>
+          <table id="orgDonationsTable">
+            <thead><tr><th>Date/Year</th><th style="text-align:right;">Amount</th><th>Recipient</th><th>Notes</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="panel" style="overflow:auto; max-height: 400px;">
+          <h4>Meetings (text match)</h4>
+          <table id="orgMeetingsTable">
+            <thead><tr><th>Date</th><th>Time</th><th>Portfolio</th><th>Title</th><th>Location</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <p class="note">Search organizations and open details to view recipients, donations, and meetings mentioning the organization.</p>
     </section>
 
     <!-- Meetings Search -->
@@ -184,6 +241,160 @@
     const API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '../api/index.php';
 
 
+
+    // Organizations
+    async function searchOrganizations() {
+      const status = document.getElementById('orgsStatus');
+      status.textContent = 'Loading...';
+      if (location.protocol === 'file:') {
+        status.textContent = 'Open this page via a local web server to enable data fetching.';
+        renderOrganizations([]);
+        return;
+      }
+      const name = (document.getElementById('orgName').value || '').trim();
+      if (!name) {
+        status.textContent = 'Enter an organization name.';
+        renderOrganizations([]);
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}?route=/organizations/search&name=${encodeURIComponent(name)}`, { cache: 'no-store' });
+        const rows = await res.json();
+        renderOrganizations(Array.isArray(rows) ? rows : []);
+        status.textContent = Array.isArray(rows) ? `Returned ${rows.length} result(s)` : 'No data';
+      } catch (e) {
+        status.textContent = 'Error loading organizations: ' + e;
+        renderOrganizations([]);
+      }
+    }
+
+    function renderOrganizations(rows) {
+      const tbody = document.querySelector('#orgsTable tbody');
+      if (!tbody) return;
+      tbody.innerHTML = '';
+      if (!Array.isArray(rows) || rows.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 3; td.className = 'warn'; td.textContent = 'No organizations found';
+        tr.appendChild(td); tbody.appendChild(tr); return;
+      }
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        const id = r.id ?? '';
+        const name = r.name ?? '';
+        [id, name].forEach(v => {
+          const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+        });
+        const tdBtn = document.createElement('td');
+        const btn = document.createElement('button');
+        btn.className = 'btn primary';
+        btn.textContent = 'Open';
+        btn.addEventListener('click', () => loadOrgDetails(id, name));
+        tdBtn.appendChild(btn); tr.appendChild(tdBtn);
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function loadOrgDetails(orgId, orgName) {
+      const title = document.getElementById('orgTitle');
+      const details = document.getElementById('orgDetails');
+      if (title) title.textContent = `${orgName} (ID ${orgId})`;
+      if (details) details.hidden = false;
+
+      // Donations by organization
+      let donations = [];
+      try {
+        const res = await fetch(`${API_BASE}?route=/donations/by-organization&organization_id=${encodeURIComponent(orgId)}`, { cache: 'no-store' });
+        donations = await res.json();
+        if (!Array.isArray(donations)) donations = [];
+      } catch { donations = []; }
+      renderOrgDonations(donations);
+
+      // Meetings mentioning the organization
+      let meetings = [];
+      try {
+        if (orgName) {
+          const resM = await fetch(`${API_BASE}?route=/meetings/search-by-org&name=${encodeURIComponent(orgName)}`, { cache: 'no-store' });
+          meetings = await resM.json();
+          if (!Array.isArray(meetings)) meetings = [];
+        }
+      } catch { meetings = []; }
+      renderOrgMeetings(meetings);
+    }
+
+    function renderOrgDonations(rows) {
+      const tbody = document.querySelector('#orgDonationsTable tbody');
+      if (tbody) tbody.innerHTML = '';
+      const agg = {};
+      if (!Array.isArray(rows) || rows.length === 0) {
+        if (tbody) {
+          const tr = document.createElement('tr');
+          const td = document.createElement('td');
+          td.colSpan = 4; td.className = 'warn'; td.textContent = 'No donations for this organization';
+          tr.appendChild(td); tbody.appendChild(tr);
+        }
+      } else if (tbody) {
+        rows.forEach(d => {
+          const tr = document.createElement('tr');
+          const date = d.date ? new Date(d.date).toLocaleDateString() : (d.year || '');
+          const amt = Number(d.amount) || 0;
+          const recipient = [d.candidate_first_name || '', d.candidate_last_name || ''].filter(Boolean).join(' ') || '';
+          const notes = d.notes || '';
+          const td1 = document.createElement('td'); td1.textContent = date; tr.appendChild(td1);
+          const td2 = document.createElement('td'); td2.style.textAlign = 'right'; td2.textContent = (amt ? '$' : '') + amt.toLocaleString(); tr.appendChild(td2);
+          const td3 = document.createElement('td'); td3.textContent = recipient; tr.appendChild(td3);
+          const td4 = document.createElement('td'); td4.textContent = notes; tr.appendChild(td4);
+          tbody.appendChild(tr);
+          const key = recipient || 'Unknown';
+          agg[key] = (agg[key] || 0) + amt;
+        });
+      }
+      const rBody = document.querySelector('#orgRecipientsTable tbody');
+      if (rBody) {
+        rBody.innerHTML = '';
+        const entries = Object.entries(agg).sort((a,b)=>b[1]-a[1]);
+        if (entries.length === 0) {
+          const tr = document.createElement('tr');
+          const td = document.createElement('td'); td.colSpan = 2; td.className = 'warn'; td.textContent = 'No recipients';
+          tr.appendChild(td); rBody.appendChild(tr);
+        } else {
+          entries.forEach(([name,total])=>{
+            const tr = document.createElement('tr');
+            const td1 = document.createElement('td'); td1.textContent = name; tr.appendChild(td1);
+            const td2 = document.createElement('td'); td2.style.textAlign='right'; td2.textContent = '$' + (Number(total)||0).toLocaleString(); tr.appendChild(td2);
+            rBody.appendChild(tr);
+          });
+        }
+      }
+    }
+
+    function renderOrgMeetings(rows) {
+      const tbody = document.querySelector('#orgMeetingsTable tbody');
+      if (tbody) tbody.innerHTML = '';
+      if (!Array.isArray(rows) || rows.length === 0) {
+        if (tbody) {
+          const tr = document.createElement('tr');
+          const td = document.createElement('td');
+          td.colSpan = 5; td.className = 'warn'; td.textContent = 'No meetings found mentioning this organization';
+          tr.appendChild(td); tbody.appendChild(tr);
+        }
+        return;
+      }
+      if (tbody) {
+        rows.forEach(r=>{
+          const tr = document.createElement('tr');
+          const date = r.date || '';
+          const time = [r.start_time, r.end_time].filter(Boolean).join(' - ');
+          const portfolio = r.portfolio || '';
+          const title = r.title || '';
+          const loc = r.location || '';
+          [date, time, portfolio, title, loc].forEach(v=>{
+            const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+      }
+    }
 
     async function searchDonations() {
       const year = document.getElementById('year').value;
@@ -365,6 +576,8 @@
     }
 
     // Wire events
+    const btnOrgSearch = document.getElementById('btnSearchOrgs');
+    if (btnOrgSearch) btnOrgSearch.addEventListener('click', searchOrganizations);
     document.getElementById('btnSearchDonations').addEventListener('click', searchDonations);
     document.getElementById('btnSearchMeetings').addEventListener('click', searchMeetings);
     document.getElementById('btnSearchCandidates').addEventListener('click', searchCandidates);

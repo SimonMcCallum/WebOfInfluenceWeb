@@ -1815,6 +1815,25 @@ function handle_ministerial_diaries_search(): void {
   json_response($rows);
 }
 
+/** Meetings search by organization/keyword (matches with_text/title/notes) */
+function handle_meetings_search_by_org(): void {
+  $name = $_GET['name'] ?? null;
+  if (!$name) {
+    json_response(['error' => 'Provide name'], 400);
+  }
+  $like = '%' . $name . '%';
+  $sql = "SELECT id, date, start_time, end_time, location, notes, type, portfolio, title, with_text
+          FROM meetings
+          WHERE (with_text LIKE ? OR title LIKE ? OR notes LIKE ?)
+          ORDER BY date ASC, id ASC
+          LIMIT 500";
+  $stmt = pdo()->prepare($sql);
+  $stmt->execute([$like, $like, $like]);
+  $rows = $stmt->fetchAll();
+  if (!$rows) json_response([]);
+  json_response($rows);
+}
+
 /** Admin: GET /admin */
 function handle_admin_get(): void {
   // Populate tables and server CSV list
@@ -4903,6 +4922,7 @@ try {
   }
 
   if ($METHOD === 'GET' && $ROUTE === '/ministerial_diaries/search-cand-filter') handle_ministerial_diaries_search();
+  if ($METHOD === 'GET' && $ROUTE === '/meetings/search-by-org') handle_meetings_search_by_org();
   if ($METHOD === 'GET' && $ROUTE === '/donations/by-person') handle_donations_by_person();
   if ($METHOD === 'GET' && $ROUTE === '/donations/by-donor') handle_donations_by_donor();
   if ($METHOD === 'GET' && $ROUTE === '/donors/search') handle_donors_search();
