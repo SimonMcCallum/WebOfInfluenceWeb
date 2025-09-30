@@ -314,6 +314,13 @@ const PersonProfile = () => {
   // Click a connection to show underlying entries (meetings/donations/affiliation)
   const handleClickConnection = (conn) => {
     try {
+      // Toggle off if the same item is clicked again (from graph or table)
+      if (conn && selectedConnection && selectedConnection.id === conn.id) {
+        setSelectedConnection(null);
+        setConnectionDetails([]);
+        return;
+      }
+
       setSelectedConnection(conn || null);
       // Clear previous details to ensure immediate UI refresh on new selection
       setConnectionDetails([]);
@@ -1744,7 +1751,7 @@ const PersonProfile = () => {
 
                   {/* Edge weighting note (always on) */}
                   <div style={{ color: '#6b7280', fontSize: '0.9rem' }}>
-                    Edge weighting is always on: Donations by total amount; Meetings by frequency. Higher values pull nodes closer.
+                    Donations by total amount; Meetings by frequency. Higher values pull nodes closer.
                   </div>
                 </div>
 
