@@ -319,6 +319,29 @@ function existing_columns(string $table): array {
   }
 }
 
+/** Check if a column exists on the current DB table */
+function column_exists(string $table, string $column): bool {
+  try {
+    $sql = "SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1";
+    $stmt = pdo()->prepare($sql);
+    $stmt->execute([$table, $column]);
+    return (bool)$stmt->fetchColumn();
+  } catch (Throwable $e) {
+    return false;
+  }
+}
+
+/** Check if a table exists in current DB */
+function table_exists(string $table): bool {
+  try {
+    $stmt = pdo()->prepare("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1");
+    $stmt->execute([$table]);
+    return (bool)$stmt->fetchColumn();
+  } catch (Throwable $e) {
+    return false;
+  }
+}
+
 /** Foreign key helpers for safe TRUNCATE (cascade children then parent) */
 function find_referencing_tables(string $table): array {
   $sql = "SELECT TABLE_NAME
@@ -2266,6 +2289,8 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
     $first = trim((string)$first);
     $last  = trim((string)$last);
     $org   = trim((string)$org);
+
+    // Determine normalized donor identity
     $normalized = '';
     if ($org !== '') {
       $normalized = mb_strtoupper($org, 'UTF-8');
@@ -2273,27 +2298,77 @@ function handle_donations_import_with_candidate_mapping(string $tmpPath, string 
       $normalized = mb_strtoupper(trim($first . ' ' . $last), 'UTF-8');
     }
 
-    // Try find by normalized_name if present
-    if ($normalized !== '') {
-      $stmt = pdo()->prepare('SELECT id FROM donors WHERE normalized_name = ? LIMIT 1');
-      $stmt->execute([$normalized]);
-      $row = $stmt->fetch();
-      if ($row && isset($row['id'])) return (int)$row['id'];
-    } else {
-      // Fallback: look for exact first/last/org (weak)
-      $stmt = pdo()->prepare('SELECT id FROM donors WHERE COALESCE(first_name,"") = ? AND COALESCE(last_name,"") = ? AND COALESCE(org_name,"") = ? LIMIT 1');
-      $stmt->execute([$first, $last, $org]);
-      $row = $stmt->fetch();
-      if ($row && isset($row['id'])) return (int)$row['id'];
+    // Check if donors table has organization_id column
+    static $donorsHasOrg = null;
+    if ($donorsHasOrg === null) {
+      $donorsHasOrg = column_exists('donors', 'organization_id');
     }
 
-    // Insert new donor
+    // If an org is provided, resolve/create organization row
+    $orgId = null;
+    if ($org !== '') {
+      try {
+        $orgId = get_or_create_organization_id($org);
+      } catch (Throwable $e) {
+        $orgId = null;
+      }
+    }
+
+    // Try find donor by normalized_name first
+    if ($normalized !== '') {
+      $stmt = pdo()->prepare('SELECT id, organization_id FROM donors WHERE normalized_name = ? LIMIT 1');
+      $stmt->execute([$normalized]);
+      $row = $stmt->fetch();
+      if ($row && isset($row['id'])) {
+        // If existing donor lacks organization_id but we have one, update it
+        if ($donorsHasOrg && $orgId && empty($row['organization_id'])) {
+          try {
+            $upd = pdo()->prepare('UPDATE donors SET organization_id = ? WHERE id = ?');
+            $upd->execute([$orgId, (int)$row['id']]);
+          } catch (Throwable $e) { /* ignore */ }
+        }
+        return (int)$row['id'];
+      }
+    } else {
+      // Fallback search on exact fields
+      $sql = 'SELECT id, organization_id FROM donors WHERE COALESCE(first_name,"") = ? AND COALESCE(last_name,"") = ? AND COALESCE(org_name,"") = ? LIMIT 1';
+      $stmt = pdo()->prepare($sql);
+      $stmt->execute([$first, $last, $org]);
+      $row = $stmt->fetch();
+      if ($row && isset($row['id'])) {
+        if ($donorsHasOrg && $orgId && empty($row['organization_id'])) {
+          try {
+            $upd = pdo()->prepare('UPDATE donors SET organization_id = ? WHERE id = ?');
+            $upd->execute([$orgId, (int)$row['id']]);
+          } catch (Throwable $e) { /* ignore */ }
+        }
+        return (int)$row['id'];
+      }
+    }
+
+    // Insert new donor (prefer including organization_id when supported)
     try {
-      $ins = pdo()->prepare('INSERT INTO donors (first_name, last_name, org_name, normalized_name) VALUES (?, ?, ?, ?)');
-      $ins->execute([$first !== '' ? $first : null, $last !== '' ? $last : null, $org !== '' ? $org : null, $normalized !== '' ? $normalized : null]);
+      if ($donorsHasOrg) {
+        $ins = pdo()->prepare('INSERT INTO donors (first_name, last_name, org_name, normalized_name, organization_id) VALUES (?, ?, ?, ?, ?)');
+        $ins->execute([
+          $first !== '' ? $first : null,
+          $last  !== '' ? $last  : null,
+          $org   !== '' ? $org   : null,
+          $normalized !== '' ? $normalized : null,
+          $orgId
+        ]);
+      } else {
+        $ins = pdo()->prepare('INSERT INTO donors (first_name, last_name, org_name, normalized_name) VALUES (?, ?, ?, ?)');
+        $ins->execute([
+          $first !== '' ? $first : null,
+          $last  !== '' ? $last  : null,
+          $org   !== '' ? $org   : null,
+          $normalized !== '' ? $normalized : null
+        ]);
+      }
       return (int)pdo()->lastInsertId();
     } catch (Throwable $e) {
-      // If unique normalized_name constraint hit, re-select
+      // On unique normalized_name conflict, re-select
       if ($normalized !== '') {
         $stmt = pdo()->prepare('SELECT id FROM donors WHERE normalized_name = ? LIMIT 1');
         $stmt->execute([$normalized]);
@@ -2609,6 +2684,45 @@ function get_or_create_electorate_id(string $name): ?int {
   $ins = pdo()->prepare('INSERT INTO electorates (name) VALUES (?)');
   $ins->execute([$name]);
   return (int)pdo()->lastInsertId();
+}
+
+/** Helper: get or create organization by name (case-insensitive) */
+function get_or_create_organization_id(string $name): ?int {
+  $name = trim($name);
+  if ($name === '') return null;
+  // Prefer matching on normalized_name when available
+  $normalized = mb_strtoupper($name, 'UTF-8');
+  // Try by normalized_name first if column exists
+  $hasNorm = column_exists('organizations', 'normalized_name');
+  if ($hasNorm) {
+    $stmt = pdo()->prepare('SELECT id FROM organizations WHERE normalized_name = ? LIMIT 1');
+    $stmt->execute([$normalized]);
+    $row = $stmt->fetch();
+    if ($row && isset($row['id'])) return (int)$row['id'];
+  }
+  // Fallback to name exact (case-insensitive)
+  $stmt = pdo()->prepare('SELECT id FROM organizations WHERE UPPER(name) = UPPER(?) LIMIT 1');
+  $stmt->execute([$name]);
+  $row = $stmt->fetch();
+  if ($row && isset($row['id'])) return (int)$row['id'];
+
+  // Insert
+  try {
+    if ($hasNorm) {
+      $ins = pdo()->prepare('INSERT INTO organizations (name, normalized_name) VALUES (?, ?)');
+      $ins->execute([$name, $normalized]);
+    } else {
+      $ins = pdo()->prepare('INSERT INTO organizations (name) VALUES (?)');
+      $ins->execute([$name]);
+    }
+    return (int)pdo()->lastInsertId();
+  } catch (Throwable $e) {
+    // On unique violation, re-select by name
+    $stmt = pdo()->prepare('SELECT id FROM organizations WHERE UPPER(name) = UPPER(?) LIMIT 1');
+    $stmt->execute([$name]);
+    $row = $stmt->fetch();
+    return ($row && isset($row['id'])) ? (int)$row['id'] : null;
+  }
 }
 
 /** Normalize CSV header keys: "First Name" -> "first_name", "CandidateName_First" -> "candidatename_first" */
@@ -3585,7 +3699,8 @@ function handle_csv_mapping_api(): void {
     'people' => ['id', 'first_name', 'last_name', 'created_at', 'updated_at'],
     'parties' => ['id', 'name', 'created_at', 'updated_at'],
     'electorates' => ['id', 'name', 'created_at', 'updated_at'],
-    'donors' => ['id', 'first_name', 'last_name', 'org_name', 'normalized_name', 'created_at', 'updated_at'],
+    'organizations' => ['id', 'name', 'normalized_name', 'created_at', 'updated_at'],
+    'donors' => ['id', 'first_name', 'last_name', 'org_name', 'normalized_name', 'organization_id', 'created_at', 'updated_at'],
     'candidate_overview' => [
       'id', 'original_id', 'year', 'people_id', 'party_id', 'electorate_id',
       'total_donations', 'total_expenses', 'part_a', 'part_b', 'part_c', 'part_d',
@@ -4665,31 +4780,104 @@ function handle_donors_search(): void {
   $conds = [];
   $params = [];
 
+  $hasOrgCol = column_exists('donors', 'organization_id');
+
   if ($org) {
-    $conds[] = 'UPPER(org_name) LIKE UPPER(?)';
-    $params[] = '%' . $org . '%';
+    if ($hasOrgCol) {
+      $conds[] = '(UPPER(COALESCE(d.org_name, "")) LIKE UPPER(?) OR UPPER(COALESCE(o.name, "")) LIKE UPPER(?))';
+      $params[] = '%' . $org . '%';
+      $params[] = '%' . $org . '%';
+    } else {
+      $conds[] = 'UPPER(COALESCE(d.org_name, "")) LIKE UPPER(?)';
+      $params[] = '%' . $org . '%';
+    }
   }
   if ($first) {
-    $conds[] = 'UPPER(COALESCE(first_name, "")) LIKE UPPER(?)';
+    $conds[] = 'UPPER(COALESCE(d.first_name, "")) LIKE UPPER(?)';
     $params[] = '%' . $first . '%';
   }
   if ($last) {
-    $conds[] = 'UPPER(COALESCE(last_name, "")) LIKE UPPER(?)';
+    $conds[] = 'UPPER(COALESCE(d.last_name, "")) LIKE UPPER(?)';
     $params[] = '%' . $last . '%';
   }
 
-  $sql = 'SELECT id, first_name, last_name, org_name 
-          FROM donors';
+  $select = 'SELECT d.id, d.first_name, d.last_name, d.org_name';
+  if ($hasOrgCol) {
+    $select .= ', d.organization_id, o.name AS organization_name';
+  } else {
+    $select .= ", NULL AS organization_id, NULL AS organization_name";
+  }
+
+  $sql = $select . ' FROM donors d ' . ($hasOrgCol ? 'LEFT JOIN organizations o ON o.id = d.organization_id ' : '');
+
   if (!empty($conds)) {
     $sql .= ' WHERE ' . implode(' AND ', $conds);
   }
-  $sql .= ' ORDER BY 
-              CASE WHEN org_name IS NOT NULL AND org_name <> "" THEN 0 ELSE 1 END,
-              org_name, last_name, first_name
-            LIMIT 50';
+
+  $coalesceName = $hasOrgCol ? 'COALESCE(o.name, d.org_name)' : 'd.org_name';
+  $sql .= ' ORDER BY CASE WHEN (COALESCE(d.org_name, "") <> ""' . ($hasOrgCol ? ' OR o.id IS NOT NULL' : '') . ') THEN 0 ELSE 1 END, ' . $coalesceName . ', d.last_name, d.first_name LIMIT 50';
 
   $stmt = pdo()->prepare($sql);
   $stmt->execute($params);
+  $rows = $stmt->fetchAll();
+  if (!$rows) json_response([]);
+  json_response($rows);
+}
+
+/** Organizations: search by name (partial, case-insensitive) */
+function handle_organizations_search(): void {
+  $name = $_GET['name'] ?? null;
+  if (!$name) {
+    json_response(['error' => 'Provide name'], 400);
+  }
+  $stmt = pdo()->prepare('SELECT id, name FROM organizations WHERE UPPER(name) LIKE UPPER(?) ORDER BY name LIMIT 50');
+  $stmt->execute(['%' . $name . '%']);
+  $rows = $stmt->fetchAll();
+  if (!$rows) json_response([]);
+  json_response($rows);
+}
+
+/** Organization by id */
+function handle_organization_by_id(): void {
+  $orgId = $_GET['organization_id'] ?? null;
+  if (!$orgId || !is_numeric($orgId)) {
+    json_response(['error' => 'organization_id is required'], 400);
+  }
+  $stmt = pdo()->prepare('SELECT id, name FROM organizations WHERE id = ?');
+  $stmt->execute([(int)$orgId]);
+  $row = $stmt->fetch();
+  if (!$row) json_response((object)[]);
+  json_response($row);
+}
+
+/** Donations by organization (via donors.organization_id) */
+function handle_donations_by_organization(): void {
+  $orgId = $_GET['organization_id'] ?? null;
+  if (!$orgId || !is_numeric($orgId)) {
+    json_response(['error' => 'organization_id is required'], 400);
+  }
+  if (!column_exists('donors', 'organization_id')) {
+    json_response(['error' => 'donors.organization_id column not found. Apply DB migration first.'], 400);
+  }
+
+  $sql = "SELECT 
+            dnt.id,
+            dnt.year,
+            dnt.date,
+            dnt.amount,
+            dnt.money_or_goods_services,
+            dnt.notes,
+            dnt.location,
+            dnt.donor_id,
+            p.first_name AS candidate_first_name,
+            p.last_name  AS candidate_last_name
+          FROM donations dnt
+          JOIN donors dr ON dr.id = dnt.donor_id
+          LEFT JOIN people p ON p.id = dnt.candidate_person_id
+          WHERE dr.organization_id = ?
+          ORDER BY COALESCE(dnt.date, CONCAT(dnt.year, '-01-01')) ASC, dnt.id ASC";
+  $stmt = pdo()->prepare($sql);
+  $stmt->execute([(int)$orgId]);
   $rows = $stmt->fetchAll();
   if (!$rows) json_response([]);
   json_response($rows);
@@ -4718,6 +4906,9 @@ try {
   if ($METHOD === 'GET' && $ROUTE === '/donations/by-person') handle_donations_by_person();
   if ($METHOD === 'GET' && $ROUTE === '/donations/by-donor') handle_donations_by_donor();
   if ($METHOD === 'GET' && $ROUTE === '/donors/search') handle_donors_search();
+  if ($METHOD === 'GET' && $ROUTE === '/organizations/search') handle_organizations_search();
+  if ($METHOD === 'GET' && $ROUTE === '/organization/search-id') handle_organization_by_id();
+  if ($METHOD === 'GET' && $ROUTE === '/donations/by-organization') handle_donations_by_organization();
 
   // AI
   if ($METHOD === 'POST' && $ROUTE === '/ai/extract-names') handle_ai_extract_names();

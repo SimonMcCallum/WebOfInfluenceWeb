@@ -39,6 +39,20 @@ CREATE TABLE IF NOT EXISTS donors (
   CONSTRAINT uq_donors_normalized UNIQUE (normalized_name)
 ) ENGINE=InnoDB;
 
+-- Organizations
+CREATE TABLE IF NOT EXISTS organizations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  normalized_name VARCHAR(255) NULL,
+  CONSTRAINT uq_organizations_name UNIQUE (name),
+  INDEX idx_org_normalized (normalized_name)
+) ENGINE=InnoDB;
+
+-- Link donors to organizations (optional)
+ALTER TABLE donors ADD COLUMN organization_id INT NULL;
+ALTER TABLE donors
+  ADD CONSTRAINT fk_donors_org FOREIGN KEY (organization_id) REFERENCES woi.organizations(id);
+
 -- 3) Candidate overview (yearly aggregates per candidate)
 CREATE TABLE IF NOT EXISTS candidate_overview (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -107,14 +121,22 @@ CREATE TABLE IF NOT EXISTS meetings (
   INDEX idx_meetings_date (date)
 ) ENGINE=InnoDB;
 
--- Optional: attendees table if/when parsing with_text into structured attendees
--- CREATE TABLE IF NOT EXISTS meeting_attendees (
---   meeting_id INT NOT NULL,
---   person_id INT NOT NULL,
---   PRIMARY KEY (meeting_id, person_id),
---   CONSTRAINT fk_att_meeting FOREIGN KEY (meeting_id) REFERENCES woi.meetings(id) ON DELETE CASCADE,
---   CONSTRAINT fk_att_person  FOREIGN KEY (person_id)  REFERENCES woi.people(id)
--- ) ENGINE=InnoDB;
+-- Meeting attendees (normalized)
+CREATE TABLE IF NOT EXISTS meeting_attendees_people (
+  meeting_id INT NOT NULL,
+  person_id INT NOT NULL,
+  PRIMARY KEY (meeting_id, person_id),
+  CONSTRAINT fk_attp_meeting FOREIGN KEY (meeting_id) REFERENCES woi.meetings(id) ON DELETE CASCADE,
+  CONSTRAINT fk_attp_person  FOREIGN KEY (person_id)  REFERENCES woi.people(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS meeting_attendees_organizations (
+  meeting_id INT NOT NULL,
+  organization_id INT NOT NULL,
+  PRIMARY KEY (meeting_id, organization_id),
+  CONSTRAINT fk_atto_meeting FOREIGN KEY (meeting_id) REFERENCES woi.meetings(id) ON DELETE CASCADE,
+  CONSTRAINT fk_atto_org     FOREIGN KEY (organization_id) REFERENCES woi.organizations(id)
+) ENGINE=InnoDB;
 
 -- 6) Optional compatibility views (preserve legacy table names used by current UI)
 --    This allows SELECT * FROM Overviews_Candidate_Donations_By_Year.2017_Candidate_Donation_Overview to continue working.

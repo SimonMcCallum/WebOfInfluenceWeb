@@ -55,6 +55,22 @@ CREATE TABLE IF NOT EXISTS donors (
   INDEX idx_donors_names (first_name, last_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Organizations (first-class entities like people)
+CREATE TABLE IF NOT EXISTS organizations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  normalized_name VARCHAR(512) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT uq_organizations_name UNIQUE (name),
+  INDEX idx_org_normalized (normalized_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Link donors to organizations (if donor is an org or associated with one)
+ALTER TABLE donors ADD COLUMN IF NOT EXISTS organization_id INT NULL;
+ALTER TABLE donors
+  ADD CONSTRAINT IF NOT EXISTS fk_donors_org FOREIGN KEY (organization_id) REFERENCES organizations(id);
+
 -- Candidate overview (yearly aggregates per candidate)
 CREATE TABLE IF NOT EXISTS candidate_overview (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -124,6 +140,23 @@ CREATE TABLE IF NOT EXISTS meetings (
   CONSTRAINT fk_meetings_minister FOREIGN KEY (minister_person_id) REFERENCES people(id),
   INDEX idx_meetings_minister_date (minister_person_id, date),
   INDEX idx_meetings_date (date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Meeting attendees (normalized as people and/or organizations)
+CREATE TABLE IF NOT EXISTS meeting_attendees_people (
+  meeting_id INT NOT NULL,
+  person_id INT NOT NULL,
+  PRIMARY KEY (meeting_id, person_id),
+  CONSTRAINT fk_attp_meeting FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+  CONSTRAINT fk_attp_person  FOREIGN KEY (person_id)  REFERENCES people(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS meeting_attendees_organizations (
+  meeting_id INT NOT NULL,
+  organization_id INT NOT NULL,
+  PRIMARY KEY (meeting_id, organization_id),
+  CONSTRAINT fk_atto_meeting FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+  CONSTRAINT fk_atto_org     FOREIGN KEY (organization_id) REFERENCES organizations(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Import log table for tracking CSV imports and errors
