@@ -190,6 +190,7 @@ const PersonProfile = () => {
   const svgRef = useRef(null);
   const containerRef = useRef(null);
   const zoomRef = useRef(null);
+  const detailsRef = useRef(null);
 
   const handleBackToHome = () => navigate('/home');
 
@@ -309,12 +310,27 @@ const PersonProfile = () => {
   // Click a direct person match from /candidates/search
   const handleClickPersonMatch = (p) => {
     if (!p) return;
-    setSelectedPeopleId(p.id ?? null);
+    const pid = p.people_id ?? p.id ?? null;
+    setSelectedPeopleId(pid);
     const fn = (p.first_name || '').trim();
     const ln = (p.last_name || '').trim();
     setActiveFirstName(fn);
     setActiveLastName(ln);
     setSearchQuery({ firstName: fn, lastName: ln, orgName: '' });
+
+    // Switch to full Person view and clear org-centric state so the UI behaves like a direct person search
+    setViewMode('person');
+    setActiveDonor(null);
+    setOrgRecipients([]);
+    setOrgDonationRows([]);
+    setOrgTotalsByPerson({});
+    setOrgDonationsByRecipient({});
+    setShowOrgProfile(false);
+
+    // Clear any previous selection/details
+    setSelectedConnection(null);
+    setConnectionDetails([]);
+
     setError(null);
     setHasSearched(true);
   };
@@ -1550,15 +1566,13 @@ const PersonProfile = () => {
     }
   }, [selectedConnection, graphData, activeFirstName, activeLastName, profileData, selectedPeopleId]);
 
-  // Ensure the corresponding Connections table row is emphasized and scrolled into view when a node is selected
+  // When a node/connection is selected, scroll to the Details panel instead of the Connections table
   useEffect(() => {
     try {
-      const selId = selectedConnection?.id;
-      if (!selId) return;
-      // Attribute selector with quotes avoids escaping issues for characters like ":" and spaces
-      const el = document.querySelector(`.table-container tr.conn-row[data-id="${selId}"]`);
+      if (!selectedConnection) return;
+      const el = detailsRef.current;
       if (el && typeof el.scrollIntoView === 'function') {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     } catch {
       // ignore
@@ -1901,7 +1915,7 @@ const PersonProfile = () => {
                 )}
 
                 {selectedConnection && (
-                  <div key={(selectedConnection.id || selectedConnection.label || 'sel')} className="table-container" style={{ marginTop: '0.75rem' }}>
+                  <div ref={detailsRef} key={(selectedConnection.id || selectedConnection.label || 'sel')} className="table-container" style={{ marginTop: '0.75rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
                       <h4 style={{ margin: 0, color: '#111827' }}>
                         Details for: {selectedConnection.label} — {selectedConnection.sources && selectedConnection.sources.join(', ')}
