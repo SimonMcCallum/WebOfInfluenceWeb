@@ -1142,14 +1142,14 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
             Creates events for all rows in the meetings table that do not yet have an event.
             - Safe to re-run (uses INSERT IGNORE on unique meeting_id).
             - Sets host to the minister_person_id when available.
-            - Prefills attendees from meeting_attendees_people if that table exists.
+            - Prefills attendees_text from meetings.with_text when available.
           </div>
         </form>
 
         <form action="?route=/admin/ensure-events-schema" method="post" style="margin-bottom: .75rem;">
           <button type="submit">Create/Repair Events Tables</button>
           <div class="note">
-            Creates tables if missing: events, event_attendees (links to existing people/organizations).
+            Creates/repairs the events table and ensures the attendees_text column exists (no attendee link tables).
             Then reports existence status below. Safe to re-run.
           </div>
         </form>
@@ -3708,19 +3708,25 @@ function handle_admin_events_bootstrap(): void {
     $notes[] = "Insert events failed: " . $e->getMessage();
   }
 
-  // Prefill attendees if mapping table exists
+  // Prefill attendees_text if mapping table exists; otherwise leave as-is
   try {
     $existsMap = pdo()->query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'meeting_attendees_people'")->fetchColumn();
     if ($existsMap) {
-      $sqlLink = "INSERT IGNORE INTO `event_attendees` (event_id, person_id)
-                  SELECT e.id, map.person_id
-                  FROM `meeting_attendees_people` map
-                  JOIN `events` e ON e.meeting_id = map.meeting_id";
-      $lnk = pdo()->exec($sqlLink);
+      // Build a semicolon-separated list of full names and set attendees_text where empty
+      $sqlTxt = "UPDATE `events` e
+                 JOIN (
+                   SELECT map.meeting_id,
+                          GROUP_CONCAT(DISTINCT CONCAT(TRIM(p.first_name), ' ', TRIM(p.last_name)) SEPARATOR '; ') AS txt
+                   FROM meeting_attendees_people map
+                   JOIN people p ON p.id = map.person_id
+                   GROUP BY map.meeting_id
+                 ) x ON x.meeting_id = e.meeting_id
+                 SET e.attendees_text = CASE WHEN COALESCE(e.attendees_text,'') = '' THEN x.txt ELSE e.attendees_text END";
+      $lnk = pdo()->exec($sqlTxt);
       $linked = (int)($lnk ?: 0);
     }
   } catch (Throwable $e) {
-    $notes[] = "Prefill attendees failed: " . $e->getMessage();
+    $notes[] = "Prefill attendees_text failed: " . $e->getMessage();
   }
 
   try {
@@ -3754,10 +3760,8 @@ function handle_admin_ensure_events_schema(): void {
 
   // Verify existence
   $existsEv  = table_exists('events');
-  $existsEA  = table_exists('event_attendees');
 
-  $msg = "Events schema status — events: " . ($existsEv ? 'present' : 'missing')
-       . ", event_attendees: " . ($existsEA ? 'present' : 'missing') . ".";
+  $msg = "Events schema status — events: " . ($existsEv ? 'present' : 'missing') . ".";
 
   if (!empty($notes)) {
     $msg .= " Notes: " . implode(' | ', $notes);
@@ -3767,7 +3771,7 @@ function handle_admin_ensure_events_schema(): void {
     'tables' => list_tables_with_counts(),
     'server_csvs' => find_server_csvs(),
     'table_action_msg' => $msg,
-    'table_action_err' => ($existsEv && $existsEA) ? 0 : 1
+    'table_action_err' => ($existsEv) ? 0 : 1
   ];
   render_admin($ctx);
 }
@@ -5056,21 +5060,8 @@ function ensure_events_schema(): void {
   // unique idx on meeting_id to avoid duplicates when derived from a meeting
   try { pdo()->exec("ALTER TABLE `events` ADD UNIQUE `uq_events_meeting_id` (`meeting_id`)"); } catch (Throwable $e) { /* ignore if exists */ }
 
-  // attendees junction (single table mapping to existing people/organizations)
-  $sqlEA = "CREATE TABLE IF NOT EXISTS `event_attendees` (
-    `event_id` INT NOT NULL,
-    `person_id` INT NULL,
-    `organization_id` INT NULL,
-    `role` VARCHAR(128) NULL,
-    `source` VARCHAR(64) NULL,
-    PRIMARY KEY (`event_id`, `person_id`, `organization_id`),
-    INDEX `idx_ea_person` (`person_id`),
-    INDEX `idx_ea_org` (`organization_id`),
-    CONSTRAINT `fk_ea_event` FOREIGN KEY (`event_id`) REFERENCES `events`(`id`) ON DELETE CASCADE,
-    CONSTRAINT `fk_ea_person` FOREIGN KEY (`person_id`) REFERENCES `people`(`id`),
-    CONSTRAINT `fk_ea_org` FOREIGN KEY (`organization_id`) REFERENCES `organizations`(`id`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
-  try { pdo()->exec($sqlEA); } catch (Throwable $e) {}
+  // attendees stored as free text on events.attendees_text (no junction table)
+  try { if (!column_exists('events','attendees_text')) { pdo()->exec("ALTER TABLE `events` ADD COLUMN `attendees_text` TEXT NULL"); } } catch (Throwable $e) {}
 }
 
 /** Load a single event with attendees_people array */
@@ -5104,36 +5095,42 @@ function load_event_with_attendees(int $eventId): array {
     } catch (Throwable $e) {}
   }
 
-  // people attendees
+  // Build attendees from events.attendees_text by resolving to existing people/orgs
   $att = [];
-  try {
-    $q = "SELECT p.id, p.first_name, p.last_name
-          FROM event_attendees ea
-          JOIN people p ON p.id = ea.person_id
-          WHERE ea.event_id = ? AND ea.person_id IS NOT NULL
-          ORDER BY p.last_name, p.first_name";
-    $s = pdo()->prepare($q);
-    $s->execute([$eventId]);
-    $att = $s->fetchAll() ?: [];
-  } catch (Throwable $e) {
-    $att = [];
-  }
-  $event['attendees_people'] = $att;
-
-  // organization attendees
   $attOrg = [];
   try {
-    $q2 = "SELECT o.id, o.name
-           FROM event_attendees ea
-           JOIN organizations o ON o.id = ea.organization_id
-           WHERE ea.event_id = ? AND ea.organization_id IS NOT NULL
-           ORDER BY o.name";
-    $s2 = pdo()->prepare($q2);
-    $s2->execute([$eventId]);
-    $attOrg = $s2->fetchAll() ?: [];
+    $txt = (string)($event['attendees_text'] ?? '');
+    // Split on semicolons or commas/newlines
+    $parts = preg_split('/[;\n]|\\s*,\\s*/', $txt);
+    $seenP = [];
+    $seenO = [];
+    foreach ($parts as $raw) {
+      $name = trim((string)$raw);
+      if ($name === '' || mb_strlen($name) < 2) continue;
+
+      // Try resolve to a person by exact full-name match
+      $pstmt = pdo()->prepare('SELECT id, first_name, last_name FROM people WHERE UPPER(CONCAT(TRIM(first_name), " ", TRIM(last_name))) = UPPER(?) LIMIT 1');
+      $pstmt->execute([$name]);
+      $prow = $pstmt->fetch();
+      if ($prow && empty($seenP[(int)$prow['id']])) {
+        $att[] = ['id' => (int)$prow['id'], 'first_name' => $prow['first_name'], 'last_name' => $prow['last_name']];
+        $seenP[(int)$prow['id']] = true;
+        continue;
+      }
+
+      // Try resolve to an organization by name
+      $ostmt = pdo()->prepare('SELECT id, name FROM organizations WHERE UPPER(name) = UPPER(?) LIMIT 1');
+      $ostmt->execute([$name]);
+      $orow = $ostmt->fetch();
+      if ($orow && empty($seenO[(int)$orow['id']])) {
+        $attOrg[] = ['id' => (int)$orow['id'], 'name' => $orow['name']];
+        $seenO[(int)$orow['id']] = true;
+      }
+    }
   } catch (Throwable $e) {
-    $attOrg = [];
+    // ignore parsing failures
   }
+  $event['attendees_people'] = $att;
   $event['attendees_organizations'] = $attOrg;
 
   return $event;
@@ -5180,16 +5177,34 @@ function handle_event_from_meeting(): void {
   ]);
   $eventId = (int)pdo()->lastInsertId();
 
-  // 3) Prefill attendees from meeting_attendees_people if available
+  // 3) Prefill attendees_text from meeting_attendees_people if available; else fallback to meeting.with_text
   try {
-    $attQ = pdo()->prepare("SELECT person_id FROM meeting_attendees_people WHERE meeting_id = ?");
+    $names = [];
+    $attQ = pdo()->prepare("SELECT p.first_name, p.last_name FROM meeting_attendees_people map JOIN people p ON p.id = map.person_id WHERE map.meeting_id = ?");
     $attQ->execute([(int)$mid]);
-    $pids = array_map(fn($r) => (int)$r['person_id'], $attQ->fetchAll() ?: []);
-      if (!empty($pids)) {
-      $link = pdo()->prepare("INSERT IGNORE INTO event_attendees (event_id, person_id) VALUES (?, ?)");
-      foreach ($pids as $pid) {
-        if ($pid > 0) { $link->execute([$eventId, $pid]); }
+    $rows = $attQ->fetchAll() ?: [];
+    foreach ($rows as $r) {
+      $fn = trim((string)($r['first_name'] ?? ''));
+      $ln = trim((string)($r['last_name'] ?? ''));
+      $full = trim($fn . ' ' . $ln);
+      if ($full !== '') $names[] = $full;
+    }
+    if (empty($names)) {
+      // fallback to meetings.with_text
+      $wq = pdo()->prepare("SELECT with_text FROM meetings WHERE id = ?");
+      $wq->execute([(int)$mid]);
+      $w = $wq->fetchColumn();
+      if ($w) {
+        $parts = array_map('trim', preg_split('/[;\n]|\\s*,\\s*/', (string)$w));
+        foreach ($parts as $nm) {
+          if ($nm !== '') $names[] = $nm;
+        }
       }
+    }
+    if (!empty($names)) {
+      $txt = implode('; ', array_values(array_unique($names)));
+      $up = pdo()->prepare("UPDATE `events` SET attendees_text = ? WHERE id = ?");
+      $up->execute([$txt, $eventId]);
     }
   } catch (Throwable $e) {
     // ignore prefill errors
@@ -5281,9 +5296,20 @@ function handle_event_attendee_add(): void {
     json_response(['error' => 'Failed to resolve/create person'], 500);
   }
 
-  // Link
-  $ins = pdo()->prepare("INSERT IGNORE INTO `event_attendees` (event_id, person_id) VALUES (?, ?)");
-  $ins->execute([$eventId, $pid]);
+  // Append to attendees_text if not already present
+  $full = trim($first . ' ' . $last);
+  $cur = pdo()->prepare("SELECT attendees_text FROM `events` WHERE id = ?");
+  $cur->execute([$eventId]);
+  $txt = (string)($cur->fetchColumn() ?? '');
+  $parts = array_filter(array_map('trim', preg_split('/[;\n]|\\s*,\\s*/', $txt)));
+  $keyed = [];
+  foreach ($parts as $nm) { $keyed[mb_strtolower($nm, 'UTF-8')] = $nm; }
+  if ($full !== '' && !isset($keyed[mb_strtolower($full, 'UTF-8')])) {
+    $parts[] = $full;
+  }
+  $newTxt = implode('; ', array_values(array_unique($parts)));
+  $up = pdo()->prepare("UPDATE `events` SET attendees_text = ? WHERE id = ?");
+  $up->execute([$newTxt, $eventId]);
 
   json_response(['ok' => true, 'event_id' => $eventId, 'person_id' => $pid], 201);
 }
@@ -5307,8 +5333,31 @@ function handle_event_attendee_remove(): void {
   if ($eventId <= 0 || $personId <= 0) {
     json_response(['error' => 'event_id and person_id are required'], 400);
   }
-  $del = pdo()->prepare("DELETE FROM `event_attendees` WHERE event_id = ? AND person_id = ?");
-  $del->execute([$eventId, $personId]);
+
+  // Load person's display name
+  $ps = pdo()->prepare("SELECT TRIM(CONCAT(COALESCE(first_name,''),' ',COALESCE(last_name,''))) AS full FROM people WHERE id = ? LIMIT 1");
+  $ps->execute([$personId]);
+  $full = trim((string)($ps->fetchColumn() ?? ''));
+  if ($full === '') {
+    json_response(['error' => 'Person not found'], 404);
+  }
+
+  // Remove from attendees_text (case-insensitive, exact token match)
+  $cur = pdo()->prepare("SELECT attendees_text FROM `events` WHERE id = ?");
+  $cur->execute([$eventId]);
+  $txt = (string)($cur->fetchColumn() ?? '');
+  $parts = array_filter(array_map('trim', preg_split('/[;\n]|\\s*,\\s*/', $txt)));
+  $new = [];
+  $needle = mb_strtolower($full, 'UTF-8');
+  foreach ($parts as $nm) {
+    if (mb_strtolower($nm, 'UTF-8') !== $needle) {
+      $new[] = $nm;
+    }
+  }
+  $newTxt = implode('; ', array_values(array_unique($new)));
+  $up = pdo()->prepare("UPDATE `events` SET attendees_text = ? WHERE id = ?");
+  $up->execute([$newTxt, $eventId]);
+
   json_response(['ok' => true, 'event_id' => $eventId, 'person_id' => $personId]);
 }
 
@@ -5336,15 +5385,26 @@ function handle_event_attendee_add_org(): void {
     json_response(['error' => 'Event not found'], 404);
   }
 
-  // Resolve or create organization
+  // Resolve or create organization row
   $orgId = get_or_create_organization_id($orgName);
   if (!$orgId) {
     json_response(['error' => 'Failed to resolve/create organization'], 500);
   }
 
-  // Link
-  $ins = pdo()->prepare("INSERT IGNORE INTO `event_attendees` (event_id, organization_id) VALUES (?, ?)");
-  $ins->execute([$eventId, $orgId]);
+  // Append org name to attendees_text if not present
+  $cur = pdo()->prepare("SELECT attendees_text FROM `events` WHERE id = ?");
+  $cur->execute([$eventId]);
+  $txt = (string)($cur->fetchColumn() ?? '');
+  $parts = array_filter(array_map('trim', preg_split('/[;\n]|\\s*,\\s*/', $txt)));
+  $keyed = [];
+  foreach ($parts as $nm) { $keyed[mb_strtolower($nm, 'UTF-8')] = $nm; }
+  $needle = mb_strtolower($orgName, 'UTF-8');
+  if (!isset($keyed[$needle])) {
+    $parts[] = $orgName;
+  }
+  $newTxt = implode('; ', array_values(array_unique($parts)));
+  $up = pdo()->prepare("UPDATE `events` SET attendees_text = ? WHERE id = ?");
+  $up->execute([$newTxt, $eventId]);
 
   json_response(['ok' => true, 'event_id' => $eventId, 'organization_id' => $orgId], 201);
 }
@@ -5368,15 +5428,38 @@ function handle_event_attendee_remove_org(): void {
   if ($eventId <= 0 || $orgId <= 0) {
     json_response(['error' => 'event_id and organization_id are required'], 400);
   }
-  $del = pdo()->prepare("DELETE FROM `event_attendees` WHERE event_id = ? AND organization_id = ?");
-  $del->execute([$eventId, $orgId]);
+
+  // Lookup organization name
+  $os = pdo()->prepare("SELECT name FROM organizations WHERE id = ? LIMIT 1");
+  $os->execute([$orgId]);
+  $orgName = trim((string)($os->fetchColumn() ?? ''));
+  if ($orgName === '') {
+    json_response(['error' => 'Organization not found'], 404);
+  }
+
+  // Remove org name from attendees_text
+  $cur = pdo()->prepare("SELECT attendees_text FROM `events` WHERE id = ?");
+  $cur->execute([$eventId]);
+  $txt = (string)($cur->fetchColumn() ?? '');
+  $parts = array_filter(array_map('trim', preg_split('/[;\n]|\\s*,\\s*/', $txt)));
+  $new = [];
+  $needle = mb_strtolower($orgName, 'UTF-8');
+  foreach ($parts as $nm) {
+    if (mb_strtolower($nm, 'UTF-8') !== $needle) {
+      $new[] = $nm;
+    }
+  }
+  $newTxt = implode('; ', array_values(array_unique($new)));
+  $up = pdo()->prepare("UPDATE `events` SET attendees_text = ? WHERE id = ?");
+  $up->execute([$newTxt, $eventId]);
+
   json_response(['ok' => true, 'event_id' => $eventId, 'organization_id' => $orgId]);
 }
 
 /** Dispatch */
 try {
   // Ensure Events schema exists on any request (lazy auto-migration)
-  // This creates events and event_attendees tables if missing.
+  // This creates the events table and attendees_text column if missing.
   ensure_events_schema();
 
   if ($METHOD === 'GET' && $ROUTE === '/') handle_health();
