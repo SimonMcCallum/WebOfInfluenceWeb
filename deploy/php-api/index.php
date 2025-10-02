@@ -4653,6 +4653,27 @@ function load_event_with_attendees(int $eventId): array {
         continue;
       }
 
+      // Second-chance: strip titles/honorifics like "MP", "Hon", etc and retry as person
+      $nameClean = trim(preg_replace(
+        [
+          '/\b(Rt\.?\s*Hon\.?|Rt\s*Hon|Hon\.?|Dr|Sir|Dame|Councillor|Minister|MP)\b\.?/i',
+          '/\([^)]*\)/',
+          '/\s+/'
+        ],
+        [' ', ' ', ' '],
+        (string)$name
+      ));
+      if ($nameClean !== '' && strcasecmp($nameClean, (string)$name) !== 0) {
+        $pstmt = pdo()->prepare('SELECT id, first_name, last_name FROM people WHERE UPPER(CONCAT(TRIM(first_name), " ", TRIM(last_name))) = UPPER(?) LIMIT 1');
+        $pstmt->execute([$nameClean]);
+        $prow = $pstmt->fetch();
+        if ($prow && empty($seenP[(int)$prow['id']])) {
+          $att[] = ['id' => (int)$prow['id'], 'first_name' => $prow['first_name'], 'last_name' => $prow['last_name']];
+          $seenP[(int)$prow['id']] = true;
+          continue;
+        }
+      }
+
       // Try resolve to an organization by name
       $ostmt = pdo()->prepare('SELECT id, name FROM organizations WHERE UPPER(name) = UPPER(?) LIMIT 1');
       $ostmt->execute([$name]);
@@ -4681,7 +4702,8 @@ function load_event_with_attendees(int $eventId): array {
           foreach ($kw as $k) { if (stripos($cand, $k) !== false) { $signals++; break; } }
           if (preg_match('/\b(Representatives|Council|Trust|Inc|Ltd|Limited|Incorporated|Society|Association|Federation|Commission)\.?$/i', $cand)) $signals++;
           if (preg_match('/^(?:[A-Z][A-Za-z.&\'-]+\s+){1,}[A-Z][A-Za-z.&\'-]+$/', $cand)) $signals++; // multiple capitalized words
-          if (preg_match('/\b[A-Z]{2,8}\b/', $cand)) $signals++; // acronym signal
+          // Acronym signal (ignore bare "MP" which denotes a person title)
+          if (preg_match('/\b([A-Z]{2,8})\b/', $cand, $mm) && ($mm[1] !== 'MP')) $signals++;
 
           // Avoid creating orgs for plain person-like tokens
           if ($signals > 0) {
@@ -4763,7 +4785,8 @@ function load_event_with_attendees(int $eventId): array {
           foreach ($kw as $k) { if (stripos($pSan, $k) !== false) { $signals++; break; } }
           if (preg_match('/\b(Representatives|Council|Trust|Inc|Ltd|Limited|Incorporated|Society|Association|Federation|Commission)\.?$/i', $pSan)) $signals++;
           if (preg_match('/^(?:[A-Z][A-Za-z.&\'-]+\s+){1,}[A-Z][A-Za-z.&\'-]+$/', $pSan)) $signals++;
-          if (preg_match('/\b[A-Z]{2,8}\b/', $pSan)) $signals++;
+          // Acronym signal (ignore bare "MP" which denotes a person title)
+          if (preg_match('/\b([A-Z]{2,8})\b/', $pSan, $mA) && ($mA[1] !== 'MP')) $signals++;
 
           // Skip likely person-only if no org signals
           if ($signals === 0 && preg_match('/^[A-Z][A-Za-z\'-]+(?:\s+[A-Z][A-Za-z\'-]+)+$/', $pSan)) continue;
