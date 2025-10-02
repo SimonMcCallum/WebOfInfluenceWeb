@@ -1,0 +1,62 @@
+/* EventsSearch.css
+   Styles scoped for Events Search details and attendees tables.
+   Keeps look-and-feel consistent with existing Meetings/Donations styles.
+*/
+
+/* Event details wrapper */
+.event-details .meetings-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* Make the left label column ~2x shorter than before (was 90px inline) */
+.event-details .label-cell {
+  width: 45px !important;
+  font-weight: 700;
+  white-space: nowrap;
+  color: #111827; /* Tailwind gray-900 approx */
+}
+
+/* Generic table cell polish */
+.event-details td,
+.event-details th {
+  vertical-align: top;
+}
+
+/* Value cells: allow wrapping of long text */
+.event-details td:not(.label-cell) {
+  word-break: break-word;
+}
+
+/* Subtle borders and spacing (shared conventions) */
+.event-details .meetings-table th,
+.event-details .meetings-table td {
+  border: 1px solid #e5e7eb; /* gray-200 */
+  padding: 0.5rem 1rem;       /* matches py-2 px-4 */
+}
+
+/* Section headers */
+.results-header .results-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Optional: sticky headers for attendees tables */
+.table-container .meetings-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f3f4f6; /* gray-100 */
+  z-index: 1;
+}
+
+/* Empty state styling */
+.table-container td[colspan] {
+  color: #6b7280;   /* gray-500 */
+  font-style: italic;
+}
+
+/* Buttons in table cells align baseline */
+.table-container .reset-button {
+  line-height: 1.25rem;
+}

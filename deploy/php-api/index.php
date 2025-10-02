@@ -535,7 +535,7 @@ function render_admin(array $ctx = []): void {
         <?php if (!empty($query_result) || !empty($error)) : ?>
           <?php if (!empty($error)) : ?>
             <div class="err"><?= htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
-          <?php else: ?>
+<?php else: ?>
             <div class="ok">Returned <?= (int)$rows_count ?> rows.</div>
             <table>
               <thead>
@@ -940,6 +940,18 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
                   </li>
                   <li>You do not need to prefill <code>people</code> for <code>candidate_overview</code> imports—missing people are created automatically. Prefill only if you want specific capitalization or to control prefixes/titles.</li>
                 </ul>
+<?php elseif ($mapTableLower && (strpos($mapTableLower, 'organization') !== false)): ?>
+                <p><b>Organizations</b></p>
+                <ul>
+                  <li>Source (diaries): Flagged Organisations (Name Finder — Diaries mode).</li>
+                  <li>Map organisation/company → <b>name</b>.</li>
+                  <li>Do not map to person “name” fields.</li>
+                </ul>
+<?php elseif ($mapTableLower && $mapTableLower === 'events'): ?>
+                <p><b>Events</b></p>
+                <ul>
+                  <li>Title → <b>title</b>; Date → <b>date</b>; Start → <b>start_time</b>; End → <b>end_time</b>; Location → <b>location</b>; Notes → <b>notes</b>; Attendees (Names/Text) → <b>attendees_text</b>.</li>
+                </ul>
 <?php else: ?>
                 <p>Pick a destination table then upload a CSV. The next step lets you map CSV columns to database columns. Use “Ignore” for columns you do not want imported.</p>
                 <ul>
@@ -1139,18 +1151,28 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
         <form action="?route=/admin/events-bootstrap" method="post" style="margin-bottom: .75rem;">
           <button type="submit">Bootstrap Events from Meetings</button>
           <div class="note">
-            Creates events for all rows in the meetings table that do not yet have an event.
-            - Safe to re-run (uses INSERT IGNORE on unique meeting_id).
-            - Sets host to the minister_person_id when available.
-            - Prefills attendees_text from meetings.with_text when available.
+            <ul>
+              <li>Creates one event for each row in <code>meetings</code> that does not yet have an event (unique on <code>meeting_id</code>).</li>
+              <li>Safe to re-run: uses <b>INSERT IGNORE</b> on the unique <code>meeting_id</code>.</li>
+              <li><b>Hosting:</b> does <u>not</u> assume the minister hosted the event; <code>host_person_id</code> remains <code>NULL</code> unless explicitly set later.</li>
+              <li><b>Attendees:</b> pre-fills <code>events.attendees_text</code> from <code>meeting_attendees_people</code> when available; otherwise falls back to <code>meetings.with_text</code>.</li>
+              <li>Always adds the diary’s minister to the attendees list.</li>
+              <li>Manual attendee editing endpoints (used on the Events page): 
+                <code>POST /events/attendees/add</code>, 
+                <code>POST /events/attendees/remove</code>, 
+                <code>POST /events/attendees/add-org</code>, 
+                <code>POST /events/attendees/remove-org</code>.
+              </li>
+            </ul>
           </div>
         </form>
 
         <form action="?route=/admin/ensure-events-schema" method="post" style="margin-bottom: .75rem;">
           <button type="submit">Create/Repair Events Tables</button>
           <div class="note">
-            Creates/repairs the events table and ensures the attendees_text column exists (no attendee link tables).
-            Then reports existence status below. Safe to re-run.
+            Ensures the <code>events</code> table exists with required columns and foreign keys
+            (<code>attendees_text</code>, <code>host_person_id</code>, <code>host_organization_id</code>, unique <code>meeting_id</code>).
+            Safe to re-run; reports existence status below.
           </div>
         </form>
 
@@ -3695,9 +3717,10 @@ function handle_admin_events_bootstrap(): void {
   }
 
   // Create an event per meeting if not exists
+  // Do NOT assume the minister hosted the event. Host is NULL unless we can infer from text later.
   $sqlIns = "INSERT IGNORE INTO `events`
     (meeting_id, title, date, start_time, end_time, location, notes, source, host_person_id)
-    SELECT m.id, m.title, m.date, m.start_time, m.end_time, m.location, m.notes, 'ministerial_diary', m.minister_person_id
+    SELECT m.id, m.title, m.date, m.start_time, m.end_time, m.location, m.notes, 'ministerial_diary', NULL
     FROM `meetings` m
     LEFT JOIN `events` e ON e.meeting_id = m.id
     WHERE e.meeting_id IS NULL";
@@ -4399,16 +4422,87 @@ function handle_ai_extract_names_diaries(): void {
 
   $apiKey = get_gemini_api_key();
   if (!$apiKey) {
-    // Return without attendees_names if no API key
+    // No Gemini key available: derive organizations with simple heuristics from attendees_text and title
+    $extract_orgs_basic = function (?string $text): array {
+      $t = trim((string)$text);
+      if ($t === '') return [];
+      // Normalize whitespace and separators
+      $t = preg_replace('/\s+/u', ' ', $t);
+      $parts = preg_split('/\s*[,;|]\s*|\s+(?:and|&)\s+/i', $t) ?: [];
+
+      // Keywords that strongly indicate an organization/company
+      $kw = [
+        'Council','University','Ltd','Limited','Inc','Incorporated','Association','Society','Trust','Federation',
+        'Chamber','Board','Committee','Commission','Ministry','Department','Institute','Alliance','Authority','Council',
+        'College','School','Union','Industry','Group','Cooperative','Confederation','Foundation','Company','Corporation'
+      ];
+      $generic = [
+        'attendees','attendee','event attendees','official','officials','representative','representatives',
+        'delegation','members','committee members','chair','co-chair','chairperson','press','media','news',
+        'ministers','minister','mp','mlc','symposium attendees'
+      ];
+
+      $out = [];
+      foreach ($parts as $p) {
+        $p = trim($p);
+        if ($p === '') continue;
+
+        // Remove surrounding quotes/parentheses
+        $p = trim($p, "\"'");
+        $p = preg_replace('/\([^)]*\)/', ' ', $p);
+        $p = preg_replace('/\s+/', ' ', $p);
+        $low = mb_strtolower($p, 'UTF-8');
+
+        // Skip obvious generic/role-only tokens
+        if (in_array($low, $generic, true)) continue;
+
+        // Heuristic signals:
+        $signals = 0;
+
+        // 1) Contains an org keyword
+        foreach ($kw as $k) {
+          if (stripos($p, $k) !== false) { $signals++; break; }
+        }
+
+        // 2) Contains "New Zealand" or "NZ" as part of proper name
+        if (preg_match('/\bNew Zealand\b/i', $p) || preg_match('/\bNZ\b/', $p)) $signals++;
+
+        // 3) Looks like a media/company name (multiple capitalized words)
+        if (preg_match('/^(?:[A-Z][A-Za-z.&\'-]+\s+){1,}[A-Z][A-Za-z.&\'-]+$/', $p)) $signals++;
+
+        // 4) Ends with common org suffix (e.g., Council, Trust, Ltd, Inc, Society)
+        if (preg_match('/\b(Council|Trust|Ltd|Limited|Inc|Incorporated|Society|Association|Federation|Commission)\.?$/i', $p)) $signals++;
+
+        // Exclude likely person-only names (First Last pattern) unless keyword/suffix caught it
+        if ($signals === 0 && preg_match('/^[A-Z][A-Za-z\'-]+(?:\s+[A-Z][A-Za-z\'-]+)+$/', $p)) {
+          continue;
+        }
+
+        if ($signals > 0) {
+          $key = mb_strtolower($p, 'UTF-8');
+          $out[$key] = $p;
+        }
+      }
+      return array_values($out);
+    };
+
     foreach ($enriched as &$row) {
-      $row['attendees_names'] = [];
+      $row['attendees_names'] = []; // names require AI; leave empty without key
+      $text = trim(implode(' | ', array_filter([
+        (string)($row['attendees_text'] ?? ''),
+        (string)($row['title'] ?? '')
+      ], fn($x) => $x !== '')));
+      $orgs = $extract_orgs_basic($text);
+      $row['attendees_orgs'] = $orgs;
+      $row['attendees_orgs_text'] = implode('; ', $orgs);
     }
     unset($row);
+
     json_response([
       'file_name' => $_FILES['file']['name'],
       'count_rows' => count($enriched),
       'rows' => $enriched,
-      'warning' => 'Gemini API key not found; attendees_names left empty.'
+      'warning' => 'Gemini API key not found; used basic heuristics for organizations (names left empty).'
     ]);
   }
 
@@ -4438,14 +4532,14 @@ function handle_ai_extract_names_diaries(): void {
 
     $instruction = "You are given a JSON object with an array named 'rows'. Each item has 'id' and 'text' fields "
       . "(from ministerial diary attendees or meeting descriptions). "
-      . "For EACH item, extract ONLY human person names (no organizations, roles, titles-only, acronyms, departments, or locations). "
+      . "For EACH item, extract human person names AND organization/company names. "
       . "Return STRICTLY VALID JSON in this exact form with no extra text or markdown:\n"
-      . "{\"results\":[{\"id\": <id>, \"names\": [\"First Last\", ...]}, ...]}\n"
+      . "{\"results\":[{\"id\": <id>, \"names\": [\"First Last\", ...], \"orgs\": [\"Org 1\", ...]}, ...]}\n"
       . "Rules:\n"
-      . "- Only include people names. Exclude ministries, committees, departments, companies, acronyms (e.g., 'MPI', 'FSANZ'), and role words (e.g., 'Officials', 'Ministers', 'Attendees').\n"
-      . "- Keep names as plain strings; do not include roles or parentheses. If uncertain, omit.\n"
-      . "- If no person names for an item, use an empty array for that item.\n"
-      . "- Preserve original spelling as best as possible.\n"
+      . "- names: Only people names. Exclude ministries, departments, committees, companies, acronyms (e.g., 'MPI', 'FSANZ'), and role words (e.g., 'Officials', 'Ministers', 'Attendees').\n"
+      . "- orgs: Organizations/companies. Exclude person names, roles, and pure acronyms where the full org name is not present.\n"
+      . "- Keep values as plain strings; do not include roles or parentheses. If uncertain, omit.\n"
+      . "- If none for an item, use empty arrays.\n"
       . "- Do NOT include any explanation or markdown. JSON only.\n"
       . "rows:\n"
       . json_encode(['rows' => $payloadRows], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
@@ -4463,7 +4557,9 @@ function handle_ai_extract_names_diaries(): void {
     curl_close($ch);
 
     $default = [];
-    foreach ($chunk as [$rid, $_]) $default[$rid] = [];
+    foreach ($chunk as [$rid, $_]) {
+      $default[$rid] = ['names' => [], 'orgs' => []];
+    }
 
     if ($code !== 200 || !$resp) return $default;
 
@@ -4486,38 +4582,50 @@ function handle_ai_extract_names_diaries(): void {
     foreach ($data['results'] as $item) {
       if (!is_array($item)) continue;
       $rid = $item['id'] ?? null;
-      $names = $item['names'] ?? [];
-      if ($rid === null || !is_array($names)) continue;
-      $norm = [];
+      if ($rid === null) continue;
+      $names = isset($item['names']) && is_array($item['names']) ? $item['names'] : [];
+      $orgs  = isset($item['orgs'])  && is_array($item['orgs'])  ? $item['orgs']  : [];
+      $normNames = [];
       foreach ($names as $n) {
         if (is_string($n) || is_numeric($n)) {
-          $norm[] = (string)$n;
+          $normNames[] = (string)$n;
         }
       }
-      $out[$rid] = $norm;
+      $normOrgs = [];
+      foreach ($orgs as $o) {
+        if (is_string($o) || is_numeric($o)) {
+          $normOrgs[] = (string)$o;
+        }
+      }
+      $out[$rid] = ['names' => $normNames, 'orgs' => $normOrgs];
     }
 
     foreach ($chunk as [$rid, $_]) {
-      if (!array_key_exists($rid, $out)) $out[$rid] = [];
+      if (!array_key_exists($rid, $out)) $out[$rid] = ['names' => [], 'orgs' => []];
     }
     return $out;
   };
 
   $idToNames = [];
+  $idToOrgs = [];
   foreach ($chunks as $ch) {
     try {
       $res = $call_chunk($ch);
-      foreach ($res as $rid => $names) {
-        $idToNames[$rid] = $names;
+      foreach ($res as $rid => $vals) {
+        $idToNames[$rid] = isset($vals['names']) && is_array($vals['names']) ? $vals['names'] : [];
+        $idToOrgs[$rid]  = isset($vals['orgs'])  && is_array($vals['orgs'])  ? $vals['orgs']  : [];
       }
     } catch (Throwable $e) {
-      foreach ($ch as [$rid, $_]) $idToNames[$rid] = [];
+      foreach ($ch as [$rid, $_]) { $idToNames[$rid] = []; $idToOrgs[$rid] = []; }
     }
   }
 
   foreach ($enriched as &$row) {
     $rid = $row['row_index'];
     $row['attendees_names'] = $idToNames[$rid] ?? [];
+    $orgs = $idToOrgs[$rid] ?? [];
+    $row['attendees_orgs'] = $orgs;
+    $row['attendees_orgs_text'] = implode('; ', array_values(array_filter(array_map('strval', $orgs), fn($s) => trim($s) !== '')));
   }
   unset($row);
 
@@ -5163,7 +5271,8 @@ function handle_event_from_meeting(): void {
   }
 
   // Insert new event (default host = minister, times from diary)
-  $ins = pdo()->prepare("INSERT INTO `events` (meeting_id, title, date, start_time, end_time, location, notes, source, host_person_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  // Do NOT set host from minister by default; hosting is unknown unless explicitly provided.
+  $ins = pdo()->prepare("INSERT INTO `events` (meeting_id, title, date, start_time, end_time, location, notes, source, host_person_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)");
   $ins->execute([
     (int)$mid,
     $meeting['title'] ?? null,
@@ -5172,8 +5281,7 @@ function handle_event_from_meeting(): void {
     $meeting['end_time'] ?? null,
     $meeting['location'] ?? null,
     $meeting['notes'] ?? null,
-    'ministerial_diary',
-    !empty($meeting['minister_person_id']) ? (int)$meeting['minister_person_id'] : null
+    'ministerial_diary'
   ]);
   $eventId = (int)pdo()->lastInsertId();
 
@@ -5201,13 +5309,49 @@ function handle_event_from_meeting(): void {
         }
       }
     }
+    // Always add the diary's minister to attendees list (if available)
+    try {
+      if (!empty($meeting['minister_person_id'])) {
+        $ms = pdo()->prepare("SELECT first_name, last_name FROM people WHERE id = ?");
+        $ms->execute([(int)$meeting['minister_person_id']]);
+        $mp = $ms->fetch();
+        if ($mp) {
+          $mf = trim((string)($mp['first_name'] ?? '') . ' ' . (string)($mp['last_name'] ?? ''));
+          if ($mf !== '') {
+            $lower = array_map(fn($x) => mb_strtolower($x, 'UTF-8'), $names);
+            if (!in_array(mb_strtolower($mf, 'UTF-8'), $lower, true)) {
+              $names[] = $mf;
+            }
+          }
+        }
+      }
+    } catch (Throwable $e) {}
     if (!empty($names)) {
       $txt = implode('; ', array_values(array_unique($names)));
       $up = pdo()->prepare("UPDATE `events` SET attendees_text = ? WHERE id = ?");
       $up->execute([$txt, $eventId]);
     }
   } catch (Throwable $e) {
-    // ignore prefill errors
+    $notes[] = "Prefill attendees_text failed: " . $e->getMessage();
+  }
+
+  // Ensure the diary's minister is included in attendees_text for every event
+  try {
+    $sqlMin = "UPDATE `events` e
+               JOIN `meetings` m ON m.id = e.meeting_id
+               JOIN `people` p ON p.id = m.minister_person_id
+               SET e.attendees_text = TRIM(BOTH ' ' FROM (
+                 CASE
+                   WHEN COALESCE(e.attendees_text,'') = '' 
+                     THEN CONCAT(TRIM(p.first_name), ' ', TRIM(p.last_name))
+                   WHEN LOCATE(UPPER(CONCAT(TRIM(p.first_name), ' ', TRIM(p.last_name))), UPPER(e.attendees_text)) = 0
+                     THEN CONCAT(e.attendees_text, '; ', TRIM(p.first_name), ' ', TRIM(p.last_name))
+                   ELSE e.attendees_text
+                 END
+               ))";
+    pdo()->exec($sqlMin);
+  } catch (Throwable $e) {
+    $notes[] = "Append minister to attendees failed: " . $e->getMessage();
   }
 
   $ev = load_event_with_attendees($eventId);

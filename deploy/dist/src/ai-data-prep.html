@@ -80,7 +80,7 @@
                 <tr>
                   <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Org detection</td>
                   <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Yes (ai_org_name / ai_orgs)</td>
-                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">No</td>
+                  <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">Yes (attendees_orgs)</td>
                   <td style="padding:.5rem .6rem; border:1px solid #e5e7eb;">No</td>
                 </tr>
                 <tr>
@@ -811,16 +811,17 @@
         html += '<div class="table-responsive" style="overflow:auto; max-height:420px; border:1px solid #e5e7eb; border-radius:8px; margin-top:.75rem;">';
         html += '<table class="data-table" style="width:100%; border-collapse:collapse; font-size:.92rem;">';
         html += '<thead><tr>';
-        const headers = ['Minister','Date','Schedule Time','Start','End','Title','Type','Portfolio','Location','Notes','Attendees (text)','Flagged Names'];
+        const headers = ['Minister','Date','Schedule Time','Start','End','Title','Type','Portfolio','Location','Notes','Attendees (text)','Flagged Names','Flagged Organisations'];
         headers.forEach(h => {
           html += `<th style="position:sticky; top:0; background:#f9fafb; border-bottom:1px solid #e5e7eb; text-align:left; padding:.5rem .6rem;">${h}</th>`;
         });
         html += '</tr></thead><tbody>';
 
         rows.forEach(r => {
-          const flagged = (r.attendees_names || []).join(', ');
-          const attendees = r.attendees_text || '';
           const schedule = (r.start_time && r.end_time) ? (String(r.start_time) + ' - ' + String(r.end_time)) : '';
+          const flagged = (r.attendees_names || []).join(', ');
+          const flaggedOrgs = (r.attendees_orgs || []).join(', ');
+          const attendees = r.attendees_text || '';
           html += '<tr>';
           html += td(r.minister || '');
           html += td(r.date);
@@ -834,6 +835,7 @@
           html += td(r.notes || '');
           html += td(attendees);
           html += td(flagged);
+          html += td(flaggedOrgs);
           html += '</tr>';
         });
 
@@ -963,7 +965,7 @@
     }
 
     function downloadDiariesCSV(rows, filenameBase) {
-      const headers = ['Minister','Date','Schedule Time','Start Time','End Time','Title','Type','Portfolio','Location','Notes','Attendees Text','Attendees Names'];
+      const headers = ['Minister','Date','Schedule Time','Start Time','End Time','Title','Type','Portfolio','Location','Notes','Attendees Text','Attendees Names','Attendees Organisation'];
       const header = headers.map(csvEscape).join(',');
       const lines = rows.map(r => {
         const schedule = (r.start_time && r.end_time) ? (String(r.start_time) + ' - ' + String(r.end_time)) : '';
@@ -979,7 +981,8 @@
           r.location || '',
           r.notes || '',
           r.attendees_text || '',
-          Array.isArray(r.attendees_names) ? r.attendees_names.join('; ') : ''
+          Array.isArray(r.attendees_names) ? r.attendees_names.join('; ') : '',
+          Array.isArray(r.attendees_orgs) ? r.attendees_orgs.join('; ') : ''
         ];
         return vals.map(csvEscape).join(',');
       });

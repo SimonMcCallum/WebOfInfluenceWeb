@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import './DonationsOverview.css';
 import './MeetingsSearch.css';
+import './EventsSearch.css';
 import { API_BASE } from './apiConfig';
 
 const EventForm = ({ eventData, onRefresh }) => {
@@ -24,6 +25,24 @@ const EventForm = ({ eventData, onRefresh }) => {
       last_name: p.last_name
     }));
   }, [eventData]);
+
+  // Format event time from start_time/end_time (MySQL TIME -> local display)
+  const renderEventTime = (ev) => {
+    const fmt = (t) => {
+      if (!t) return null;
+      const parts = String(t).split(':');
+      const h = parseInt(parts[0] || '0', 10);
+      const m = parseInt(parts[1] || '0', 10);
+      const d = new Date();
+      d.setHours(isNaN(h) ? 0 : h, isNaN(m) ? 0 : m, 0, 0);
+      return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    };
+    const a = fmt(ev?.start_time);
+    const b = fmt(ev?.end_time);
+    if (a && b) return `${a} – ${b}`;
+    if (a) return a;
+    return 'N/A';
+  };
 
   // Organizations linked to this event
   const attendeesOrgs = useMemo(() => {
@@ -156,28 +175,32 @@ const EventForm = ({ eventData, onRefresh }) => {
       </div>
 
       {/* Event core details */}
-      <div className="table-container" style={{ marginBottom: '1rem' }}>
+      <div className="table-container event-details" style={{ marginBottom: '1rem' }}>
         <table className="meetings-table table-fixed w-full">
           <tbody>
             <tr>
-              <td className="py-2 px-4 border font-semibold">Title</td>
+              <td className="py-2 px-4 border label-cell">Title</td>
               <td className="py-2 px-4 border">{eventData?.title || 'N/A'}</td>
             </tr>
             <tr>
-              <td className="py-2 px-4 border font-semibold">Date</td>
+              <td className="py-2 px-4 border label-cell">Date</td>
               <td className="py-2 px-4 border">{eventData?.date ? new Date(eventData.date).toLocaleDateString() : 'N/A'}</td>
             </tr>
             <tr>
-              <td className="py-2 px-4 border font-semibold">Location</td>
+              <td className="py-2 px-4 border label-cell">Time</td>
+              <td className="py-2 px-4 border">{renderEventTime(eventData)}</td>
+            </tr>
+            <tr>
+              <td className="py-2 px-4 border label-cell">Location</td>
               <td className="py-2 px-4 border">{eventData?.location || 'N/A'}</td>
             </tr>
             <tr>
-              <td className="py-2 px-4 border font-semibold">Notes</td>
+              <td className="py-2 px-4 border label-cell">Notes</td>
               <td className="py-2 px-4 border">{eventData?.notes || 'N/A'}</td>
             </tr>
             {eventData?.source && (
               <tr>
-                <td className="py-2 px-4 border font-semibold">Source</td>
+                <td className="py-2 px-4 border label-cell">Source</td>
                 <td className="py-2 px-4 border">{eventData.source}</td>
               </tr>
             )}
@@ -451,9 +474,38 @@ const EventsSearch = () => {
         </div>
       </div>
 
-      <div className="donations-container">
+      <div className="donations-container" style={{ rowGap: '0.25rem' }}>
+        {/* Admin notes */}
+        <div
+          className="search-card"
+          style={{
+            marginBottom: '0.25rem',
+            width: '100%',                 // span full grid width so right edge aligns with column 2
+            maxWidth: '100%',
+            clear: 'both',
+            gridColumn: '1 / -1',
+            justifySelf: 'stretch',
+            padding: '1.5rem 2rem'         // symmetric left/right padding
+          }}
+        >
+          <div className="card-header">
+            <h2 className="card-title">
+              <span className="card-icon">🛠️</span>
+              Admin tips: When to use Maintenance buttons
+            </h2>
+          </div>
+          <div className="note" style={{ padding: '.25rem 0' }}>
+            <ul style={{ marginLeft: '1rem' }}>
+              <li><b>Create/Repair Events Tables</b> — Run this the first time you work with Events (or if you see missing table/column errors). It creates/repairs the <code>events</code> table and required columns/constraints (attendees_text, host_person_id, host_organization_id, unique meeting_id). Safe to re-run; it does not delete data.</li>
+              <li><b>Bootstrap Events from Meetings</b> — Run after importing or editing ministerial diaries in <code>meetings</code> (or after updating attendee mappings). It creates any missing <code>events</code> rows, pre‑fills attendees from mapping/with_text, and always adds the diary’s minister as an attendee. Safe to re‑run. Hosting is not assumed (<code>host_person_id</code> remains NULL).</li>
+            </ul>
+            <div style={{ marginTop: '.5rem' }}>
+              Open Admin: <a href="./php-api/index.php?route=/admin" target="_blank" rel="noopener noreferrer">Web Of Influence — Admin</a>
+            </div>
+          </div>
+        </div>
         {/* Search */}
-        <div className="search-section">
+        <div className="search-section" style={{ gridColumn: '1 / span 1', position: 'static', top: 'auto', marginTop: '0rem' }}>
           <div className="search-card">
             <div className="card-header">
               <h2 className="card-title">
@@ -463,6 +515,8 @@ const EventsSearch = () => {
               <button type="button" className="reset-button" onClick={() => {
                 setQ(''); setStartDate(''); setEndDate('');
                 setErr(null); setHasSearched(false); setEvents([]);
+                setActiveEvent(null); setActiveLoading(false);
+                setParams({}, { replace: true });
               }}>
                 <span>↺</span>
                 Reset
@@ -495,7 +549,7 @@ const EventsSearch = () => {
 
         {/* Results */}
         {hasSearched && (
-          <div className="results-section">
+          <div className="results-section" style={{ gridColumn: '2 / span 1' }}>
             <div className="results-header">
               <h2 className="results-title">
                 <span className="results-icon">📊</span>
@@ -562,7 +616,7 @@ const EventsSearch = () => {
 
         {/* Active Event (from meeting_id or event_id) */}
         {(params.get('meeting_id') || params.get('event_id')) && (
-          <div className="results-section">
+          <div className="results-section" style={{ gridColumn: '2 / span 1' }}>
             {activeLoading && (
               <div className="loading-message" style={{ marginBottom: '1rem' }}>
                 <span className="loading-spinner">⏳</span>

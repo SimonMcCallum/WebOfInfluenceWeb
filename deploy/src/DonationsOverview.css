@@ -109,6 +109,8 @@
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 10px 15px rgba(0, 0, 0, 0.1);
   border: 1px solid #e5e7eb;
   width: 100%;
+  box-sizing: border-box; /* ensure padding doesn't extend the bubble past the grid track */
+  overflow: hidden;        /* keep header buttons inside rounded edges on narrow widths */
 }
 
 .card-header {
@@ -117,6 +119,7 @@
   align-items: center;
   margin-bottom: 2rem;
   gap: 1rem;
+  flex-wrap: wrap;        /* allow Reset to wrap instead of overflowing */
 }
 
 .card-title {
@@ -127,7 +130,9 @@
   font-weight: 600;
   color: #1f2937;
   margin: 0;
-  white-space: nowrap;
+  white-space: normal;   /* avoid pushing Reset outside on narrow cards */
+  flex: 1 1 auto;        /* let title shrink as needed */
+  min-width: 0;          /* enable flex shrink truncation if needed */
 }
 
 .card-icon {
@@ -454,6 +459,7 @@ input[type="text"] {
   overflow-x: auto;
   border-radius: 0.5rem;
   border: 1px solid #e5e7eb;
+  padding: 0 1rem; /* add left/right padding inside results tables */
 }
 
 .table-container table {
@@ -741,9 +747,17 @@ input[type="text"] {
     padding: 1.5rem;
   }
   
-  .results-content {
-    padding: 1.5rem;
-  }
+.results-content {
+  padding: 2rem;
+}
+
+/* Event details label column (left-hand labels like Title, Date, etc.) */
+.label-cell {
+  width: 110px;            /* make the left column smaller */
+  font-weight: 700 !important; /* force bold so it can't be overridden */
+  white-space: nowrap;
+  color: #111827;
+}
 }
 
 @media (max-width: 768px) {
