@@ -136,6 +136,18 @@ const HomePage = () => {
                   Access detailed records of ministerial diaries and meeting logs, providing insights into government interactions and decision-making processes.
                 </p>
               </div>
+              <div className="feature-item">
+                <h4 className="feature-name">Person Profile</h4>
+                <p className="feature-description">
+                  Explore connections between people, parties, and donors with an interactive force-directed graph showing relationships and influence networks.
+                </p>
+              </div>
+              <div className="feature-item">
+                <h4 className="feature-name">Event Search</h4>
+                <p className="feature-description">
+                  Search for events from ministerial diaries and open an event form to view and curate attendees with comprehensive event management tools.
+                </p>
+              </div>
             </div>
           </div>
 
