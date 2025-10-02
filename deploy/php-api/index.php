@@ -941,11 +941,11 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
                   <li>You do not need to prefill <code>people</code> for <code>candidate_overview</code> imports—missing people are created automatically. Prefill only if you want specific capitalization or to control prefixes/titles.</li>
                 </ul>
 <?php elseif ($mapTableLower && (strpos($mapTableLower, 'organization') !== false)): ?>
-                <p><b>Organizations</b></p>
+                <p><b>Organizations — use Maintenance buttons</b></p>
                 <ul>
-                  <li>Source (diaries): Flagged Organisations (Name Finder — Diaries mode).</li>
-                  <li>Map organisation/company → <b>name</b>.</li>
-                  <li>Do not map to person “name” fields.</li>
+                  <li>Use <b>Maintenance → Create/Repair Events Tables</b> first to ensure the events schema exists (attendees_text, host_person_id, host_organization_id, unique meeting_id). Safe to re‑run.</li>
+                  <li>Then run <b>Maintenance → Bootstrap Events from Meetings</b> to populate <code>events</code> from ministerial diaries. This pre-fills attendees from mappings/with_text and <b>always adds the diary’s minister</b> as an attendee.</li>
+                  <li>Direct CSV import into <code>organizations</code> is usually unnecessary. If you do import, map <b>organization/company → name</b>, avoid id/primary key columns, and leave unrelated columns as <b>Ignore</b>.</li>
                 </ul>
 <?php elseif ($mapTableLower && $mapTableLower === 'events'): ?>
                 <p><b>Events</b></p>
@@ -1424,6 +1424,14 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
           + '</ul>';
       }
 
+      function htmlOrganizations(){
+        return '<p><b>Organizations — use Maintenance buttons</b></p>'
+          + '<ul>'
+          + '<li>Use <b>Maintenance → Create/Repair Events Tables</b> first to ensure events schema exists (attendees_text, host_person_id, host_organization_id, unique meeting_id). Safe to re‑run.</li>'
+          + '<li>Then run <b>Maintenance → Bootstrap Events from Meetings</b> to populate events and attendees from ministerial diaries; this also adds the diary’s minister as an attendee.</li>'
+          + '<li>Direct CSV import into <code>organizations</code> is usually unnecessary. If you do import, map organization/company → <b>name</b>, avoid id columns, and leave unrelated columns as <b>Ignore</b>.</li>'
+          + '</ul>';
+      }
       function htmlStgOverview2023(){
         return '<p><b>stg_overview_2023 — What this is</b></p>'
           + '<ul>'
@@ -1524,6 +1532,7 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
         if (chosen.indexOf('people') !== -1) { contentEl.innerHTML = htmlPeople(); return; }
         if (chosen.indexOf('candidate_overview') !== -1) { contentEl.innerHTML = htmlCandidateOverview(); return; }
         if (chosen.indexOf('stg_overview_2023') !== -1) { contentEl.innerHTML = htmlStgOverview2023(); return; }
+        if (chosen.indexOf('organization') !== -1) { contentEl.innerHTML = htmlOrganizations(); return; }
         contentEl.innerHTML = htmlGeneric(chosen);
       }
 
@@ -3750,6 +3759,25 @@ function handle_admin_events_bootstrap(): void {
     }
   } catch (Throwable $e) {
     $notes[] = "Prefill attendees_text failed: " . $e->getMessage();
+  }
+
+  // Ensure the diary's minister is included in attendees_text for every event
+  try {
+    $sqlMin = "UPDATE `events` e
+               JOIN `meetings` m ON m.id = e.meeting_id
+               JOIN `people` p ON p.id = m.minister_person_id
+               SET e.attendees_text = TRIM(BOTH ' ' FROM (
+                 CASE
+                   WHEN COALESCE(e.attendees_text,'') = '' 
+                     THEN CONCAT(TRIM(p.first_name), ' ', TRIM(p.last_name))
+                   WHEN LOCATE(UPPER(CONCAT(TRIM(p.first_name), ' ', TRIM(p.last_name))), UPPER(e.attendees_text)) = 0
+                     THEN CONCAT(e.attendees_text, '; ', TRIM(p.first_name), ' ', TRIM(p.last_name))
+                   ELSE e.attendees_text
+                 END
+               ))";
+    pdo()->exec($sqlMin);
+  } catch (Throwable $e) {
+    $notes[] = "Append minister to attendees failed: " . $e->getMessage();
   }
 
   try {
