@@ -1155,7 +1155,7 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
               <li>Creates one event for each row in <code>meetings</code> that does not yet have an event (unique on <code>meeting_id</code>).</li>
               <li>Safe to re-run: uses <b>INSERT IGNORE</b> on the unique <code>meeting_id</code>.</li>
               <li><b>Hosting:</b> does <u>not</u> assume the minister hosted the event; <code>host_person_id</code> remains <code>NULL</code> unless explicitly set later.</li>
-              <li><b>Attendees:</b> pre-fills <code>events.attendees_text</code> from <code>meeting_attendees_people</code> when available; otherwise falls back to <code>meetings.with_text</code>.</li>
+              <li><b>Attendees:</b> pre-fills <code>events.attendees_text</code> from <code>meetings.with_text</code>.</li>
               <li>Always adds the diary’s minister to the attendees list.</li>
               <li>Manual attendee editing endpoints (used on the Events page): 
                 <code>POST /events/attendees/add</code>, 
@@ -3338,6 +3338,11 @@ function handle_admin_upload_commit(): void {
         // Optional AI names column produced by AI Name Finder "diaries" or Mapping Prep
         $csv_ai_attendees = $getHdr(['ai_person_names','attendees_names','ai_names']);
 
+        // Collect per-row attendees person IDs (for mapping table)
+        $attendeePersonIds = [];
+        // Track derived minister ID if we resolve one
+        $derivedMinisterId = null;
+
         // Helper to strip titles like "Rt Hon", "Hon", "Dr", "Sir", "Dame", "MP" from names
         $cleanName = function($name) {
           $name = preg_replace('/\b(Rt\.?\s*Hon\.?|Hon\.?|Dr|Sir|Dame|MP)\b/i', '', (string)$name);
@@ -3393,13 +3398,17 @@ function handle_admin_upload_commit(): void {
               $mn = isset($cleanName) ? $cleanName($csv_minister) : $csv_minister;
               [$first, $last] = $splitName($mn);
             }
+            $pid = null;
             if ($first && $last) {
               // Resolve or create person id
-              $vals[] = resolve_candidate_person_id($first, $last, '');
-            } else {
-              // No minister available; keep NULL so INSERT IGNORE skips, avoiding FK violation
-              $vals[] = null;
+              $pid = resolve_candidate_person_id($first, $last, '');
             }
+            // Track for potential attendee mapping insertion later
+            if (!empty($pid)) {
+              $derivedMinisterId = (int)$pid;
+            }
+            // Set value for minister_person_id column (NULL if not resolved)
+            $vals[] = $pid ?: null;
             continue;
           }
           if ($dbCol === 'start_time') {
@@ -3412,25 +3421,73 @@ function handle_admin_upload_commit(): void {
             continue;
           }
           if ($dbCol === 'with_text') {
-            // Populate attendees text from "With" column if present
-            $vals[] = ($csv_with !== null && $csv_with !== '') ? $csv_with : null;
-            // If AI attendees provided, opportunistically upsert people records for each name
-            if ($csv_ai_attendees) {
-              $names = preg_split('/[;,&]/', (string)$csv_ai_attendees);
-              foreach ($names as $nm) {
-                $nm = trim($nm);
-                if ($nm === '' || preg_match('/^(attendees?|officials|event attendees)$/i', $nm)) continue;
-                // Split "First Last" (fallback: first token as first, remainder as last)
-                $parts = preg_split('/\s+/', $nm);
-                if (!$parts || count($parts) === 0) continue;
-                $first = array_shift($parts);
-                $last  = implode(' ', $parts);
-                if ($first !== '' && $last !== '') {
-                  // Create if missing
-                  try { resolve_candidate_person_id($first, $last, ''); } catch (Throwable $e) {}
-                }
+            // Combine diarised "With" text with explicit Attendees Names, and upsert people
+            $existing = ($csv_with !== null && $csv_with !== '') ? trim((string)$csv_with) : '';
+            $namesRaw = $csv_ai_attendees ? (string)$csv_ai_attendees : '';
+
+            // Parse names from Attendees Names using common separators ; , & and, /
+            $tokens = preg_split('/(?:\s+and\s+)|[;,&\/]/i', $namesRaw) ?: [];
+            $peopleNames = [];
+            $seenLower = [];
+
+            foreach ($tokens as $nm) {
+              $nm = trim((string)$nm, "\"' \t\r\n");
+              if ($nm === '') continue;
+
+              // Skip obvious generic placeholders
+              if (preg_match('/^(attendees?|event\s*attendees?|officials?|committee(\s+members)?|members|delegation|ministers?|multi(?:ple)?\s+ministers?)$/i', $nm)) {
+                continue;
+              }
+
+              // Expect at least two tokens to treat as a person name
+              $parts = preg_split('/\s+/', $nm);
+              if (!$parts || count($parts) < 2) continue;
+
+              // Upsert person and collect person_id for mapping
+              $first = array_shift($parts);
+              $last  = trim(implode(' ', $parts));
+              if ($first !== '' && $last !== '') {
+                try {
+                  $pid = resolve_candidate_person_id($first, $last, '');
+                  if (!empty($pid)) {
+                    $attendeePersonIds[] = (int)$pid;
+                  }
+                } catch (Throwable $e) { /* ignore */ }
+              }
+
+              // Collect unique person display names (case-insensitive)
+              $key = mb_strtolower(trim($first . ' ' . $last), 'UTF-8');
+              if ($key !== '' && !isset($seenLower[$key])) {
+                $peopleNames[] = trim($first . ' ' . $last);
+                $seenLower[$key] = true;
               }
             }
+
+            // Build final with_text:
+            // - If existing is empty or generic like "Attendees", replace with names
+            // - Otherwise append any missing names to existing
+            $genericExisting = false;
+            if ($existing === '' ||
+                preg_match('/^(attendees?|event\s*attendees?|officials?|multiple\s+ministers|ministers|delegation|committee(\s+members)?)$/i', $existing)) {
+              $genericExisting = true;
+            }
+
+            if ($genericExisting) {
+              $finalTxt = !empty($peopleNames) ? implode('; ', $peopleNames) : ($existing !== '' ? $existing : null);
+            } else {
+              // Merge names into existing list if not already present
+              $existingParts = array_values(array_filter(array_map('trim', preg_split('/[;\n]|\\s*,\\s*/', (string)$existing))));
+              $existingLower = array_map(fn($x) => mb_strtolower($x, 'UTF-8'), $existingParts);
+              foreach ($peopleNames as $pn) {
+                if (!in_array(mb_strtolower($pn, 'UTF-8'), $existingLower, true)) {
+                  $existingParts[] = $pn;
+                  $existingLower[] = mb_strtolower($pn, 'UTF-8');
+                }
+              }
+              $finalTxt = !empty($existingParts) ? implode('; ', $existingParts) : null;
+            }
+
+            $vals[] = ($finalTxt !== '' && $finalTxt !== null) ? $finalTxt : null;
             continue;
           }
         }
@@ -3740,23 +3797,13 @@ function handle_admin_events_bootstrap(): void {
     $notes[] = "Insert events failed: " . $e->getMessage();
   }
 
-  // Prefill attendees_text if mapping table exists; otherwise leave as-is
+  // Prefill attendees_text from meetings.with_text where empty
   try {
-    $existsMap = pdo()->query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'meeting_attendees_people'")->fetchColumn();
-    if ($existsMap) {
-      // Build a semicolon-separated list of full names and set attendees_text where empty
-      $sqlTxt = "UPDATE `events` e
-                 JOIN (
-                   SELECT map.meeting_id,
-                          GROUP_CONCAT(DISTINCT CONCAT(TRIM(p.first_name), ' ', TRIM(p.last_name)) SEPARATOR '; ') AS txt
-                   FROM meeting_attendees_people map
-                   JOIN people p ON p.id = map.person_id
-                   GROUP BY map.meeting_id
-                 ) x ON x.meeting_id = e.meeting_id
-                 SET e.attendees_text = CASE WHEN COALESCE(e.attendees_text,'') = '' THEN x.txt ELSE e.attendees_text END";
-      $lnk = pdo()->exec($sqlTxt);
-      $linked = (int)($lnk ?: 0);
-    }
+    $sqlTxt = "UPDATE `events` e
+               JOIN `meetings` m ON m.id = e.meeting_id
+               SET e.attendees_text = CASE WHEN COALESCE(e.attendees_text,'') = '' THEN m.with_text ELSE e.attendees_text END";
+    $lnk = pdo()->exec($sqlTxt);
+    $linked = (int)($lnk ?: 0);
   } catch (Throwable $e) {
     $notes[] = "Prefill attendees_text failed: " . $e->getMessage();
   }
@@ -5273,6 +5320,7 @@ function ensure_events_schema(): void {
 
   // attendees stored as free text on events.attendees_text (no junction table)
   try { if (!column_exists('events','attendees_text')) { pdo()->exec("ALTER TABLE `events` ADD COLUMN `attendees_text` TEXT NULL"); } } catch (Throwable $e) {}
+
 }
 
 /** Load a single event with attendees_people array */
@@ -5312,44 +5360,22 @@ function load_event_with_attendees(int $eventId): array {
       $names = [];
       $mid = (int)$event['meeting_id'];
 
-      // Try mapping table meeting_attendees_people -> people
-      try {
-        $attQ = pdo()->prepare("SELECT p.first_name, p.last_name FROM meeting_attendees_people map JOIN people p ON p.id = map.person_id WHERE map.meeting_id = ?");
-        $attQ->execute([$mid]);
-        $rows = $attQ->fetchAll() ?: [];
-        foreach ($rows as $r) {
-          $fn = trim((string)($r['first_name'] ?? ''));
-          $ln = trim((string)($r['last_name'] ?? ''));
-          $full = trim($fn . ' ' . $ln);
-          if ($full !== '') $names[] = $full;
-        }
-      } catch (Throwable $e) {
-        // ignore if mapping table missing
-      }
-
-      // Fallback to meetings.with_text
+      // Use meetings.with_text to build attendees_text
       $ministerId = null;
-      if (empty($names)) {
-        $wq = pdo()->prepare("SELECT with_text, minister_person_id FROM meetings WHERE id = ?");
-        $wq->execute([$mid]);
-        $wrow = $wq->fetch();
-        if ($wrow) {
-          $with = $wrow['with_text'] ?? null;
-          if ($with) {
-            $parts = array_map('trim', preg_split('/[;\n]|\s*,\s*/', (string)$with));
-            foreach ($parts as $nm) {
-              if ($nm !== '') $names[] = $nm;
-            }
-          }
-          if (isset($wrow['minister_person_id'])) {
-            $ministerId = (int)$wrow['minister_person_id'];
+      $wq = pdo()->prepare("SELECT with_text, minister_person_id FROM meetings WHERE id = ?");
+      $wq->execute([$mid]);
+      $wrow = $wq->fetch();
+      if ($wrow) {
+        $with = $wrow['with_text'] ?? null;
+        if ($with) {
+          $parts = array_map('trim', preg_split('/[;\n]|\s*,\s*/', (string)$with));
+          foreach ($parts as $nm) {
+            if ($nm !== '') $names[] = $nm;
           }
         }
-      } else {
-        // still fetch minister id to ensure present
-        $wq = pdo()->prepare("SELECT minister_person_id FROM meetings WHERE id = ?");
-        $wq->execute([$mid]);
-        $ministerId = (int)($wq->fetchColumn() ?? 0);
+        if (isset($wrow['minister_person_id'])) {
+          $ministerId = (int)$wrow['minister_person_id'];
+        }
       }
 
       // Ensure diary minister appended (if available and not present)
@@ -5626,31 +5652,19 @@ function handle_event_from_meeting(): void {
   ]);
   $eventId = (int)pdo()->lastInsertId();
 
-  // 3) Prefill attendees_text from meeting_attendees_people if available; else fallback to meeting.with_text
+  // 3) Prefill attendees_text from meeting.with_text and add minister
   try {
     $names = [];
-    $attQ = pdo()->prepare("SELECT p.first_name, p.last_name FROM meeting_attendees_people map JOIN people p ON p.id = map.person_id WHERE map.meeting_id = ?");
-    $attQ->execute([(int)$mid]);
-    $rows = $attQ->fetchAll() ?: [];
-    foreach ($rows as $r) {
-      $fn = trim((string)($r['first_name'] ?? ''));
-      $ln = trim((string)($r['last_name'] ?? ''));
-      $full = trim($fn . ' ' . $ln);
-      if ($full !== '') $names[] = $full;
-    }
-    if (empty($names)) {
-      // fallback to meetings.with_text
-      $wq = pdo()->prepare("SELECT with_text FROM meetings WHERE id = ?");
-      $wq->execute([(int)$mid]);
-      $w = $wq->fetchColumn();
-      if ($w) {
-        $parts = array_map('trim', preg_split('/[;\n]|\\s*,\\s*/', (string)$w));
-        foreach ($parts as $nm) {
-          if ($nm !== '') $names[] = $nm;
-        }
+    $wq = pdo()->prepare("SELECT with_text FROM meetings WHERE id = ?");
+    $wq->execute([(int)$mid]);
+    $w = $wq->fetchColumn();
+    if ($w) {
+      $parts = array_map('trim', preg_split('/[;\n]|\\s*,\\s*/', (string)$w));
+      foreach ($parts as $nm) {
+        if ($nm !== '') $names[] = $nm;
       }
     }
-    // Always add the diary's minister to attendees list (if available)
+    // Always add the diary’s minister to attendees list (if available)
     try {
       if (!empty($meeting['minister_person_id'])) {
         $ms = pdo()->prepare("SELECT first_name, last_name FROM people WHERE id = ?");
