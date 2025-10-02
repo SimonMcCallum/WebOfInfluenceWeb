@@ -317,6 +317,13 @@
   margin-bottom: 2rem;
 }
 
+/* Ensure features are visible */
+.features-grid .feature-item {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
 .feature-item {
   background-color: #f8fafc;
   padding: 1.5rem;
