@@ -13,8 +13,9 @@ const formatTime = (t) => {
   return `${h}:${min} ${ampm}`;
 };
 
-const MeetingsTable = ({ meetings }) => {
+const MeetingsTable = ({ meetings, onOpenEvent }) => {
   const [sortOrder, setSortOrder] = useState("asc");
+  const handleOpenEvent = typeof onOpenEvent === 'function' ? onOpenEvent : () => {};
 
   // Function to sort by date
   const handleSort = () => {
@@ -53,6 +54,7 @@ const MeetingsTable = ({ meetings }) => {
             <th className="py-2 px-4 border">Location</th>
             <th className="py-2 px-4 border">Attendees</th>
             <th className="py-2 px-4 border">Notes</th>
+            <th className="py-2 px-4 border">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -83,6 +85,16 @@ const MeetingsTable = ({ meetings }) => {
                 {meeting.with_text ? String(meeting.with_text) : "N/A"}
               </td>
               <td className="py-2 px-4 border">{meeting.notes || "N/A"}</td>
+              <td className="py-2 px-4 border">
+                <button
+                  type="button"
+                  className="search-button"
+                  onClick={() => handleOpenEvent(meeting.id)}
+                  title="Open Event form for this meeting"
+                >
+                  Open Event
+                </button>
+              </td>
             </tr>
           ))}
         </tbody>

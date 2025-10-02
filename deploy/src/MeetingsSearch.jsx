@@ -39,6 +39,10 @@ const MeetingsSearch = () => {
 
   const navigate = useNavigate();
   const handleBackToHome = () => navigate('/home');
+  const handleOpenEvent = (meetingId) => {
+    if (!meetingId) return;
+    navigate(`/events?meeting_id=${meetingId}`);
+  };
   
   const handleSearchChange = (event) => {
     const { name, value } = event.target;
@@ -339,7 +343,7 @@ const MeetingsSearch = () => {
 
                 {/* Meetings Table */}
                 <div className="table-container">
-                  <MeetingsTable meetings={paginatedMeetings} />
+                  <MeetingsTable meetings={paginatedMeetings} onOpenEvent={handleOpenEvent} />
                 </div>
 
                 {/* Pagination Below Table */}

@@ -91,6 +91,22 @@ const HomePage = () => {
             </div>
             <div className="card-arrow">→</div>
           </Link>
+
+          <Link to="/events" className="nav-card events-card">
+            <div className="card-icon">🎟️</div>
+            <div className="card-content">
+              <h3 className="card-title">Event Search</h3>
+              <p className="card-description">
+                Search for events from ministerial diaries and open an event form to view and curate attendees.
+              </p>
+              <div className="card-features">
+                <span className="feature-tag">On-demand Event Creation</span>
+                <span className="feature-tag">Attendee Curation</span>
+                <span className="feature-tag">Diary Links</span>
+              </div>
+            </div>
+            <div className="card-arrow">→</div>
+          </Link>
         </div>
       </div>
 
@@ -138,28 +154,6 @@ const HomePage = () => {
           </div>
         </div>
       </div>
-
-
-      {/* 
-      <div className="search-section">
-        <input
-          type="text"
-          placeholder="Enter First Name"
-          value={firstName}
-          onChange={(e) => setFirstName(e.target.value)}
-          className="search-input"
-        />
-        <input
-          type="text"
-          placeholder="Enter Last Name"
-          value={lastName}
-          onChange={(e) => setLastName(e.target.value)}
-          className="search-input"
-        />
-        <button onClick={handleSearchSubmit} className="search-button">
-          Search Profile
-        </button>
-      </div> */}
     </div>
   );
 };

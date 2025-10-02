@@ -1135,6 +1135,25 @@ ADD UNIQUE idx_people_name (first_name, last_name);</pre>
             </ul>
           </div>
         </form>
+
+        <form action="?route=/admin/events-bootstrap" method="post" style="margin-bottom: .75rem;">
+          <button type="submit">Bootstrap Events from Meetings</button>
+          <div class="note">
+            Creates events for all rows in the meetings table that do not yet have an event.
+            - Safe to re-run (uses INSERT IGNORE on unique meeting_id).
+            - Sets host to the minister_person_id when available.
+            - Prefills attendees from meeting_attendees_people if that table exists.
+          </div>
+        </form>
+
+        <form action="?route=/admin/ensure-events-schema" method="post" style="margin-bottom: .75rem;">
+          <button type="submit">Create/Repair Events Tables</button>
+          <div class="note">
+            Creates tables if missing: events, event_attendees (links to existing people/organizations).
+            Then reports existence status below. Safe to re-run.
+          </div>
+        </form>
+
         <?php if (!empty($ctx['table_action_msg'])): ?>
           <div class="<?= !empty($ctx['table_action_err']) ? 'err' : 'ok' ?>"><?= htmlspecialchars($ctx['table_action_msg'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
         <?php endif; ?>
@@ -3652,6 +3671,107 @@ function handle_admin_backfill_2023(): void {
   }
 }
 
+/** Admin: POST /admin/events-bootstrap — create events for all meetings missing one */
+function handle_admin_events_bootstrap(): void {
+  require_token_admin();
+  ensure_events_schema();
+
+  $notes = [];
+  $inserted = 0;
+  $linked = 0;
+  $beforeEvents = 0;
+  $afterEvents = 0;
+  $meetingsCount = 0;
+
+  try {
+    $beforeEvents = (int)(pdo()->query("SELECT COUNT(*) FROM `events`")->fetchColumn() ?: 0);
+  } catch (Throwable $e) {
+    $notes[] = "Count before failed: " . $e->getMessage();
+  }
+  try {
+    $meetingsCount = (int)(pdo()->query("SELECT COUNT(*) FROM `meetings`")->fetchColumn() ?: 0);
+  } catch (Throwable $e) {
+    $notes[] = "Meetings count failed: " . $e->getMessage();
+  }
+
+  // Create an event per meeting if not exists
+  $sqlIns = "INSERT IGNORE INTO `events`
+    (meeting_id, title, date, start_time, end_time, location, notes, source, host_person_id)
+    SELECT m.id, m.title, m.date, m.start_time, m.end_time, m.location, m.notes, 'ministerial_diary', m.minister_person_id
+    FROM `meetings` m
+    LEFT JOIN `events` e ON e.meeting_id = m.id
+    WHERE e.meeting_id IS NULL";
+  try {
+    $ins = pdo()->exec($sqlIns);
+    $inserted = (int)($ins ?: 0);
+  } catch (Throwable $e) {
+    $notes[] = "Insert events failed: " . $e->getMessage();
+  }
+
+  // Prefill attendees if mapping table exists
+  try {
+    $existsMap = pdo()->query("SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'meeting_attendees_people'")->fetchColumn();
+    if ($existsMap) {
+      $sqlLink = "INSERT IGNORE INTO `event_attendees` (event_id, person_id)
+                  SELECT e.id, map.person_id
+                  FROM `meeting_attendees_people` map
+                  JOIN `events` e ON e.meeting_id = map.meeting_id";
+      $lnk = pdo()->exec($sqlLink);
+      $linked = (int)($lnk ?: 0);
+    }
+  } catch (Throwable $e) {
+    $notes[] = "Prefill attendees failed: " . $e->getMessage();
+  }
+
+  try {
+    $afterEvents = (int)(pdo()->query("SELECT COUNT(*) FROM `events`")->fetchColumn() ?: 0);
+  } catch (Throwable $e) {
+    $notes[] = "Count after failed: " . $e->getMessage();
+  }
+
+  $msg = "Events bootstrap complete. Meetings={$meetingsCount}. Events before={$beforeEvents}, inserted={$inserted}, after={$afterEvents}.";
+  if ($linked > 0) $msg .= " Prefilled attendee links: {$linked}.";
+  if (!empty($notes)) $msg .= " Notes: " . implode(' | ', $notes);
+
+  $ctx = [
+    'tables' => list_tables_with_counts(),
+    'server_csvs' => find_server_csvs(),
+    'table_action_msg' => $msg,
+    'table_action_err' => 0
+  ];
+  render_admin($ctx);
+}
+
+/** Admin: POST /admin/ensure-events-schema — create/repair events and attendee tables */
+function handle_admin_ensure_events_schema(): void {
+  require_token_admin();
+  $notes = [];
+  try {
+    ensure_events_schema();
+  } catch (Throwable $e) {
+    $notes[] = "ensure_events_schema failed: " . $e->getMessage();
+  }
+
+  // Verify existence
+  $existsEv  = table_exists('events');
+  $existsEA  = table_exists('event_attendees');
+
+  $msg = "Events schema status — events: " . ($existsEv ? 'present' : 'missing')
+       . ", event_attendees: " . ($existsEA ? 'present' : 'missing') . ".";
+
+  if (!empty($notes)) {
+    $msg .= " Notes: " . implode(' | ', $notes);
+  }
+
+  $ctx = [
+    'tables' => list_tables_with_counts(),
+    'server_csvs' => find_server_csvs(),
+    'table_action_msg' => $msg,
+    'table_action_err' => ($existsEv && $existsEA) ? 0 : 1
+  ];
+  render_admin($ctx);
+}
+
 /** CSV Import API Functions (for frontend) */
 function handle_csv_upload_api(): void {
   if (!isset($_FILES['file']) || !is_uploaded_file($_FILES['file']['tmp_name'])) {
@@ -4902,8 +5022,363 @@ function handle_donations_by_organization(): void {
   json_response($rows);
 }
 
+/** Ensure Events schema (lazy creation) */
+function ensure_events_schema(): void {
+  // events table
+  $sql1 = "CREATE TABLE IF NOT EXISTS `events` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `meeting_id` INT NULL,
+    `title` VARCHAR(255) NULL,
+    `date` DATE NULL,
+    `start_time` TIME NULL,
+    `end_time` TIME NULL,
+    `location` VARCHAR(255) NULL,
+    `notes` TEXT NULL,
+    `source` VARCHAR(64) NULL,
+    `host_person_id` INT NULL,
+    `host_organization_id` INT NULL,
+    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX `idx_events_date` (`date`),
+    INDEX `idx_events_title` (`title`),
+    INDEX `idx_events_location` (`location`),
+    CONSTRAINT `fk_events_meeting` FOREIGN KEY (`meeting_id`) REFERENCES `meetings`(`id`) ON DELETE SET NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+  try { pdo()->exec($sql1); } catch (Throwable $e) {}
+
+  // Ensure columns exist on upgrades
+  try { if (!column_exists('events','start_time')) { pdo()->exec("ALTER TABLE `events` ADD COLUMN `start_time` TIME NULL, ADD COLUMN `end_time` TIME NULL"); } } catch (Throwable $e) {}
+  try { if (!column_exists('events','host_person_id')) { pdo()->exec("ALTER TABLE `events` ADD COLUMN `host_person_id` INT NULL"); } } catch (Throwable $e) {}
+  try { if (!column_exists('events','host_organization_id')) { pdo()->exec("ALTER TABLE `events` ADD COLUMN `host_organization_id` INT NULL"); } } catch (Throwable $e) {}
+  try { pdo()->exec("ALTER TABLE `events` ADD CONSTRAINT `fk_events_host_person` FOREIGN KEY (`host_person_id`) REFERENCES `people`(`id`)"); } catch (Throwable $e) {}
+  try { pdo()->exec("ALTER TABLE `events` ADD CONSTRAINT `fk_events_host_org` FOREIGN KEY (`host_organization_id`) REFERENCES `organizations`(`id`)"); } catch (Throwable $e) {}
+
+  // unique idx on meeting_id to avoid duplicates when derived from a meeting
+  try { pdo()->exec("ALTER TABLE `events` ADD UNIQUE `uq_events_meeting_id` (`meeting_id`)"); } catch (Throwable $e) { /* ignore if exists */ }
+
+  // attendees junction (single table mapping to existing people/organizations)
+  $sqlEA = "CREATE TABLE IF NOT EXISTS `event_attendees` (
+    `event_id` INT NOT NULL,
+    `person_id` INT NULL,
+    `organization_id` INT NULL,
+    `role` VARCHAR(128) NULL,
+    `source` VARCHAR(64) NULL,
+    PRIMARY KEY (`event_id`, `person_id`, `organization_id`),
+    INDEX `idx_ea_person` (`person_id`),
+    INDEX `idx_ea_org` (`organization_id`),
+    CONSTRAINT `fk_ea_event` FOREIGN KEY (`event_id`) REFERENCES `events`(`id`) ON DELETE CASCADE,
+    CONSTRAINT `fk_ea_person` FOREIGN KEY (`person_id`) REFERENCES `people`(`id`),
+    CONSTRAINT `fk_ea_org` FOREIGN KEY (`organization_id`) REFERENCES `organizations`(`id`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
+  try { pdo()->exec($sqlEA); } catch (Throwable $e) {}
+}
+
+/** Load a single event with attendees_people array */
+function load_event_with_attendees(int $eventId): array {
+  $stmt = pdo()->prepare("SELECT id, meeting_id, title, date, start_time, end_time, location, notes, source, host_person_id, host_organization_id FROM `events` WHERE id = ?");
+  $stmt->execute([$eventId]);
+  $event = $stmt->fetch();
+  if (!$event) return [];
+
+  // host person name
+  if (!empty($event['host_person_id'])) {
+    try {
+      $ps = pdo()->prepare("SELECT first_name, last_name FROM people WHERE id = ?");
+      $ps->execute([(int)$event['host_person_id']]);
+      $p = $ps->fetch();
+      if ($p) {
+        $event['host_person_first_name'] = $p['first_name'] ?? null;
+        $event['host_person_last_name'] = $p['last_name'] ?? null;
+      }
+    } catch (Throwable $e) {}
+  }
+  // host organization name
+  if (!empty($event['host_organization_id'])) {
+    try {
+      $os = pdo()->prepare("SELECT name FROM organizations WHERE id = ?");
+      $os->execute([(int)$event['host_organization_id']]);
+      $o = $os->fetch();
+      if ($o) {
+        $event['host_organization_name'] = $o['name'] ?? null;
+      }
+    } catch (Throwable $e) {}
+  }
+
+  // people attendees
+  $att = [];
+  try {
+    $q = "SELECT p.id, p.first_name, p.last_name
+          FROM event_attendees ea
+          JOIN people p ON p.id = ea.person_id
+          WHERE ea.event_id = ? AND ea.person_id IS NOT NULL
+          ORDER BY p.last_name, p.first_name";
+    $s = pdo()->prepare($q);
+    $s->execute([$eventId]);
+    $att = $s->fetchAll() ?: [];
+  } catch (Throwable $e) {
+    $att = [];
+  }
+  $event['attendees_people'] = $att;
+
+  // organization attendees
+  $attOrg = [];
+  try {
+    $q2 = "SELECT o.id, o.name
+           FROM event_attendees ea
+           JOIN organizations o ON o.id = ea.organization_id
+           WHERE ea.event_id = ? AND ea.organization_id IS NOT NULL
+           ORDER BY o.name";
+    $s2 = pdo()->prepare($q2);
+    $s2->execute([$eventId]);
+    $attOrg = $s2->fetchAll() ?: [];
+  } catch (Throwable $e) {
+    $attOrg = [];
+  }
+  $event['attendees_organizations'] = $attOrg;
+
+  return $event;
+}
+
+/** GET /events/from-meeting?meeting_id= */
+function handle_event_from_meeting(): void {
+  $mid = $_GET['meeting_id'] ?? null;
+  if (!$mid || !is_numeric($mid)) {
+    json_response(['error' => 'meeting_id is required'], 400);
+  }
+  ensure_events_schema();
+
+  // 1) If an event already exists for this meeting, return it
+  $stmt = pdo()->prepare("SELECT id FROM `events` WHERE meeting_id = ? LIMIT 1");
+  $stmt->execute([(int)$mid]);
+  $row = $stmt->fetch();
+  if ($row && isset($row['id'])) {
+    $ev = load_event_with_attendees((int)$row['id']);
+    if (empty($ev)) json_response(['error' => 'Event not found after lookup'], 404);
+    json_response($ev);
+  }
+
+  // 2) Create from meeting
+  $m = pdo()->prepare("SELECT id, title, date, start_time, end_time, location, notes, minister_person_id FROM `meetings` WHERE id = ? LIMIT 1");
+  $m->execute([(int)$mid]);
+  $meeting = $m->fetch();
+  if (!$meeting) {
+    json_response(['error' => 'Meeting not found'], 404);
+  }
+
+  // Insert new event (default host = minister, times from diary)
+  $ins = pdo()->prepare("INSERT INTO `events` (meeting_id, title, date, start_time, end_time, location, notes, source, host_person_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  $ins->execute([
+    (int)$mid,
+    $meeting['title'] ?? null,
+    $meeting['date'] ?? null,
+    $meeting['start_time'] ?? null,
+    $meeting['end_time'] ?? null,
+    $meeting['location'] ?? null,
+    $meeting['notes'] ?? null,
+    'ministerial_diary',
+    !empty($meeting['minister_person_id']) ? (int)$meeting['minister_person_id'] : null
+  ]);
+  $eventId = (int)pdo()->lastInsertId();
+
+  // 3) Prefill attendees from meeting_attendees_people if available
+  try {
+    $attQ = pdo()->prepare("SELECT person_id FROM meeting_attendees_people WHERE meeting_id = ?");
+    $attQ->execute([(int)$mid]);
+    $pids = array_map(fn($r) => (int)$r['person_id'], $attQ->fetchAll() ?: []);
+      if (!empty($pids)) {
+      $link = pdo()->prepare("INSERT IGNORE INTO event_attendees (event_id, person_id) VALUES (?, ?)");
+      foreach ($pids as $pid) {
+        if ($pid > 0) { $link->execute([$eventId, $pid]); }
+      }
+    }
+  } catch (Throwable $e) {
+    // ignore prefill errors
+  }
+
+  $ev = load_event_with_attendees($eventId);
+  json_response($ev);
+}
+
+/** GET /events/by-id?event_id= */
+function handle_event_by_id(): void {
+  $eid = $_GET['event_id'] ?? null;
+  if (!$eid || !is_numeric($eid)) {
+    json_response(['error' => 'event_id is required'], 400);
+  }
+  ensure_events_schema();
+  $ev = load_event_with_attendees((int)$eid);
+  if (empty($ev)) json_response(['error' => 'Event not found'], 404);
+  json_response($ev);
+}
+
+/** GET /events/search?q=&start_date=&end_date= */
+function handle_events_search(): void {
+  ensure_events_schema();
+  $q = isset($_GET['q']) ? trim((string)$_GET['q']) : '';
+  $start = $_GET['start_date'] ?? null;
+  $end = $_GET['end_date'] ?? null;
+
+  $conds = [];
+  $params = [];
+
+  if ($q !== '') {
+    $conds[] = "(title LIKE ? OR location LIKE ? OR notes LIKE ?)";
+    $like = '%' . $q . '%';
+    $params[] = $like; $params[] = $like; $params[] = $like;
+  }
+  if ($start && $end) {
+    $conds[] = "(date BETWEEN ? AND ?)";
+    $params[] = $start; $params[] = $end;
+  } elseif ($start) {
+    $conds[] = "date >= ?";
+    $params[] = $start;
+  } elseif ($end) {
+    $conds[] = "date <= ?";
+    $params[] = $end;
+  }
+
+  $sql = "SELECT id, date, title, location FROM `events`";
+  if (!empty($conds)) {
+    $sql .= " WHERE " . implode(' AND ', $conds);
+  }
+  $sql .= " ORDER BY COALESCE(date, '0000-00-00') DESC, id DESC LIMIT 500";
+
+  $stmt = pdo()->prepare($sql);
+  $stmt->execute($params);
+  $rows = $stmt->fetchAll();
+  if (!$rows) json_response([]);
+  json_response($rows);
+}
+
+/** POST /events/attendees/add (event_id, first_name, last_name) */
+function handle_event_attendee_add(): void {
+  ensure_events_schema();
+  // Support JSON or form POST
+  $input = null;
+  $ct = $_SERVER['CONTENT_TYPE'] ?? '';
+  if (stripos($ct, 'application/json') !== false) {
+    $raw = file_get_contents('php://input');
+    $input = json_decode($raw ?: 'null', true);
+  }
+  $eventId = (int)trim((string)($input['event_id'] ?? ($_POST['event_id'] ?? '0')));
+  $first = trim((string)($input['first_name'] ?? ($_POST['first_name'] ?? '')));
+  $last  = trim((string)($input['last_name'] ?? ($_POST['last_name'] ?? '')));
+
+  if ($eventId <= 0 || $first === '' || $last === '') {
+    json_response(['error' => 'event_id, first_name, last_name are required'], 400);
+  }
+
+  // Ensure event exists
+  $chk = pdo()->prepare("SELECT 1 FROM `events` WHERE id = ? LIMIT 1");
+  $chk->execute([$eventId]);
+  if (!$chk->fetchColumn()) {
+    json_response(['error' => 'Event not found'], 404);
+  }
+
+  // Resolve or create person (exact match on names)
+  $pid = resolve_candidate_person_id($first, $last, '');
+  if (!$pid) {
+    json_response(['error' => 'Failed to resolve/create person'], 500);
+  }
+
+  // Link
+  $ins = pdo()->prepare("INSERT IGNORE INTO `event_attendees` (event_id, person_id) VALUES (?, ?)");
+  $ins->execute([$eventId, $pid]);
+
+  json_response(['ok' => true, 'event_id' => $eventId, 'person_id' => $pid], 201);
+}
+
+/** POST /events/attendees/remove (event_id, person_id) */
+function handle_event_attendee_remove(): void {
+  ensure_events_schema();
+  $eventId = (int)($_POST['event_id'] ?? 0);
+  $personId = (int)($_POST['person_id'] ?? 0);
+  if ($eventId <= 0 || $personId <= 0) {
+    // Also accept JSON body
+    $raw = file_get_contents('php://input');
+    if ($raw) {
+      $inp = json_decode($raw, true);
+      if (is_array($inp)) {
+        $eventId = (int)($inp['event_id'] ?? $eventId);
+        $personId = (int)($inp['person_id'] ?? $personId);
+      }
+    }
+  }
+  if ($eventId <= 0 || $personId <= 0) {
+    json_response(['error' => 'event_id and person_id are required'], 400);
+  }
+  $del = pdo()->prepare("DELETE FROM `event_attendees` WHERE event_id = ? AND person_id = ?");
+  $del->execute([$eventId, $personId]);
+  json_response(['ok' => true, 'event_id' => $eventId, 'person_id' => $personId]);
+}
+
+/** POST /events/attendees/add-org (event_id, org_name) */
+function handle_event_attendee_add_org(): void {
+  ensure_events_schema();
+  // Support JSON or form POST
+  $input = null;
+  $ct = $_SERVER['CONTENT_TYPE'] ?? '';
+  if (stripos($ct, 'application/json') !== false) {
+    $raw = file_get_contents('php://input');
+    $input = json_decode($raw ?: 'null', true);
+  }
+  $eventId = (int)trim((string)($input['event_id'] ?? ($_POST['event_id'] ?? '0')));
+  $orgName = trim((string)($input['org_name'] ?? ($_POST['org_name'] ?? '')));
+
+  if ($eventId <= 0 || $orgName === '') {
+    json_response(['error' => 'event_id and org_name are required'], 400);
+  }
+
+  // Ensure event exists
+  $chk = pdo()->prepare("SELECT 1 FROM `events` WHERE id = ? LIMIT 1");
+  $chk->execute([$eventId]);
+  if (!$chk->fetchColumn()) {
+    json_response(['error' => 'Event not found'], 404);
+  }
+
+  // Resolve or create organization
+  $orgId = get_or_create_organization_id($orgName);
+  if (!$orgId) {
+    json_response(['error' => 'Failed to resolve/create organization'], 500);
+  }
+
+  // Link
+  $ins = pdo()->prepare("INSERT IGNORE INTO `event_attendees` (event_id, organization_id) VALUES (?, ?)");
+  $ins->execute([$eventId, $orgId]);
+
+  json_response(['ok' => true, 'event_id' => $eventId, 'organization_id' => $orgId], 201);
+}
+
+/** POST /events/attendees/remove-org (event_id, organization_id) */
+function handle_event_attendee_remove_org(): void {
+  ensure_events_schema();
+  $eventId = (int)($_POST['event_id'] ?? 0);
+  $orgId = (int)($_POST['organization_id'] ?? 0);
+  if ($eventId <= 0 || $orgId <= 0) {
+    // Also accept JSON body
+    $raw = file_get_contents('php://input');
+    if ($raw) {
+      $inp = json_decode($raw, true);
+      if (is_array($inp)) {
+        $eventId = (int)($inp['event_id'] ?? $eventId);
+        $orgId = (int)($inp['organization_id'] ?? $orgId);
+      }
+    }
+  }
+  if ($eventId <= 0 || $orgId <= 0) {
+    json_response(['error' => 'event_id and organization_id are required'], 400);
+  }
+  $del = pdo()->prepare("DELETE FROM `event_attendees` WHERE event_id = ? AND organization_id = ?");
+  $del->execute([$eventId, $orgId]);
+  json_response(['ok' => true, 'event_id' => $eventId, 'organization_id' => $orgId]);
+}
+
 /** Dispatch */
 try {
+  // Ensure Events schema exists on any request (lazy auto-migration)
+  // This creates events and event_attendees tables if missing.
+  ensure_events_schema();
+
   if ($METHOD === 'GET' && $ROUTE === '/') handle_health();
   if ($METHOD === 'GET' && $ROUTE === '/__debug') handle_debug();
 
@@ -4923,6 +5398,14 @@ try {
 
   if ($METHOD === 'GET' && $ROUTE === '/ministerial_diaries/search-cand-filter') handle_ministerial_diaries_search();
   if ($METHOD === 'GET' && $ROUTE === '/meetings/search-by-org') handle_meetings_search_by_org();
+  // Events
+  if ($METHOD === 'GET'  && $ROUTE === '/events/from-meeting') handle_event_from_meeting();
+  if ($METHOD === 'GET'  && $ROUTE === '/events/by-id') handle_event_by_id();
+  if ($METHOD === 'GET'  && $ROUTE === '/events/search') handle_events_search();
+  if ($METHOD === 'POST' && $ROUTE === '/events/attendees/add') handle_event_attendee_add();
+  if ($METHOD === 'POST' && $ROUTE === '/events/attendees/remove') handle_event_attendee_remove();
+  if ($METHOD === 'POST' && $ROUTE === '/events/attendees/add-org') handle_event_attendee_add_org();
+  if ($METHOD === 'POST' && $ROUTE === '/events/attendees/remove-org') handle_event_attendee_remove_org();
   if ($METHOD === 'GET' && $ROUTE === '/donations/by-person') handle_donations_by_person();
   if ($METHOD === 'GET' && $ROUTE === '/donations/by-donor') handle_donations_by_donor();
   if ($METHOD === 'GET' && $ROUTE === '/donors/search') handle_donors_search();
@@ -4950,6 +5433,8 @@ try {
   if ($METHOD === 'POST' && $ROUTE === '/admin/import-server') handle_admin_import_server();
   if ($METHOD === 'POST' && $ROUTE === '/admin/import-server-batch') handle_admin_import_server_batch();
   if ($METHOD === 'POST' && $ROUTE === '/admin/backfill-2023-original') handle_admin_backfill_2023();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/events-bootstrap') handle_admin_events_bootstrap();
+  if ($METHOD === 'POST' && $ROUTE === '/admin/ensure-events-schema') handle_admin_ensure_events_schema();
 
   // CSV Import API endpoints (for frontend integration)
   if ($METHOD === 'POST' && $ROUTE === '/api/import/csv/upload') handle_csv_upload_api();
