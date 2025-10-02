@@ -4444,7 +4444,7 @@ function handle_ai_extract_names_diaries(): void {
       'attendees_text' => $with !== '' ? $with : ''
     ];
 
-    $textForAi = trim(implode(' | ', array_filter([$with, $title], fn($x) => $x !== '')));
+    $textForAi = trim((string)$with);
     $ai_items[] = [$i, $textForAi];
   }
 
@@ -4516,10 +4516,7 @@ function handle_ai_extract_names_diaries(): void {
 
     foreach ($enriched as &$row) {
       $row['attendees_names'] = []; // names require AI; leave empty without key
-      $text = trim(implode(' | ', array_filter([
-        (string)($row['attendees_text'] ?? ''),
-        (string)($row['title'] ?? '')
-      ], fn($x) => $x !== '')));
+      $text = trim((string)($row['attendees_text'] ?? ''));
       $orgs = $extract_orgs_basic($text);
       $row['attendees_orgs'] = $orgs;
       $row['attendees_orgs_text'] = implode('; ', $orgs);
@@ -4651,7 +4648,85 @@ function handle_ai_extract_names_diaries(): void {
   foreach ($enriched as &$row) {
     $rid = $row['row_index'];
     $row['attendees_names'] = $idToNames[$rid] ?? [];
-    $orgs = $idToOrgs[$rid] ?? [];
+
+    // Start with AI-detected orgs (if any)
+    $orgsAI = $idToOrgs[$rid] ?? [];
+    $orgSet = [];
+    foreach ((array)$orgsAI as $o) {
+      $o = trim((string)$o);
+      if ($o !== '') $orgSet[mb_strtolower($o, 'UTF-8')] = $o;
+    }
+
+    // Heuristic fallback/augmentation: extract orgs from attendees_text + title
+    $text = trim((string)($row['attendees_text'] ?? ''));
+
+    if ($text !== '') {
+      // Normalize whitespace and split on common separators (&, and, commas, semicolons, pipes)
+      $textNorm = preg_replace('/\s+/u', ' ', $text);
+      $pieces = preg_split('/\s*[,;|]\s*|\s+(?:and|&)\s+/i', (string)$textNorm) ?: [];
+
+      // Keywords and generic-role filters
+      $kw = [
+        'Council','University','Ltd','Limited','Inc','Incorporated','Association','Society','Trust','Federation',
+        'Chamber','Board','Committee','Commission','Ministry','Department','Institute','Alliance','Authority',
+        'College','School','Union','Industry','Group','Cooperative','Confederation','Foundation','Company','Corporation',
+        'NZ','New Zealand'
+      ];
+      $generic = [
+        'attendees','attendee','event attendees','official','officials','representative','representatives',
+        'delegation','members','committee members','committee','chair','co-chair','chairperson','press','media','news',
+        'ministers','minister','mp','mlc','symposium attendees'
+      ];
+
+      foreach ($pieces as $p) {
+        $p = trim((string)$p, "\"' ");
+        if ($p === '') continue;
+
+        // Remove bracketed info and normalize
+        $pSan = preg_replace('/\([^)]*\)/', ' ', $p);
+        $pSan = preg_replace('/\s+/', ' ', (string)$pSan);
+        $low = mb_strtolower($pSan, 'UTF-8');
+        if (in_array($low, $generic, true)) continue;
+
+        $signals = 0;
+
+        // Contains obvious org keyword
+        foreach ($kw as $k) {
+          if (stripos($pSan, $k) !== false) { $signals++; break; }
+        }
+
+        // Ends with "Representatives" or "Council"/"Trust" style suffix
+        if (preg_match('/\b(Representatives|Council|Trust|Inc|Ltd|Limited|Incorporated|Society|Association|Federation|Commission)\.?$/i', $pSan)) {
+          $signals++;
+        }
+
+        // Multiple capitalized words (e.g., "Kiwifruit Vine Health")
+        if (preg_match('/^(?:[A-Z][A-Za-z.&\'-]+\s+){1,}[A-Z][A-Za-z.&\'-]+$/', $pSan)) {
+          $signals++;
+        }
+
+        // Uppercase acronym token (e.g., FSANZ) 2–8 chars
+        if (preg_match('/\b[A-Z]{2,8}\b/', $pSan)) {
+          $signals++;
+        }
+
+        // If still no signals and looks like pure person name, skip
+        if ($signals === 0 && preg_match('/^[A-Z][A-Za-z\'-]+(?:\s+[A-Z][A-Za-z\'-]+)+$/', $pSan)) {
+          continue;
+        }
+
+        if ($signals > 0) {
+          $key = mb_strtolower($pSan, 'UTF-8');
+          // Avoid very generic tokens like "Ministers", "Officials", etc.
+          if (!in_array($key, $generic, true)) {
+            $orgSet[$key] = $pSan;
+          }
+        }
+      }
+    }
+
+    // Final orgs = AI orgs ∪ heuristic orgs (unique, case-insensitive)
+    $orgs = array_values($orgSet);
     $row['attendees_orgs'] = $orgs;
     $row['attendees_orgs_text'] = implode('; ', array_values(array_filter(array_map('strval', $orgs), fn($s) => trim($s) !== '')));
   }
@@ -5202,7 +5277,7 @@ function ensure_events_schema(): void {
 
 /** Load a single event with attendees_people array */
 function load_event_with_attendees(int $eventId): array {
-  $stmt = pdo()->prepare("SELECT id, meeting_id, title, date, start_time, end_time, location, notes, source, host_person_id, host_organization_id FROM `events` WHERE id = ?");
+  $stmt = pdo()->prepare("SELECT id, meeting_id, title, date, start_time, end_time, location, notes, source, host_person_id, host_organization_id, attendees_text FROM `events` WHERE id = ?");
   $stmt->execute([$eventId]);
   $event = $stmt->fetch();
   if (!$event) return [];
@@ -5229,6 +5304,81 @@ function load_event_with_attendees(int $eventId): array {
         $event['host_organization_name'] = $o['name'] ?? null;
       }
     } catch (Throwable $e) {}
+  }
+
+  // Lazy-populate attendees_text if empty but meeting_id present
+  if ((empty($event['attendees_text']) || trim((string)$event['attendees_text']) === '') && !empty($event['meeting_id'])) {
+    try {
+      $names = [];
+      $mid = (int)$event['meeting_id'];
+
+      // Try mapping table meeting_attendees_people -> people
+      try {
+        $attQ = pdo()->prepare("SELECT p.first_name, p.last_name FROM meeting_attendees_people map JOIN people p ON p.id = map.person_id WHERE map.meeting_id = ?");
+        $attQ->execute([$mid]);
+        $rows = $attQ->fetchAll() ?: [];
+        foreach ($rows as $r) {
+          $fn = trim((string)($r['first_name'] ?? ''));
+          $ln = trim((string)($r['last_name'] ?? ''));
+          $full = trim($fn . ' ' . $ln);
+          if ($full !== '') $names[] = $full;
+        }
+      } catch (Throwable $e) {
+        // ignore if mapping table missing
+      }
+
+      // Fallback to meetings.with_text
+      $ministerId = null;
+      if (empty($names)) {
+        $wq = pdo()->prepare("SELECT with_text, minister_person_id FROM meetings WHERE id = ?");
+        $wq->execute([$mid]);
+        $wrow = $wq->fetch();
+        if ($wrow) {
+          $with = $wrow['with_text'] ?? null;
+          if ($with) {
+            $parts = array_map('trim', preg_split('/[;\n]|\s*,\s*/', (string)$with));
+            foreach ($parts as $nm) {
+              if ($nm !== '') $names[] = $nm;
+            }
+          }
+          if (isset($wrow['minister_person_id'])) {
+            $ministerId = (int)$wrow['minister_person_id'];
+          }
+        }
+      } else {
+        // still fetch minister id to ensure present
+        $wq = pdo()->prepare("SELECT minister_person_id FROM meetings WHERE id = ?");
+        $wq->execute([$mid]);
+        $ministerId = (int)($wq->fetchColumn() ?? 0);
+      }
+
+      // Ensure diary minister appended (if available and not present)
+      if (!empty($ministerId)) {
+        try {
+          $ms = pdo()->prepare("SELECT first_name, last_name FROM people WHERE id = ?");
+          $ms->execute([$ministerId]);
+          $mp = $ms->fetch();
+          if ($mp) {
+            $mf = trim((string)($mp['first_name'] ?? '') . ' ' . (string)($mp['last_name'] ?? ''));
+            if ($mf !== '') {
+              $lower = array_map(fn($x) => mb_strtolower($x, 'UTF-8'), $names);
+              if (!in_array(mb_strtolower($mf, 'UTF-8'), $lower, true)) {
+                $names[] = $mf;
+              }
+            }
+          }
+        } catch (Throwable $e) {}
+      }
+
+      if (!empty($names)) {
+        $txt = implode('; ', array_values(array_unique($names)));
+        $up = pdo()->prepare("UPDATE `events` SET attendees_text = ? WHERE id = ?");
+        $up->execute([$txt, (int)$event['id']]);
+        $event['attendees_text'] = $txt;
+      }
+    } catch (Throwable $e) {
+      // ignore failures; leave attendees_text empty
+    }
   }
 
   // Build attendees from events.attendees_text by resolving to existing people/orgs
@@ -5261,15 +5411,155 @@ function load_event_with_attendees(int $eventId): array {
       if ($orow && empty($seenO[(int)$orow['id']])) {
         $attOrg[] = ['id' => (int)$orow['id'], 'name' => $orow['name']];
         $seenO[(int)$orow['id']] = true;
+      } else {
+        // Heuristic from Attendees Text: interpret token as organization when it looks org-like
+        $cand = trim((string)preg_replace('/\s+/', ' ', preg_replace('/\([^)]*\)/', ' ', trim($name, "\"' "))));
+        $low = mb_strtolower($cand, 'UTF-8');
+        $generic = [
+          'attendees','attendee','event attendees','official','officials','representative','representatives',
+          'delegation','members','committee','committee members','chair','co-chair','chairperson','press','media','news',
+          'ministers','minister','mp','mlc','symposium attendees'
+        ];
+        if (!in_array($low, $generic, true)) {
+          // Signals the string is probably an organization/company
+          $signals = 0;
+          $kw = [
+            'Council','University','Ltd','Limited','Inc','Incorporated','Association','Society','Trust','Federation',
+            'Chamber','Board','Committee','Commission','Ministry','Department','Institute','Alliance','Authority',
+            'College','School','Union','Industry','Group','Cooperative','Confederation','Foundation','Company','Corporation',
+            'NZ','New Zealand'
+          ];
+          foreach ($kw as $k) { if (stripos($cand, $k) !== false) { $signals++; break; } }
+          if (preg_match('/\b(Representatives|Council|Trust|Inc|Ltd|Limited|Incorporated|Society|Association|Federation|Commission)\.?$/i', $cand)) $signals++;
+          if (preg_match('/^(?:[A-Z][A-Za-z.&\'-]+\s+){1,}[A-Z][A-Za-z.&\'-]+$/', $cand)) $signals++; // multiple capitalized words
+          if (preg_match('/\b[A-Z]{2,8}\b/', $cand)) $signals++; // acronym signal
+
+          // Avoid creating orgs for plain person-like tokens
+          if ($signals > 0) {
+            try {
+              // Try partial LIKE match first to reuse an existing organization (e.g., "Kiwifruit Vine Health Representatives" -> "Kiwifruit Vine Health")
+              $q = pdo()->prepare('SELECT id, name FROM organizations WHERE UPPER(name) LIKE UPPER(?) ORDER BY LENGTH(name) ASC LIMIT 1');
+              $q->execute([$cand . '%']);
+              $found = $q->fetch();
+
+              $orgId = null; $orgName = null;
+              if ($found && isset($found['id'])) {
+                $orgId = (int)$found['id'];
+                $orgName = (string)($found['name'] ?? $cand);
+              } else {
+                // If no close match, create a new organization from this token
+                $orgId = get_or_create_organization_id($cand);
+                $orgName = $cand;
+              }
+
+              if ($orgId && empty($seenO[$orgId])) {
+                $attOrg[] = ['id' => $orgId, 'name' => $orgName];
+                $seenO[$orgId] = true;
+              }
+            } catch (Throwable $e2) { /* ignore creation/lookup failure */ }
+          }
+        }
       }
     }
   } catch (Throwable $e) {
     // ignore parsing failures
   }
-  $event['attendees_people'] = $att;
-  $event['attendees_organizations'] = $attOrg;
 
-  return $event;
+  // Fallback heuristic: if no attendees resolved AND attendees_text is empty or generic,
+  // try to derive organizations from the event title/notes (e.g., "FSANZ Stakeholder Event")
+  if (count($att) === 0 && count($attOrg) === 0) {
+    $txtRaw = trim((string)($event['attendees_text'] ?? ''));
+    $genericTokens = [
+      'attendees','attendee','event attendees',
+      'officials','official',
+      'members','delegation','committee','committee members'
+    ];
+    $isGeneric = ($txtRaw === '') || in_array(mb_strtolower($txtRaw, 'UTF-8'), $genericTokens, true);
+
+    if ($isGeneric) {
+      $hintText = trim(implode(' | ', array_filter([
+        (string)($event['title'] ?? ''),
+        (string)($event['notes'] ?? '')
+      ], static fn($x) => $x !== '')));
+
+      if ($hintText !== '') {
+        // Extract probable organization/company tokens from title/notes
+        $textNorm = preg_replace('/\s+/u', ' ', $hintText);
+        $pieces = preg_split('/\s*[,;|]\s*|\s+(?:and|&)\s+/i', (string)$textNorm) ?: [];
+
+        $kw = [
+          'Council','University','Ltd','Limited','Inc','Incorporated','Association','Society','Trust','Federation',
+          'Chamber','Board','Committee','Commission','Ministry','Department','Institute','Alliance','Authority',
+          'College','School','Union','Industry','Group','Cooperative','Confederation','Foundation','Company','Corporation',
+          'NZ','New Zealand'
+        ];
+        $roleGenerics = [
+          'attendees','attendee','event attendees','official','officials',
+          'representative','representatives','delegation','members','committee','committee members',
+          'chair','co-chair','chairperson','press','media','news','ministers','minister','mp','mlc'
+        ];
+
+        $orgSet = [];
+        foreach ($pieces as $p) {
+          $p = trim((string)$p, "\"' ");
+          if ($p === '') continue;
+
+          // Clean bracketed info, normalize spaces
+          $pSan = preg_replace('/\([^)]*\)/', ' ', $p);
+          $pSan = preg_replace('/\s+/', ' ', (string)$pSan);
+          $pLow = mb_strtolower($pSan, 'UTF-8');
+          if (in_array($pLow, $roleGenerics, true)) continue;
+
+          $signals = 0;
+          foreach ($kw as $k) { if (stripos($pSan, $k) !== false) { $signals++; break; } }
+          if (preg_match('/\b(Representatives|Council|Trust|Inc|Ltd|Limited|Incorporated|Society|Association|Federation|Commission)\.?$/i', $pSan)) $signals++;
+          if (preg_match('/^(?:[A-Z][A-Za-z.&\'-]+\s+){1,}[A-Z][A-Za-z.&\'-]+$/', $pSan)) $signals++;
+          if (preg_match('/\b[A-Z]{2,8}\b/', $pSan)) $signals++;
+
+          // Skip likely person-only if no org signals
+          if ($signals === 0 && preg_match('/^[A-Z][A-Za-z\'-]+(?:\s+[A-Z][A-Za-z\'-]+)+$/', $pSan)) continue;
+
+          if ($signals > 0) {
+            $orgSet[$pLow] = $pSan;
+          }
+        }
+
+        // Resolve/create organizations and attach to response
+        if (!empty($orgSet)) {
+          foreach ($orgSet as $orgNameLow => $orgName) {
+            try {
+              $orgId = get_or_create_organization_id($orgName);
+              if ($orgId && empty($seenO[$orgId])) {
+                $attOrg[] = ['id' => $orgId, 'name' => $orgName];
+                $seenO[$orgId] = true;
+              }
+            } catch (Throwable $e2) { /* ignore */ }
+          }
+
+          // Optionally persist these org tokens into attendees_text so future loads don't recompute
+          if (!empty($attOrg)) {
+            $orgNames = array_map(static fn($o) => (string)$o['name'], $attOrg);
+            $appendTxt = implode('; ', $orgNames);
+            $newTxt = $txtRaw === '' ? $appendTxt : ($txtRaw . '; ' . $appendTxt);
+            try {
+              $up = pdo()->prepare("UPDATE `events` SET attendees_text = ? WHERE id = ?");
+              $up->execute([$newTxt, (int)$event['id']]);
+              $event['attendees_text'] = $newTxt;
+            } catch (Throwable $e3) { /* ignore */ }
+          }
+        }
+      }
+    }
+  }
+
+  // Ensure the diary’s minister is included in attendees_people (ID-based), even if attendees_text parsing missed it
+  try {
+    if (!empty($event['meeting_id'])) {
+      $ms = pdo()->prepare("SELECT minister_person_id FROM meetings WHERE id = ? LIMIT 1");
+      $ms->execute([(int)$event['meeting_id']]);
+      $ministerId = (int)($ms->fetchColumn() ?? 0);
+      if ($ministerId > 0) {
+        $existingIds = array_map(static fn($x) => (int)($x['id']
 }
 
 /** GET /events/from-meeting?meeting_id= */

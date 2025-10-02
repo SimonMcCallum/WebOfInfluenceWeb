@@ -16,6 +16,11 @@ const EventForm = ({ eventData, onRefresh }) => {
   const [orgName, setOrgName] = useState('');
   const [orgError, setOrgError] = useState(null);
 
+  // Edit mode + success messages
+  const [editingAttendees, setEditingAttendees] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
+  const [orgSuccessMsg, setOrgSuccessMsg] = useState('');
+
   const attendees = useMemo(() => {
     if (!eventData) return [];
     const ppl = Array.isArray(eventData.attendees_people) ? eventData.attendees_people : [];
@@ -54,6 +59,24 @@ const EventForm = ({ eventData, onRefresh }) => {
     }));
   }, [eventData]);
 
+  // Unified attendees list (people + organizations) with a simple type label
+  const attendeesAll = useMemo(() => {
+    if (!eventData) return [];
+    const people = attendees.map(p => ({
+      key: `p-${p.id}`,
+      id: p.id,
+      name: [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Unknown',
+      type: 'Person'
+    }));
+    const orgs = attendeesOrgs.map(o => ({
+      key: `o-${o.id}`,
+      id: o.id,
+      name: o.name || 'Unknown',
+      type: 'Organisation'
+    }));
+    return [...people, ...orgs];
+  }, [eventData, attendees, attendeesOrgs]);
+
   const handleAddAttendee = async () => {
     setError(null);
     if (!eventData?.id) return;
@@ -77,6 +100,8 @@ const EventForm = ({ eventData, onRefresh }) => {
       } else {
         setFirstName('');
         setLastName('');
+        setSuccessMsg('Successfully added');
+        setTimeout(() => setSuccessMsg(''), 2000);
         await onRefresh?.();
       }
     } catch (e) {
@@ -131,6 +156,8 @@ const EventForm = ({ eventData, onRefresh }) => {
         setOrgError(data.error || 'Failed to add organization attendee');
       } else {
         setOrgName('');
+        setOrgSuccessMsg('Successfully added');
+        setTimeout(() => setOrgSuccessMsg(''), 2000);
         await onRefresh?.();
       }
     } catch (e) {
@@ -162,6 +189,34 @@ const EventForm = ({ eventData, onRefresh }) => {
       console.error(e);
       alert('Network error while removing organization attendee');
     }
+  };
+
+  // Unified "Add Attendee" action: either person (first + last) OR organization
+  const handleAddUnified = async () => {
+    setError(null);
+    setOrgError(null);
+    if (!eventData?.id) return;
+
+    const fn = (firstName || '').trim();
+    const ln = (lastName || '').trim();
+    const on = (orgName || '').trim();
+
+    if ((fn || ln) && on) {
+      setError('Enter either a person (first + last) OR an organization, not both.');
+      return;
+    }
+
+    if (on) {
+      await handleAddOrgAttendee();
+      return;
+    }
+
+    if (fn && ln) {
+      await handleAddAttendee();
+      return;
+    }
+
+    setError('Enter either first and last name, or an organization name.');
   };
 
   return (
@@ -209,34 +264,50 @@ const EventForm = ({ eventData, onRefresh }) => {
       </div>
 
       {/* Attendees */}
-      <div className="results-header">
-        <h3 className="results-title">
+      <div className="results-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h3 className="results-title" style={{ margin: 0 }}>
           <span className="results-icon">👥</span>
           Attendees
-          {attendees.length > 0 ? <span className="results-count"> ({attendees.length})</span> : null}
+          {attendeesAll.length > 0 ? <span className="results-count"> ({attendeesAll.length})</span> : null}
         </h3>
+        <button
+          type="button"
+          className="reset-button"
+          onClick={() => setEditingAttendees(v => !v)}
+          aria-pressed={editingAttendees ? 'true' : 'false'}
+          aria-label={editingAttendees ? 'Done editing attendees' : 'Edit attendees'}
+        >
+          {editingAttendees ? 'Done' : 'Edit'}
+        </button>
       </div>
 
       <div className="table-container" style={{ marginBottom: '1rem' }}>
         <table className="meetings-table table-fixed w-full">
           <thead className="bg-gray-100">
             <tr>
-              <th className="py-2 px-4 border">First</th>
-              <th className="py-2 px-4 border">Last</th>
+              <th className="py-2 px-4 border">Name</th>
+              <th className="py-2 px-4 border">Type</th>
               <th className="py-2 px-4 border">Action</th>
             </tr>
           </thead>
           <tbody>
-            {attendees.length === 0 ? (
+            {attendeesAll.length === 0 ? (
               <tr>
                 <td className="py-2 px-4 border" colSpan={3}>No attendees yet</td>
               </tr>
-            ) : attendees.map(p => (
-              <tr key={p.id}>
-                <td className="py-2 px-4 border">{p.first_name}</td>
-                <td className="py-2 px-4 border">{p.last_name}</td>
+            ) : attendeesAll.map(item => (
+              <tr key={item.key || `${item.type}-${item.id}`}>
+                <td className="py-2 px-4 border">{item.name}</td>
                 <td className="py-2 px-4 border">
-                  <button className="reset-button" onClick={() => handleRemoveAttendee(p.id)}>
+                  <span className={`type-pill ${item.type === 'Person' ? 'type-pill--person' : 'type-pill--org'}`}>
+                    {item.type}
+                  </span>
+                </td>
+                <td className="py-2 px-4 border">
+                  <button
+                    className="reset-button"
+                    onClick={() => item.type === 'Person' ? handleRemoveAttendee(item.id) : handleRemoveOrgAttendee(item.id)}
+                  >
                     Remove
                   </button>
                 </td>
@@ -246,13 +317,17 @@ const EventForm = ({ eventData, onRefresh }) => {
         </table>
       </div>
 
-      {/* Add attendee */}
+      {/* Edit panel: Add person attendee */}
+      {editingAttendees && (
       <div className="search-card">
         <div className="card-header">
           <h3 className="card-title">
             <span className="card-icon">➕</span>
             Add Attendee
           </h3>
+        </div>
+        <div className="note" style={{ color: '#6b7280', fontSize: '.875rem', margin: '0 0 .5rem' }}>
+          Enter either a person (first and last name) or an organization name.
         </div>
         <div className="inputs-grid">
           <div className="field">
@@ -275,58 +350,6 @@ const EventForm = ({ eventData, onRefresh }) => {
               onChange={(e) => setLastName(e.target.value)}
             />
           </div>
-        </div>
-        {error && <div className="error-message"><span className="error-icon">⚠️</span>{error}</div>}
-        <button className="search-button" disabled={adding} onClick={handleAddAttendee}>
-          {adding ? 'Adding…' : 'Add Attendee'}
-        </button>
-      </div>
-
-      {/* Organization Attendees */}
-      <div className="results-header">
-        <h3 className="results-title">
-          <span className="results-icon">🏢</span>
-          Organizations
-          {attendeesOrgs.length > 0 ? <span className="results-count"> ({attendeesOrgs.length})</span> : null}
-        </h3>
-      </div>
-
-      <div className="table-container" style={{ marginBottom: '1rem' }}>
-        <table className="meetings-table table-fixed w-full">
-          <thead className="bg-gray-100">
-            <tr>
-              <th className="py-2 px-4 border">Name</th>
-              <th className="py-2 px-4 border">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {attendeesOrgs.length === 0 ? (
-              <tr>
-                <td className="py-2 px-4 border" colSpan={2}>No organization attendees yet</td>
-              </tr>
-            ) : attendeesOrgs.map(o => (
-              <tr key={o.id}>
-                <td className="py-2 px-4 border">{o.name}</td>
-                <td className="py-2 px-4 border">
-                  <button className="reset-button" onClick={() => handleRemoveOrgAttendee(o.id)}>
-                    Remove
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Add organization attendee */}
-      <div className="search-card">
-        <div className="card-header">
-          <h3 className="card-title">
-            <span className="card-icon">➕</span>
-            Add Organization
-          </h3>
-        </div>
-        <div className="inputs-grid">
           <div className="field">
             <span className="icon" aria-hidden>🏢</span>
             <input
@@ -338,11 +361,15 @@ const EventForm = ({ eventData, onRefresh }) => {
             />
           </div>
         </div>
-        {orgError && <div className="error-message"><span className="error-icon">⚠️</span>{orgError}</div>}
-        <button className="search-button" disabled={addingOrg} onClick={handleAddOrgAttendee}>
-          {addingOrg ? 'Adding…' : 'Add Organization'}
+        {(error || orgError) && <div className="error-message"><span className="error-icon">⚠️</span>{error || orgError}</div>}
+        {(successMsg || orgSuccessMsg) && <div className="ok-message"><span className="success-icon">✅</span>{successMsg || orgSuccessMsg}</div>}
+        <button className="search-button" disabled={adding || addingOrg} onClick={handleAddUnified}>
+          {(adding || addingOrg) ? 'Adding…' : 'Add Attendee'}
         </button>
       </div>
+      )}
+
+
     </div>
   );
 };
