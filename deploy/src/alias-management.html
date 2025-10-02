@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Web Of Influence — Name Alias Management</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="../app-config.js"></script>
+  <script src="../auth-config.js"></script>
+  <style>
+    body { 
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; 
+      margin: 1.25rem; 
+      background: #f8fafc;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    .header {
+      background: white;
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 2rem;
+    }
+    
+    .header h1 {
+      margin: 0 0 0.5rem 0;
+      color: #1e293b;
+      font-size: 2.5rem;
+      font-weight: 700;
+    }
+    
+    .subtitle {
+      color: #64748b;
+      margin: 0;
+      font-size: 1.1rem;
+    }
+    
+    .back-button {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.75rem 1.5rem;
+      background: #3b82f6;
+      color: white;
+      text-decoration: none;
+      border-radius: 8px;
+      font-weight: 500;
+      margin-bottom: 2rem;
+      transition: background 0.2s;
+    }
+    
+    .back-button:hover {
+      background: #2563eb;
+    }
+    
+    .card {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 2rem;
+      margin-bottom: 2rem;
+    }
+    
+    .card h2 {
+      margin: 0 0 1.5rem 0;
+      color: #1e293b;
+      font-size: 1.5rem;
+      font-weight: 600;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 0.5rem;
+    }
+    
+    .form-group {
+      margin-bottom: 1.5rem;
+    }
+    
+    .form-group label {
+      display: block;
+      margin-bottom: 0.5rem;
+      color: #374151;
+      font-weight: 500;
+    }
+    
+    .form-group input,
+    .form-group textarea {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 1rem;
+      box-sizing: border-box;
+    }
+    
+    .form-group input:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+    
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    
+    @media (max-width: 768px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+    }
+    
+    .btn {
+      padding: 0.75rem 1.5rem;
+      border: none;
+      border-radius: 6px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-decoration: none;
+      display: inline-block;
+      text-align: center;
+    }
+    
+    .btn-primary {
+      background: #3b82f6;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #2563eb;
+    }
+    
+    .btn-secondary {
+      background: #6b7280;
+      color: white;
+    }
+    
+    .btn-secondary:hover {
+      background: #4b5563;
+    }
+    
+    .btn-small {
+      padding: 0.5rem 1rem;
+      font-size: 0.875rem;
+    }
+    
+    .search-section {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 2rem;
+      align-items: end;
+    }
+    
+    .search-section .form-group {
+      flex: 1;
+      margin-bottom: 0;
+    }
+    
+    .people-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .people-table th,
+    .people-table td {
+      padding: 1rem;
+      text-align: left;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    
+    .people-table th {
+      background: #f8fafc;
+      font-weight: 600;
+      color: #374151;
+    }
+    
+    .people-table tr:hover {
+      background: #f8fafc;
+    }
+    
+    .actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+    
+    .message {
+      padding: 1rem;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+    }
+    
+    .message.success {
+      background: #d1fae5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+    }
+    
+    .message.error {
+      background: #fee2e2;
+      color: #991b1b;
+      border: 1px solid #fca5a5;
+    }
+    
+    .message.info {
+      background: #dbeafe;
+      color: #1e40af;
+      border: 1px solid #93c5fd;
+    }
+    
+    .loading {
+      text-align: center;
+      color: #6b7280;
+      font-style: italic;
+    }
+    
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+    }
+    
+    .modal.show {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .modal-content {
+      background: white;
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 600px;
+      width: 90%;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    
+    .modal-header {
+      margin-bottom: 1.5rem;
+    }
+    
+    .modal-header h3 {
+      margin: 0;
+      color: #1e293b;
+    }
+    
+    .modal-footer {
+      display: flex;
+      gap: 1rem;
+      justify-content: end;
+      margin-top: 2rem;
+    }
+    
+    .resolve-result {
+      padding: 1rem;
+      background: #f8fafc;
+      border-radius: 6px;
+      margin-top: 1rem;
+    }
+    
+    .resolve-result.resolved {
+      background: #d1fae5;
+      color: #065f46;
+    }
+    
+    .resolve-result.not-resolved {
+      background: #fef3c7;
+      color: #92400e;
+    }
+    
+    .help-text {
+      color: #6b7280;
+      font-size: 0.875rem;
+      margin-top: 0.5rem;
+    }
+    
+    .alias-display {
+      background: #f3f4f6;
+      padding: 0.5rem;
+      border-radius: 4px;
+      font-family: monospace;
+      min-height: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🏷️ Name Alias Management</h1>
+      <p class="subtitle">Manage name variations and aliases to ensure consistent person identification</p>
+    </div>
+    
+    <a href="dashboard.html" class="back-button">
+      <span>← Back to Admin Dashboard</span>
+    </a>
+
+    <div id="messages"></div>
+    
+    <!-- Runtime API Base config (helps when this page is opened via file://) -->
+    <div class="card">
+      <h2>🔧 API Connection</h2>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="api-base-input">API Base URL</label>
+          <input id="api-base-input" type="text" placeholder="https://example.com/webofinfluence/php-api/index.php">
+          <div class="help-text">
+            Current: <code id="api-base-current"></code><br>
+            Tip: If this page is opened via file://, use an absolute URL to your deployed PHP API.
+          </div>
+        </div>
+        <div class="form-group" style="align-self:end; display:flex; gap:.5rem; flex-wrap:wrap;">
+          <button type="button" class="btn btn-secondary" onclick="setApiBase(document.getElementById('api-base-input').value)">Save Base</button>
+          <button type="button" class="btn btn-secondary" onclick="testApiHealth()">Test API</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alias Resolution Tool -->
+    <div class="card">
+      <h2>🔍 Name Resolution Test</h2>
+      <p>Test how names are resolved using the current alias mappings.</p>
+      
+      <div class="form-row">
+        <div class="form-group">
+          <label for="resolve-name">Name to Resolve:</label>
+          <input type="text" id="resolve-name" placeholder="e.g., Todd STEPHENSON or Todd Stephenson MP">
+        </div>
+        <div class="form-group" style="align-self: end;">
+          <button type="button" class="btn btn-primary" onclick="resolveName()">Resolve Name</button>
+        </div>
+      </div>
+      
+      <div id="resolve-result"></div>
+    </div>
+
+    <!-- Search and Manage People -->
+    <div class="card">
+      <h2>👥 Manage People & Aliases</h2>
+      <p>Search for people and manage their name aliases. Each person can have multiple name variations stored in their "Also known as" field.</p>
+      
+      <div class="search-section">
+        <div class="form-group">
+          <label for="search-query">Search People:</label>
+          <input type="text" id="search-query" placeholder="Search by name or alias...">
+        </div>
+        <button type="button" class="btn btn-secondary" onclick="searchPeople()">Search</button>
+        <button type="button" class="btn btn-secondary" onclick="clearSearch()">Clear</button>
+      </div>
+      
+      <div id="people-container">
+        <div class="loading">Enter a search term to find people</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Aliases Modal -->
+  <div id="edit-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Edit Aliases for <span id="modal-person-name"></span></h3>
+      </div>
+      
+      <form id="edit-aliases-form">
+        <input type="hidden" id="edit-person-id">
+        
+        <div class="form-group">
+          <label for="edit-aliases">Also Known As:</label>
+          <textarea id="edit-aliases" rows="4" placeholder="Enter comma-separated name variations, e.g.:&#10;Todd STEPHENSON, Todd Stephenson MP, T. Stephenson"></textarea>
+          <div class="help-text">
+            Separate multiple aliases with commas. This will help the system recognize variations like:
+            <br>• Different capitalizations (John SMITH, John Smith)
+            <br>• Titles and positions (John Smith MP, Hon John Smith)
+            <br>• Abbreviations (J. Smith, John S.)
+          </div>
+        </div>
+        
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Aliases</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Configuration
+    const config = window.__APP_CONFIG__ || {};
+    const defaultApiBase = (config.API_BASE || '/webofinfluence/php-api/index.php');
+    let API_BASE = localStorage.getItem('woi_api_base') || defaultApiBase;
+    
+    let currentPeople = [];
+    
+    function setApiBase(newBase) {
+      API_BASE = (newBase || '').trim();
+      if (!API_BASE) API_BASE = defaultApiBase;
+      localStorage.setItem('woi_api_base', API_BASE);
+      const el = document.getElementById('api-base-current');
+      if (el) el.textContent = API_BASE;
+      const inp = document.getElementById('api-base-input');
+      if (inp) inp.value = API_BASE;
+    }
+    
+    async function testApiHealth() {
+      const tryUrls = [];
+      const base = API_BASE.trim();
+      if (/\.php(\?|$)/i.test(base)) {
+        tryUrls.push(base);
+        tryUrls.push(base.replace(/\/+$/, '') + '?route=/');
+      } else {
+        const b = base.replace(/\/+$/, '');
+        tryUrls.push(b + '/');
+        tryUrls.push(b + '/?route=/');
+        tryUrls.push(b + '/index.php');
+      }
+      let lastErr = '';
+      for (const url of tryUrls) {
+        try {
+          const r = await fetch(url, { cache: 'no-store' });
+          if (r.ok) {
+            showMessage('API health OK at: ' + url, 'success');
+            return true;
+          } else {
+            lastErr = `HTTP ${r.status}`;
+          }
+        } catch (e) {
+          lastErr = e.message || String(e);
+        }
+      }
+      showMessage('API health check failed. Last error: ' + lastErr, 'error');
+      return false;
+    }
+    
+    // API calls with robust fallback to query-style routing (?route=/path)
+    async function apiCall(endpoint, options = {}) {
+      const normalizeBase = (b) => (b || '').replace(/\/+$/, '');
+      const ensureLeadingSlash = (p) => (p.startsWith('/') ? p : '/' + p);
+      const base = normalizeBase(API_BASE);
+      const ep = ensureLeadingSlash(endpoint);
+
+      const tryFetch = async (url) => {
+        const response = await fetch(url, {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(options.headers || {})
+          },
+          ...options
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return await response.json();
+      };
+
+      // 1) Primary attempt: path-style (e.g., /php-api/index.php/people/resolve?name=...)
+      try {
+        const primaryUrl = base + ep;
+        return await tryFetch(primaryUrl);
+      } catch (err1) {
+        console.warn('Primary API call failed:', base + ep, err1);
+      }
+
+      // 2) Fallback: query-style (?route=/people/resolve&name=...)
+      try {
+        const qIndex = ep.indexOf('?');
+        const routePath = qIndex >= 0 ? ep.slice(0, qIndex) : ep;
+        const query = qIndex >= 0 ? ep.slice(qIndex) : '';
+        // If base already ends with index.php, just append ?route=...
+        // Otherwise still safe to use ?route on the directory path (server handles /php-api/?route=...)
+        const fallbackUrl = base + '?route=' + encodeURIComponent(routePath) + (query ? '&' + query.slice(1) : '');
+        return await tryFetch(fallbackUrl);
+      } catch (err2) {
+        console.error('Fallback API call failed:', err2);
+        throw err2;
+      }
+    }
+    
+    // Message display
+    function showMessage(message, type = 'info') {
+      const messagesContainer = document.getElementById('messages');
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${type}`;
+      messageDiv.textContent = message;
+      messagesContainer.appendChild(messageDiv);
+      
+      // Auto-remove after 5 seconds
+      setTimeout(() => {
+        if (messageDiv.parentNode) {
+          messageDiv.parentNode.removeChild(messageDiv);
+        }
+      }, 5000);
+    }
+    
+    // Search people with aliases
+    async function searchPeople() {
+      const query = document.getElementById('search-query').value.trim();
+      if (!query) {
+        showMessage('Please enter a search term', 'error');
+        return;
+      }
+      
+      try {
+        document.getElementById('people-container').innerHTML = '<div class="loading">Searching...</div>';
+        const people = await apiCall(`/people/search?q=${encodeURIComponent(query)}`);
+        currentPeople = people;
+        renderPeople(people);
+      } catch (error) {
+        showMessage('Search failed: ' + error.message, 'error');
+        document.getElementById('people-container').innerHTML = '<div class="error">Search failed</div>';
+      }
+    }
+    
+    // Clear search
+    function clearSearch() {
+      document.getElementById('search-query').value = '';
+      document.getElementById('people-container').innerHTML = '<div class="loading">Enter a search term to find people</div>';
+      currentPeople = [];
+    }
+    
+    // Render people table
+    function renderPeople(people) {
+      const container = document.getElementById('people-container');
+      
+      if (people.length === 0) {
+        container.innerHTML = '<div class="loading">No people found matching your search</div>';
+        return;
+      }
+      
+      const table = document.createElement('table');
+      table.className = 'people-table';
+      
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Also Known As</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${people.map(person => {
+            const aliases = person.also_known_as ? person.also_known_as.split(',').map(s => s.trim()).filter(s => s) : [];
+            return `
+              <tr>
+                <td><strong>${escapeHtml(person.first_name)} ${escapeHtml(person.last_name)}</strong></td>
+                <td>
+                  <div class="alias-display">
+                    ${aliases.length > 0 ? escapeHtml(aliases.join(', ')) : '<em>No aliases</em>'}
+                  </div>
+                </td>
+                <td>
+                  <div class="actions">
+                    <button class="btn btn-small btn-secondary" onclick="editAliases(${person.id})">Edit Aliases</button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      `;
+      
+      container.innerHTML = '';
+      container.appendChild(table);
+    }
+    
+    // Edit aliases for a person
+    function editAliases(personId) {
+      const person = currentPeople.find(p => p.id === personId);
+      if (!person) return;
+      
+      document.getElementById('edit-person-id').value = person.id;
+      document.getElementById('modal-person-name').textContent = `${person.first_name} ${person.last_name}`;
+      document.getElementById('edit-aliases').value = person.also_known_as || '';
+      
+      document.getElementById('edit-modal').classList.add('show');
+    }
+    
+    // Close edit modal
+    function closeEditModal() {
+      document.getElementById('edit-modal').classList.remove('show');
+    }
+    
+    // Update aliases
+    document.getElementById('edit-aliases-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const personId = document.getElementById('edit-person-id').value;
+      const aliases = document.getElementById('edit-aliases').value.trim();
+      
+      try {
+        await apiCall(`/people/update-aliases?person_id=${personId}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            also_known_as: aliases
+          })
+        });
+        
+        showMessage('Aliases updated successfully', 'success');
+        closeEditModal();
+        
+        // Refresh the search results
+        if (document.getElementById('search-query').value.trim()) {
+          searchPeople();
+        }
+      } catch (error) {
+        showMessage('Failed to update aliases: ' + error.message, 'error');
+      }
+    });
+    
+    // Resolve name
+    async function resolveName() {
+      const name = document.getElementById('resolve-name').value.trim();
+      if (!name) {
+        showMessage('Please enter a name to resolve', 'error');
+        return;
+      }
+      
+      try {
+        const result = await apiCall(`/people/resolve?name=${encodeURIComponent(name)}`);
+        
+        const resultContainer = document.getElementById('resolve-result');
+        if (result.resolved) {
+          const matchType = result.match_type === 'alias' ? 'alias match' : 'exact match';
+          resultContainer.innerHTML = `
+            <div class="resolve-result resolved">
+              <strong>✅ Resolved:</strong> "${result.input_name}" → <strong>${result.canonical_name}</strong>
+              <br><small>Match type: ${matchType} (Person ID: ${result.person_id})</small>
+            </div>
+          `;
+        } else {
+          resultContainer.innerHTML = `
+            <div class="resolve-result not-resolved">
+              <strong>❌ Not Resolved:</strong> "${result.input_name}" could not be resolved to any existing person.
+              <br><em>You may need to add this as an alias for an existing person, or create a new person record.</em>
+            </div>
+          `;
+        }
+      } catch (error) {
+        showMessage('Failed to resolve name: ' + error.message, 'error');
+      }
+    }
+    
+    // Utility functions
+    function escapeHtml(unsafe) {
+      if (!unsafe) return '';
+      return String(unsafe)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+    
+    // Initialize page
+    document.addEventListener('DOMContentLoaded', () => {
+      // Initialize API base UI
+      const baseEl = document.getElementById('api-base-current');
+      if (baseEl) baseEl.textContent = API_BASE;
+      const baseInp = document.getElementById('api-base-input');
+      if (baseInp) baseInp.value = API_BASE;
+      if (location.protocol === 'file:') {
+        showMessage('This page is opened via file://. Set API Base to an absolute URL and click "Test API".', 'error');
+      }
+      // Setup search on Enter key
+      document.getElementById('search-query').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          searchPeople();
+        }
+      });
+      
+      document.getElementById('resolve-name').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          resolveName();
+        }
+      });
+      
+      // Close modal on Escape key
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          closeEditModal();
+        }
+      });
+      
+      // Close modal when clicking outside
+      document.getElementById('edit-modal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) {
+          closeEditModal();
+        }
+      });
+    });
+  </script>
+</body>
+</html>

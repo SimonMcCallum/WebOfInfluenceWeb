@@ -5178,6 +5178,135 @@ function handle_event_attendee_remove_org(): void {
   json_response(['ok' => true, 'event_id' => $eventId, 'organization_id' => $orgId]);
 }
 
+/** People Management with Also Known As */
+function ensure_people_also_known_as_column(): void {
+  try {
+    // Check if column exists
+    $stmt = pdo()->prepare("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'people' AND COLUMN_NAME = 'also_known_as'");
+    $stmt->execute();
+    if ($stmt->fetch()) {
+      return; // Column already exists
+    }
+    
+    // Add the column
+    pdo()->exec("ALTER TABLE people ADD COLUMN also_known_as TEXT NULL COMMENT 'Comma-separated list of name variations and aliases'");
+    pdo()->exec("ALTER TABLE people ADD INDEX idx_people_also_known_as (also_known_as(255))");
+  } catch (Throwable $e) {
+    // Column might already exist, ignore errors
+  }
+}
+
+function handle_people_search_with_aliases(): void {
+  ensure_people_also_known_as_column();
+  
+  $query = trim((string)($_GET['q'] ?? ''));
+  if ($query === '') {
+    json_response(['error' => 'Query parameter q is required'], 400);
+  }
+  
+  $sql = "SELECT 
+            id, 
+            first_name, 
+            last_name, 
+            also_known_as,
+            CONCAT(first_name, ' ', last_name) as full_name
+          FROM people 
+          WHERE CONCAT(first_name, ' ', last_name) LIKE ? 
+             OR also_known_as LIKE ?
+             OR UPPER(CONCAT(first_name, ' ', last_name)) LIKE UPPER(?)
+             OR UPPER(also_known_as) LIKE UPPER(?)
+          ORDER BY last_name, first_name 
+          LIMIT 50";
+  
+  $like = '%' . $query . '%';
+  $stmt = pdo()->prepare($sql);
+  $stmt->execute([$like, $like, $like, $like]);
+  $rows = $stmt->fetchAll();
+  
+  json_response($rows ?: []);
+}
+
+function handle_person_update_aliases(): void {
+  $personId = (int)($_GET['person_id'] ?? 0);
+  if ($personId === 0) {
+    json_response(['error' => 'person_id is required'], 400);
+  }
+  
+  $input = json_decode(file_get_contents('php://input'), true);
+  $alsoKnownAs = trim((string)($input['also_known_as'] ?? ''));
+  
+  ensure_people_also_known_as_column();
+  
+  // Check if person exists
+  $stmt = pdo()->prepare('SELECT id, first_name, last_name FROM people WHERE id = ?');
+  $stmt->execute([$personId]);
+  $person = $stmt->fetch();
+  if (!$person) {
+    json_response(['error' => 'Person not found'], 404);
+  }
+  
+  // Update also_known_as field
+  $stmt = pdo()->prepare('UPDATE people SET also_known_as = ? WHERE id = ?');
+  $stmt->execute([$alsoKnownAs ?: null, $personId]);
+  
+  json_response([
+    'id' => $personId,
+    'updated' => true,
+    'also_known_as' => $alsoKnownAs,
+    'person_name' => trim($person['first_name'] . ' ' . $person['last_name'])
+  ]);
+}
+
+function handle_resolve_person_name(): void {
+  $name = trim((string)($_GET['name'] ?? ''));
+  if ($name === '') {
+    json_response(['error' => 'Name parameter is required'], 400);
+  }
+  
+  ensure_people_also_known_as_column();
+  
+  // Try exact match first
+  $stmt = pdo()->prepare('SELECT id, first_name, last_name, also_known_as FROM people WHERE CONCAT(first_name, " ", last_name) = ?');
+  $stmt->execute([$name]);
+  $person = $stmt->fetch();
+  
+  if ($person) {
+    json_response([
+      'resolved' => true,
+      'person_id' => (int)$person['id'],
+      'canonical_name' => trim($person['first_name'] . ' ' . $person['last_name']),
+      'input_name' => $name,
+      'match_type' => 'exact'
+    ]);
+    return;
+  }
+  
+  // Try alias match
+  $stmt = pdo()->prepare('SELECT id, first_name, last_name, also_known_as FROM people WHERE also_known_as LIKE ?');
+  $stmt->execute(['%' . $name . '%']);
+  
+  while ($row = $stmt->fetch()) {
+    $aliases = array_map('trim', explode(',', $row['also_known_as'] ?? ''));
+    if (in_array($name, $aliases, true)) {
+      json_response([
+        'resolved' => true,
+        'person_id' => (int)$row['id'],
+        'canonical_name' => trim($row['first_name'] . ' ' . $row['last_name']),
+        'input_name' => $name,
+        'match_type' => 'alias'
+      ]);
+      return;
+    }
+  }
+  
+  json_response([
+    'resolved' => false,
+    'person_id' => null,
+    'canonical_name' => null,
+    'input_name' => $name
+  ]);
+}
+
 /** Dispatch */
 try {
   // Ensure Events schema exists on any request (lazy auto-migration)
@@ -5226,6 +5355,11 @@ try {
 
   // People management
   if ($METHOD === 'POST' && $ROUTE === '/people') handle_add_person();
+
+  // People with Also Known As
+  if ($METHOD === 'GET'    && $ROUTE === '/people/search') handle_people_search_with_aliases();
+  if ($METHOD === 'PUT'    && $ROUTE === '/people/update-aliases') handle_person_update_aliases();
+  if ($METHOD === 'GET'    && $ROUTE === '/people/resolve') handle_resolve_person_name();
 
   // Admin
   if ($METHOD === 'GET' && $ROUTE === '/admin') handle_admin_get();
