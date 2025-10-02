@@ -5559,7 +5559,30 @@ function load_event_with_attendees(int $eventId): array {
       $ms->execute([(int)$event['meeting_id']]);
       $ministerId = (int)($ms->fetchColumn() ?? 0);
       if ($ministerId > 0) {
-        $existingIds = array_map(static fn($x) => (int)($x['id']
+        $existingIds = array_map(static fn($x) => (int)($x['id']), $att);
+        if (!in_array($ministerId, $existingIds, true)) {
+          $ps = pdo()->prepare("SELECT first_name, last_name FROM people WHERE id = ? LIMIT 1");
+          $ps->execute([$ministerId]);
+          $pr = $ps->fetch();
+          if ($pr) {
+            $att[] = [
+              'id' => $ministerId,
+              'first_name' => $pr['first_name'] ?? '',
+              'last_name' => $pr['last_name'] ?? ''
+            ];
+          }
+        }
+      }
+    }
+  } catch (Throwable $e) {
+    // ignore
+  }
+
+  // Attach structured attendees to event payload
+  $event['attendees_people'] = array_values($att);
+  $event['attendees_organizations'] = array_values($attOrg);
+
+  return $event;
 }
 
 /** GET /events/from-meeting?meeting_id= */
