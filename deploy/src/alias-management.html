@@ -324,7 +324,6 @@
         </div>
         <div class="form-group" style="align-self:end; display:flex; gap:.5rem; flex-wrap:wrap;">
           <button type="button" class="btn btn-secondary" onclick="setApiBase(document.getElementById('api-base-input').value)">Save Base</button>
-          <button type="button" class="btn btn-secondary" onclick="testApiHealth()">Test API</button>
         </div>
       </div>
     </div>
@@ -412,36 +411,6 @@
       if (el) el.textContent = API_BASE;
       const inp = document.getElementById('api-base-input');
       if (inp) inp.value = API_BASE;
-    }
-    
-    async function testApiHealth() {
-      const tryUrls = [];
-      const base = API_BASE.trim();
-      if (/\.php(\?|$)/i.test(base)) {
-        tryUrls.push(base);
-        tryUrls.push(base.replace(/\/+$/, '') + '?route=/');
-      } else {
-        const b = base.replace(/\/+$/, '');
-        tryUrls.push(b + '/');
-        tryUrls.push(b + '/?route=/');
-        tryUrls.push(b + '/index.php');
-      }
-      let lastErr = '';
-      for (const url of tryUrls) {
-        try {
-          const r = await fetch(url, { cache: 'no-store' });
-          if (r.ok) {
-            showMessage('API health OK at: ' + url, 'success');
-            return true;
-          } else {
-            lastErr = `HTTP ${r.status}`;
-          }
-        } catch (e) {
-          lastErr = e.message || String(e);
-        }
-      }
-      showMessage('API health check failed. Last error: ' + lastErr, 'error');
-      return false;
     }
     
     // API calls with robust fallback to query-style routing (?route=/path)
@@ -671,9 +640,6 @@
       if (baseEl) baseEl.textContent = API_BASE;
       const baseInp = document.getElementById('api-base-input');
       if (baseInp) baseInp.value = API_BASE;
-      if (location.protocol === 'file:') {
-        showMessage('This page is opened via file://. Set API Base to an absolute URL and click "Test API".', 'error');
-      }
       // Setup search on Enter key
       document.getElementById('search-query').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
