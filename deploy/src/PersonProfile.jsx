@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as d3 from 'd3';
 import './PersonProfile.css';
@@ -73,6 +73,27 @@ const buildRingMeta = (amount) => {
     ringThickness: getRingThickness(safeAmount),
     ringRadiusBoost: getRingRadiusBoost(safeAmount)
   };
+};
+
+const currencyFormatter = new Intl.NumberFormat('en-NZ', {
+  style: 'currency',
+  currency: 'NZD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+
+const formatCurrency = (amount) => {
+  const numeric = Number(amount);
+  if (!Number.isFinite(numeric)) return '—';
+  return currencyFormatter.format(numeric);
+};
+
+const getEdgeThickness = (amount = 0) => {
+  const safeAmount = Math.max(0, Number(amount) || 0);
+  if (safeAmount === 0) return 1.5;
+  // Logarithmic scaling keeps proportional differences while limiting extremes
+  const base = 1.5 + Math.log10(safeAmount + 1) * 2.8;
+  return Math.max(1.5, Math.min(14, base));
 };
 
 /**
@@ -216,6 +237,7 @@ const PersonProfile = () => {
   const [showDonorIndividuals, setShowDonorIndividuals] = useState(true);
   const [showDonorOrganisations, setShowDonorOrganisations] = useState(true);
   const [showPartiesLayer, setShowPartiesLayer] = useState(true);
+  const [graphTooltip, setGraphTooltip] = useState(null);
 
   // D3 refs
   const svgRef = useRef(null);
@@ -246,6 +268,7 @@ const PersonProfile = () => {
     setActiveOrgPeers({});
     setShowDonations(false);
     setShowMeetings(false);
+    setGraphTooltip(null);
 
     // Org view/state
     setViewMode('person');
@@ -518,6 +541,37 @@ const PersonProfile = () => {
   };
 
   // Auto-select organisation when only one match (graph should show immediately for org searches)
+  const showEdgeTooltip = useCallback((event, payload) => {
+    if (!payload) {
+      setGraphTooltip(null);
+      return;
+    }
+
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+
+    const rect = svgEl.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    const amountValue =
+      payload.amount != null && Number.isFinite(Number(payload.amount))
+        ? Number(payload.amount)
+        : null;
+
+    setGraphTooltip({
+      x,
+      y,
+      label: payload.label || '',
+      nodeType: payload.nodeType || '',
+      sources: payload.sources || [],
+      amount: amountValue,
+      amountLabel: amountValue != null ? formatCurrency(amountValue) : null,
+      isNodeClick: payload.isNodeClick || false,
+      isEdgeClick: payload.isEdgeClick || false
+    });
+  }, []);
+
   useEffect(() => {
     if (viewMode === 'org' && !activeDonor && Array.isArray(orgResults) && orgResults.length === 1) {
       handleSelectOrg(orgResults[0]);
@@ -525,23 +579,59 @@ const PersonProfile = () => {
   }, [orgResults, viewMode, activeDonor]);
 
   // Click a connection to show underlying entries (meetings/donations/affiliation)
-  const handleClickConnection = (conn) => {
+  const handleClickConnection = (conn, fromTable = false) => {
     try {
       // Toggle off if the same item is clicked again (from graph or table)
       if (conn && selectedConnection && selectedConnection.id === conn.id) {
         setSelectedConnection(null);
         setConnectionDetails([]);
+        setGraphTooltip(null);
         return;
       }
 
       setSelectedConnection(conn || null);
       // Clear previous details to ensure immediate UI refresh on new selection
       setConnectionDetails([]);
-      let details = [];
       if (!conn) {
+        setGraphTooltip(null);
         setConnectionDetails([]);
         return;
       }
+
+      // If clicked from table, scroll to graph and show tooltip
+      if (fromTable) {
+        // Scroll to graph
+        const graphElement = svgRef.current;
+        if (graphElement) {
+          graphElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        // Find the node data to get donation amount
+        const nodeData = graphData.nodes?.find(n => n.id === conn.id);
+        const nodeAmount = nodeData?.totalAmount;
+
+        // Show tooltip at center of graph (approximate position)
+        setTimeout(() => {
+          if (svgRef.current) {
+            const rect = svgRef.current.getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            
+            setGraphTooltip({
+              x: centerX,
+              y: centerY,
+              label: conn.label || '',
+              nodeType: conn.nodeType || '',
+              sources: conn.sources || [],
+              amount: nodeAmount,
+              amountLabel: nodeAmount != null ? formatCurrency(nodeAmount) : null,
+              isNodeClick: true,
+              fromTable: true
+            });
+          }
+        }, 500); // Delay to allow scroll to complete
+      }
+      let details = [];
       const nodeType = (conn.nodeType || '').toLowerCase();
       if (nodeType === 'attendee') {
         // Robust text matching for attendee names across diaries data
@@ -997,14 +1087,16 @@ const PersonProfile = () => {
       donorNode.ringMeta = buildRingMeta(agg.amount);
 
       if (personId) {
-        // Base thickness proportional to donation amount (log scale for better visual differentiation)
-        const baseThickness = Math.max(1, Math.log10(Math.abs(agg.amount) + 1));
+        const donationStrength = Math.max(1, Math.log10(Math.abs(agg.amount) + 1));
+        const baseThickness = getEdgeThickness(agg.amount);
         links.push({
           source: personId,
           target: donorNodeId,
           type: 'donation',
-          value: baseThickness,
-          amount: agg.amount // Store actual amount for reference
+          value: donationStrength,
+          amount: agg.amount,
+          baseThickness,
+          label
         });
       }
 
@@ -1390,7 +1482,17 @@ const PersonProfile = () => {
       .data(linksData)
       .join('line')
       .attr('class', 'graph-link')
-      .attr('stroke-width', (d) => (1 + (d.value || 1) * 0.5) * edgeScale);
+      .attr('stroke-width', (d) => (d?.baseThickness ?? (1 + (d.value || 1) * 0.5)) * edgeScale)
+      .on('click', (event, d) => {
+        const sourceLabel =
+          typeof d.source === 'object' && d.source?.label ? d.source.label : d.label || 'Connection';
+        showEdgeTooltip(event, {
+          label: sourceLabel,
+          nodeType: d.type || 'link',
+          sources: [d.type === 'meeting' ? 'Meeting' : d.type === 'donation' ? 'Donation' : 'Link'],
+          amount: d.amount ?? null
+        });
+      });
 
     const node = zoomLayer
       .append('g')
@@ -1416,6 +1518,7 @@ const PersonProfile = () => {
       })
       .attr('fill', (d) => (d?.ringMeta ? '#FFFFFF' : color(d.type)))
       .style('fill', (d) => (d?.ringMeta ? '#FFFFFF' : color(d.type)))
+      .classed('graph-node--selectable', true)
       .style('opacity', 1) // Ensure immediate visibility
       .attr('stroke', (d) => (d?.ringMeta ? d.ringMeta.ringColor : '#FFFFFF'))
       .style('stroke', (d) => (d?.ringMeta ? d.ringMeta.ringColor : '#FFFFFF'))
@@ -1441,29 +1544,52 @@ const PersonProfile = () => {
           })
       )
       .on('click', (event, d) => {
+        event.stopPropagation?.();
         try {
           const destId = typeof d?.id === 'string' ? d.id : null;
           const label = (d?.label ?? destId ?? '').toString();
           const nodeType = (d?.type ?? '').toString();
           const sources = [];
+          
+          // Build sources array based on connected links
           if (destId && Array.isArray(linksData)) {
             for (const l of linksData) {
               const srcId = (typeof l.source === 'object') ? l.source?.id : l.source;
               const tgtId = (typeof l.target === 'object') ? l.target?.id : l.target;
-              let isEdgeToPerson = false;
-              if (srcId === centerIdForEdges && tgtId === destId) isEdgeToPerson = true;
-              if (tgtId === centerIdForEdges && srcId === destId) isEdgeToPerson = true;
-              if (isEdgeToPerson) {
-                const s = l.type === 'donation'
-                  ? 'Donation'
-                  : (l.type === 'meeting' ? 'Meeting' : (l.type === 'affiliation' ? 'Affiliation' : (l.type || 'Link')));
-                if (!sources.includes(s)) sources.push(s);
+              if (srcId === destId || tgtId === destId) {
+                const sourceType = l.type === 'donation' ? 'Donation' : 
+                                 l.type === 'meeting' ? 'Meeting' : 
+                                 l.type === 'affiliation' ? 'Affiliation' : 'Link';
+                if (!sources.includes(sourceType)) {
+                  sources.push(sourceType);
+                }
               }
             }
           }
-          handleClickConnection({ id: destId, label, nodeType, sources });
+
+          // Create connection object for handleClickConnection
+          const connectionObj = {
+            id: destId,
+            label: label,
+            nodeType: nodeType,
+            sources: sources
+          };
+
+          // Call the existing connection handler to highlight in table and show details
+          handleClickConnection(connectionObj);
+
+          // Show tooltip with donation amount for all nodes that have amount data
+          const nodeAmount = d.totalAmount != null ? d.totalAmount : null;
+          showEdgeTooltip(event, {
+            label: label,
+            nodeType: nodeType,
+            sources: sources,
+            amount: nodeAmount,
+            amountLabel: nodeAmount != null ? formatCurrency(nodeAmount) : null,
+            isNodeClick: true
+          });
         } catch {
-          // ignore
+          // ignore click errors
         }
       });
 
@@ -1542,9 +1668,20 @@ const PersonProfile = () => {
     };
   }, [graphData, connectionCap]);
 
-  // Update only the link stroke widths when the thickness slider changes
-  // to avoid tearing down and rebuilding the whole graph (which could
-  // briefly drop nodes/links during re-init on some browsers).
+    // Update only the link stroke widths when the thickness slider changes
+    // to avoid tearing down and rebuilding the whole graph (which could
+    // briefly drop nodes/links during re-init on some browsers).
+    useEffect(() => {
+      try {
+        const svg = d3.select(svgRef.current);
+        svg
+          .selectAll('line.graph-link')
+          .attr('stroke-width', (d) => (1 + (((d && d.value) || 1) * 0.5)) * edgeScale);
+      } catch {
+        // ignore if svg not ready yet
+      }
+    }, [edgeScale]);
+    
   useEffect(() => {
     try {
       const svg = d3.select(svgRef.current);
@@ -1555,6 +1692,36 @@ const PersonProfile = () => {
       // ignore if svg not ready yet
     }
   }, [edgeScale]);
+
+  // Enhanced click handler for edges to show donation amounts
+  const handleEdgeClick = useCallback((event, d) => {
+    event.stopPropagation();
+
+    // Determine the label for the tooltip
+    const sourceNode = typeof d.source === 'object' ? d.source : null;
+    const targetNode = typeof d.target === 'object' ? d.target : null;
+    const sourceLabel = sourceNode?.label || 'Connection';
+    const targetLabel = targetNode?.label || 'Connection';
+
+    // Create a more descriptive label for the edge
+    let edgeLabel = `${sourceLabel} → ${targetLabel}`;
+    if (d.type === 'donation') {
+      edgeLabel = `Donation from ${sourceLabel} to ${targetLabel}`;
+    } else if (d.type === 'meeting') {
+      edgeLabel = `Meeting with ${targetLabel}`;
+    } else if (d.type === 'affiliation') {
+      edgeLabel = `Party affiliation: ${targetLabel}`;
+    }
+
+    // Show tooltip with enhanced donation amount display
+    showEdgeTooltip(event, {
+      label: edgeLabel,
+      nodeType: d.type || 'link',
+      sources: [d.type === 'meeting' ? 'Meeting' : d.type === 'donation' ? 'Donation' : 'Link'],
+      amount: d.amount ?? null,
+      isEdgeClick: true
+    });
+  }, [showEdgeTooltip]);
 
   // Show/hide edges and nodes based on cap and layer toggles (without re-initializing the graph)
   useEffect(() => {
@@ -1734,18 +1901,6 @@ const PersonProfile = () => {
     }
   }, [selectedConnection, graphData, activeFirstName, activeLastName, profileData, selectedPeopleId]);
 
-  // When a node/connection is selected, scroll to the Details panel instead of the Connections table
-  useEffect(() => {
-    try {
-      if (!selectedConnection) return;
-      const el = detailsRef.current;
-      if (el && typeof el.scrollIntoView === 'function') {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    } catch {
-      // ignore
-    }
-  }, [selectedConnection]);
 
   // Export donations data as CSV
   const handleExportDonationsCSV = () => {
@@ -2034,6 +2189,58 @@ const PersonProfile = () => {
                       -
                     </button>
                   </div>
+                  {/* Graph tooltip */}
+                  {graphTooltip && (
+                    <div
+                      className="graph-tooltip"
+                      style={{
+                        position: 'absolute',
+                        left: graphTooltip.x + 10,
+                        top: graphTooltip.y - 10,
+                        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                        color: 'white',
+                        padding: '10px 14px',
+                        borderRadius: '6px',
+                        fontSize: '13px',
+                        pointerEvents: 'none',
+                        zIndex: 1000,
+                        maxWidth: '250px',
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                        border: '1px solid rgba(255, 255, 255, 0.2)'
+                      }}
+                    >
+                      <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>{graphTooltip.label}</div>
+                      {graphTooltip.nodeType && (
+                        <div style={{ fontSize: '12px', opacity: 0.8, textTransform: 'capitalize' }}>
+                          Type: {graphTooltip.nodeType}
+                        </div>
+                      )}
+                      {graphTooltip.sources && graphTooltip.sources.length > 0 && (
+                        <div style={{ fontSize: '12px', opacity: 0.8, marginTop: '2px' }}>
+                          Source: {graphTooltip.sources.join(', ')}
+                        </div>
+                      )}
+                      {graphTooltip.amountLabel && (
+                        <div style={{ 
+                          fontSize: '13px', 
+                          fontWeight: 'bold', 
+                          color: '#ffd700',
+                          marginTop: '6px',
+                          padding: '4px 8px',
+                          backgroundColor: 'rgba(255, 215, 0, 0.1)',
+                          borderRadius: '4px',
+                          border: '1px solid rgba(255, 215, 0, 0.3)'
+                        }}>
+                          {graphTooltip.isNodeClick ? 'Total Donated: ' : 'Amount: '}{graphTooltip.amountLabel}
+                        </div>
+                      )}
+                      {graphTooltip.isNodeClick && graphTooltip.nodeType === 'donor' && (
+                        <div style={{ fontSize: '11px', opacity: 0.7, marginTop: '4px', fontStyle: 'italic' }}>
+                          Click to see details in connections table
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Debug info for graph */}
@@ -2211,40 +2418,6 @@ const PersonProfile = () => {
                       </table>
                     </div>
 
-                    {/* Donations by this organisation */}
-                    <div style={{ marginTop: '1rem' }}>
-                      <h4 style={{ margin: '0 0 0.5rem 0', color: '#111827' }}>Donations</h4>
-                      <table className="min-w-full border">
-                        <thead>
-                          <tr>
-                            <th>Date/Year</th>
-                            <th style={{ textAlign: 'right' }}>Amount</th>
-                            <th>Recipient</th>
-                            <th>Notes</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {Array.isArray(orgDonationRows) && orgDonationRows.length > 0 ? (
-                            orgDonationRows.map((d, idx) => {
-                              const recipient = (d.recipient_name) ||
-                                [d.first_name || d.recipient_first_name || '', d.last_name || d.recipient_last_name || ''].filter(Boolean).join(' ').trim();
-                              return (
-                                <tr key={idx}>
-                                  <td>{d.date ? new Date(d.date).toLocaleDateString() : (d.year || '')}</td>
-                                  <td style={{ textAlign: 'right' }}>${(Number(d.amount) || 0).toLocaleString()}</td>
-                                  <td>{recipient}</td>
-                                  <td>{d.notes || ''}</td>
-                                </tr>
-                              );
-                            })
-                          ) : (
-                            <tr>
-                              <td colSpan={4} style={{ color: '#6b7280' }}>No donations found for this organisation (in current dataset).</td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
                   </div>
                 )}
 
@@ -2425,7 +2598,7 @@ const PersonProfile = () => {
                             key={c.id}
                             data-id={c.id}
                             className={selectedConnection?.id === c.id ? 'conn-row conn-row--selected' : 'conn-row'}
-                            onClick={() => handleClickConnection(c)}
+                            onClick={() => handleClickConnection(c, true)}
                             style={{ cursor: 'pointer' }}
                             title="Click to view details"
                             aria-selected={selectedConnection?.id === c.id}
