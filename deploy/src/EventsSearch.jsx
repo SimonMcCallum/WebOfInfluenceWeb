@@ -219,6 +219,90 @@ const EventForm = ({ eventData, onRefresh }) => {
     setError('Enter either first and last name, or an organization name.');
   };
 
+  // Export events data as CSV (includes both event details and attendees)
+  const handleExportEventsCSV = () => {
+    if (!eventData) {
+      alert('No event data to export');
+      return;
+    }
+
+    const defaultName = 'event_details';
+    const filename = prompt('Enter a name for your CSV file:', defaultName) || defaultName;
+    const finalFilename = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+
+    const csvRows = [];
+
+    // Section 1: Event Details
+    csvRows.push(['EVENT DETAILS'].join(','));
+    csvRows.push(['Field', 'Value'].join(','));
+
+    const eventFields = [
+      ['Title', eventData.title || ''],
+      ['Date', eventData.date ? new Date(eventData.date).toLocaleDateString() : ''],
+      ['Time', renderEventTime(eventData)],
+      ['Location', eventData.location || ''],
+      ['Notes', eventData.notes || ''],
+      ['Source', eventData.source || ''],
+      ['Total Attendees', attendeesAll.length.toString()],
+      ['People Attendees', attendees.filter(a => a.type === 'Person').length.toString()],
+      ['Organization Attendees', attendeesOrgs.filter(a => a.type === 'Organisation').length.toString()]
+    ];
+
+    csvRows.push(...eventFields.map(([field, value]) => [field, value].join(',')));
+
+    // Add empty row for separation
+    csvRows.push([''].join(','));
+
+    // Section 2: Attendees
+    if (attendeesAll.length > 0) {
+      csvRows.push(['ATTENDEES'].join(','));
+      csvRows.push(['Name', 'Type'].join(','));
+
+      attendeesAll.forEach(attendee => {
+        csvRows.push([attendee.name, attendee.type].join(','));
+      });
+    }
+
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', finalFilename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Export attendees data as CSV
+  const handleExportAttendeesCSV = () => {
+    if (!Array.isArray(attendeesAll) || attendeesAll.length === 0) {
+      alert('No attendees data to export');
+      return;
+    }
+
+    const defaultName = 'event_attendees';
+    const filename = prompt('Enter a name for your CSV file:', defaultName) || defaultName;
+    const finalFilename = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+
+    const headers = ['Name', 'Type'];
+
+    const csvRows = [
+      headers.join(','),
+      ...attendeesAll.map(attendee => [attendee.name, attendee.type].join(','))
+    ];
+
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', finalFilename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="results-section">
       <div className="results-header">
@@ -227,6 +311,18 @@ const EventForm = ({ eventData, onRefresh }) => {
           Event
           {eventData?.id ? <span className="results-count"> (ID #{eventData.id})</span> : null}
         </h2>
+        {eventData && (
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              onClick={handleExportEventsCSV}
+              className="export-button"
+              title="Export event details and attendees as CSV"
+            >
+              <span>📥</span>
+              Export Event CSV
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Event core details */}
@@ -600,35 +696,43 @@ const EventsSearch = () => {
             )}
 
             {Array.isArray(events) && events.length > 0 && (
-              <div className="table-container" style={{ marginBottom: '1rem' }}>
-                <table className="meetings-table table-fixed w-full">
-                  <thead className="bg-gray-100">
-                    <tr>
-                      <th className="py-2 px-4 border">Date</th>
-                      <th className="py-2 px-4 border">Title</th>
-                      <th className="py-2 px-4 border">Location</th>
-                      <th className="py-2 px-4 border">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {events.map(ev => (
-                      <tr key={ev.id}>
-                        <td className="py-2 px-4 border">{ev.date ? new Date(ev.date).toLocaleDateString() : 'N/A'}</td>
-                        <td className="py-2 px-4 border"><div className="w-full" style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{ev.title || 'N/A'}</div></td>
-                        <td className="py-2 px-4 border">{ev.location || 'N/A'}</td>
-                        <td className="py-2 px-4 border">
-                          <button className="search-button" onClick={() => {
-                            setParams({ event_id: String(ev.id) }, { replace: true });
-                            fetchEventById(ev.id);
-                          }}>
-                            Open
-                          </button>
-                        </td>
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <h3 style={{ margin: 0, color: '#1f2937', paddingLeft: '1rem' }}>
+                    Events Found ({events.length})
+                  </h3>
+
+                </div>
+                <div className="table-container" style={{ marginBottom: '1rem' }}>
+                  <table className="meetings-table table-fixed w-full">
+                    <thead className="bg-gray-100">
+                      <tr>
+                        <th className="py-2 px-4 border">Date</th>
+                        <th className="py-2 px-4 border">Title</th>
+                        <th className="py-2 px-4 border">Location</th>
+                        <th className="py-2 px-4 border">Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {events.map(ev => (
+                        <tr key={ev.id}>
+                          <td className="py-2 px-4 border">{ev.date ? new Date(ev.date).toLocaleDateString() : 'N/A'}</td>
+                          <td className="py-2 px-4 border"><div className="w-full" style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{ev.title || 'N/A'}</div></td>
+                          <td className="py-2 px-4 border">{ev.location || 'N/A'}</td>
+                          <td className="py-2 px-4 border">
+                            <button className="search-button" onClick={() => {
+                              setParams({ event_id: String(ev.id) }, { replace: true });
+                              fetchEventById(ev.id);
+                            }}>
+                              Open
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
 
             {Array.isArray(events) && events.length === 0 && !loading && !err && (

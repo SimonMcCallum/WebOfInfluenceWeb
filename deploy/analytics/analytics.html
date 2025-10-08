@@ -33,6 +33,7 @@
       <button data-tab="donations" class="active">Donations Overview</button>
       <button data-tab="orgs">Organizations</button>
       <button data-tab="meetings">Meetings Search</button>
+      <button data-tab="events">Events</button>
       <button data-tab="candidates">Candidates</button>
     </div>
     <!-- Donations Overview -->
@@ -188,6 +189,47 @@
       </div>
       
       <p class="note">Search ministerial meetings by minister name and optional date range/portfolio.</p>
+    </section>
+
+    <!-- Events -->
+    <section id="tab-events" class="panel" hidden>
+      <h2>Events</h2>
+      <div class="search-form">
+        <div class="row">
+          <div class="col-4">
+            <label>Event Name</label>
+            <input id="eventName" placeholder="e.g., CONFERENCE">
+          </div>
+          <div class="col-4">
+            <label>Location</label>
+            <input id="eventLocation" placeholder="e.g., WELLINGTON">
+          </div>
+          <div class="col-4">
+            <label>&nbsp;</label>
+            <button id="btnSearchEvents" class="btn primary">Search</button>
+          </div>
+        </div>
+        <div class="row">
+          <div class="col-3">
+            <label>Start Date</label>
+            <input id="eventStart" type="date">
+          </div>
+          <div class="col-3">
+            <label>End Date</label>
+            <input id="eventEnd" type="date">
+          </div>
+        </div>
+      </div>
+
+      <div id="eventsStatus" class="status"></div>
+      <div class="panel" style="overflow:auto; max-height: 500px;">
+        <table id="eventsTable">
+          <thead><tr><th style="width: 8%;">ID</th><th style="width: 45%;">Event Name</th><th style="width: 15%;">Date</th><th style="width: 32%;">Location</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <p class="note">Search events by name, location, and optional date range.</p>
     </section>
 
     <!-- Candidates -->
@@ -518,6 +560,79 @@
       });
     }
 
+    // Events Search
+    async function searchEvents() {
+      const status = document.getElementById('eventsStatus');
+      status.textContent = 'Loading...';
+      if (location.protocol === 'file:') {
+        status.textContent = 'Open this page via a local web server to enable data fetching.';
+        renderEvents([]);
+        return;
+      }
+
+      const eventName = document.getElementById('eventName').value.trim();
+      const eventLocation = document.getElementById('eventLocation').value.trim();
+      const startDate = document.getElementById('eventStart').value;
+      const endDate = document.getElementById('eventEnd').value;
+
+      // Allow searching by either event name or location (or both)
+      if (!eventName && !eventLocation) {
+        status.textContent = 'Enter at least an event name or location.';
+        renderEvents([]);
+        return;
+      }
+
+      const params = new URLSearchParams();
+      if (eventName) params.set('event_name', eventName);
+      if (eventLocation) params.set('location', eventLocation);
+      if (startDate) params.set('start_date', startDate);
+      if (endDate) params.set('end_date', endDate);
+
+      try {
+        const res = await fetch(`${API_BASE}?route=/events/search&${params}`, { cache: 'no-store' });
+        const data = await res.json();
+
+        // Debug: Log the first result to see available fields
+        if (Array.isArray(data) && data.length > 0) {
+          console.log('First event result:', data[0]);
+        }
+
+        renderEvents(Array.isArray(data) ? data : []);
+        status.textContent = Array.isArray(data) ? `Returned ${data.length} result(s)` : 'No data';
+      } catch (e) {
+        status.textContent = 'Error loading events: ' + e;
+        renderEvents([]);
+      }
+    }
+
+    function renderEvents(rows) {
+      const tbody = document.querySelector('#eventsTable tbody');
+      if (tbody) tbody.innerHTML = '';
+      if (!Array.isArray(rows) || rows.length === 0) {
+        if (tbody) {
+          const tr = document.createElement('tr');
+          const td = document.createElement('td');
+          td.colSpan = 4; td.className = 'warn'; td.textContent = 'No events found';
+          tr.appendChild(td); tbody.appendChild(tr);
+        }
+        return;
+      }
+      if (tbody) {
+        rows.forEach(r => {
+          const tr = document.createElement('tr');
+          const id = r.id ?? '';
+          // Try multiple possible field names for event name
+          const name = r.event_name || r.name || r.title || r.event_title || 'Unknown Event';
+          const date = r.event_date || r.date || '';
+          const location = r.location || '';
+          [id, name, date, location].forEach(v => {
+            const td = document.createElement('td'); td.textContent = v; tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+      }
+    }
+
     // Candidates Search
     async function searchCandidates() {
       const status = document.getElementById('candidatesStatus');
@@ -580,6 +695,7 @@
     if (btnOrgSearch) btnOrgSearch.addEventListener('click', searchOrganizations);
     document.getElementById('btnSearchDonations').addEventListener('click', searchDonations);
     document.getElementById('btnSearchMeetings').addEventListener('click', searchMeetings);
+    document.getElementById('btnSearchEvents').addEventListener('click', searchEvents);
     document.getElementById('btnSearchCandidates').addEventListener('click', searchCandidates);
 
     // Initial load

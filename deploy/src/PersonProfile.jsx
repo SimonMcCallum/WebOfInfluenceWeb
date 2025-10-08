@@ -1579,6 +1579,118 @@ const PersonProfile = () => {
     }
   }, [selectedConnection]);
 
+  // Export donations data as CSV
+  const handleExportDonationsCSV = () => {
+    if (!Array.isArray(sortedDonations) || sortedDonations.length === 0) {
+      alert('No donations data to export');
+      return;
+    }
+
+    const defaultName = 'person_donations';
+    const filename = prompt('Enter a name for your CSV file:', defaultName) || defaultName;
+    const finalFilename = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+
+    const headers = ['Date', 'Amount', 'Donor First Name', 'Donor Last Name', 'Donor Organisation', 'Notes'];
+
+    const csvRows = [
+      headers.join(','),
+      ...sortedDonations.map(donation => {
+        const date = donation.date ? new Date(donation.date).toLocaleDateString() : (donation.year || '');
+        const amount = typeof donation.amount === 'number' ? `$${donation.amount.toLocaleString()}` : `$${donation.amount}`;
+        const donorFirst = donation.donor_first_name || '';
+        const donorLast = donation.donor_last_name || '';
+        const donorOrg = donation.donor_org_name || '';
+        const notes = donation.notes || '';
+
+        return [date, amount, donorFirst, donorLast, donorOrg, notes].join(',');
+      })
+    ];
+
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', finalFilename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Export meetings data as CSV
+  const handleExportMeetingsCSV = () => {
+    if (!Array.isArray(sortedMeetings) || sortedMeetings.length === 0) {
+      alert('No meetings data to export');
+      return;
+    }
+
+    const defaultName = 'person_meetings';
+    const filename = prompt('Enter a name for your CSV file:', defaultName) || defaultName;
+    const finalFilename = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+
+    const headers = ['Date', 'Title', 'Type', 'Portfolio', 'Location', 'Attendees', 'Notes'];
+
+    const csvRows = [
+      headers.join(','),
+      ...sortedMeetings.map(meeting => {
+        const date = meeting.date ? new Date(meeting.date).toLocaleDateString() : '';
+        const title = meeting.title || '';
+        const type = meeting.type || '';
+        const portfolio = meeting.portfolio || '';
+        const location = meeting.location || '';
+        const attendees = meeting.with_text || '';
+        const notes = meeting.notes || '';
+
+        return [date, title, type, portfolio, location, attendees, notes].join(',');
+      })
+    ];
+
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', finalFilename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Export connections data as CSV
+  const handleExportConnectionsCSV = () => {
+    if (!Array.isArray(connections) || connections.length === 0) {
+      alert('No connections data to export');
+      return;
+    }
+
+    const defaultName = 'person_connections';
+    const filename = prompt('Enter a name for your CSV file:', defaultName) || defaultName;
+    const finalFilename = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+
+    const headers = ['Name', 'Type', 'Connection Sources'];
+
+    const csvRows = [
+      headers.join(','),
+      ...connections.map(conn => {
+        const name = conn.label || '';
+        const type = conn.nodeType || '';
+        const sources = conn.sources ? conn.sources.join('; ') : '';
+
+        return [name, type, sources].join(',');
+      })
+    ];
+
+    const csvContent = csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', finalFilename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="donations-page" ref={containerRef}>
       {/* Header Section */}
@@ -1755,6 +1867,22 @@ const PersonProfile = () => {
                     </button>
                   </div>
                 </div>
+
+                {/* Debug info for graph */}
+                {hasSearched && (profileData || activeFirstName || activeLastName) && (
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#6b7280' }}>
+                    Graph Debug: nodes={graphData.nodes?.length || 0}, links={graphData.links?.length || 0},
+                    donations={donations.length}, meetings={meetings.length},
+                    profileData={profileData ? 'YES' : 'NO'}, activeNames={activeFirstName || activeLastName ? 'YES' : 'NO'}
+                  </div>
+                )}
+
+                {/* Show graph even if no data */}
+                {hasSearched && (!profileData && !activeFirstName && !activeLastName && !activeDonor && (!Array.isArray(orgResults) || orgResults.length === 0)) && (
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#ef4444', fontWeight: 'bold' }}>
+                    No data found - graph cannot be generated
+                  </div>
+                )}
 
                 {/* Graph controls */}
                 <div className="graph-controls" style={{ display: 'grid', gap: '0.5rem', marginTop: '0.5rem' }}>
@@ -1999,7 +2127,17 @@ const PersonProfile = () => {
               {/* Donations Table */}
               {showDonations && Array.isArray(sortedDonations) && sortedDonations.length > 0 && (
                 <>
-                  <h3 style={{ marginTop: '1rem', color: '#1f2937' }}>Donation History (All Years)</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
+                    <h3 style={{ margin: 0, color: '#1f2937' }}>Donation History (All Years)</h3>
+                    <button
+                      onClick={handleExportDonationsCSV}
+                      className="export-button"
+                      title="Export donations data as CSV"
+                    >
+                      <span>📥</span>
+                      Export Donations CSV
+                    </button>
+                  </div>
                   <div className="table-container">
                     <table className="min-w-full border">
                       <thead>
@@ -2030,7 +2168,17 @@ const PersonProfile = () => {
               {/* Meetings Table */}
               {showMeetings && Array.isArray(sortedMeetings) && sortedMeetings.length > 0 && (
                 <>
-                  <h3 style={{ marginTop: '1rem', color: '#1f2937' }}>Meetings</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
+                    <h3 style={{ margin: 0, color: '#1f2937' }}>Meetings</h3>
+                    <button
+                      onClick={handleExportMeetingsCSV}
+                      className="export-button"
+                      title="Export meetings data as CSV"
+                    >
+                      <span>📥</span>
+                      Export Meetings CSV
+                    </button>
+                  </div>
                   <div className="table-container">
                     <MeetingsTable meetings={sortedMeetings} />
                   </div>
@@ -2039,9 +2187,21 @@ const PersonProfile = () => {
 
               {/* Connections (summary of direct links from the selected person) */}
               <div>
-                <h3 style={{ marginTop: '1rem', color: '#1f2937' }}>
-                  Connections {Array.isArray(connections) ? `(${connections.length})` : ''}
-                </h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem' }}>
+                  <h3 style={{ margin: 0, color: '#1f2937' }}>
+                    Connections {Array.isArray(connections) ? `(${connections.length})` : ''}
+                  </h3>
+                  {Array.isArray(connections) && connections.length > 0 && (
+                    <button
+                      onClick={handleExportConnectionsCSV}
+                      className="export-button"
+                      title="Export connections data as CSV"
+                    >
+                      <span>📥</span>
+                      Export Connections CSV
+                    </button>
+                  )}
+                </div>
                 {Array.isArray(connections) && connections.length > 0 ? (
                   <>
                   <div className="table-container">
@@ -2081,7 +2241,7 @@ const PersonProfile = () => {
                       </tbody>
                     </table>
                   </div>
-                  
+
                   </>
                 ) : (
                   <p className="results-note">No direct connections were found for this person.</p>

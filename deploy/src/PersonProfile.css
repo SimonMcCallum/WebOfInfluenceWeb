@@ -576,6 +576,27 @@
   padding-left: 0.75rem;
 }
 
+/* Export Button */
+.export-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background-color: #16a34a;
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 1rem;
+}
+
+.export-button:hover {
+  background-color: #15803d;
+  transform: translateY(-1px);
+}
+
 /* Responsive Design */
 @media (max-width: 1200px) {
   .donations-container {
