@@ -46,6 +46,35 @@ const ORG_ALIAS_MAP = (() => {
   return map;
 })();
 
+const getDonationColor = (amount) => {
+  const safeAmount = Math.max(0, Number(amount) || 0);
+  if (safeAmount >= 10000) return '#FFD700'; // Gold for $10,000+
+  if (safeAmount >= 1000) return '#22C55E'; // Green for $1,000-$9,999
+  if (safeAmount >= 100) return '#3B82F6'; // Blue for $100-$999
+  return '#9CA3AF'; // Gray for $0-$99
+};
+
+const getRingRadiusBoost = (amount = 0) => {
+  const safeAmount = Math.max(0, Number(amount) || 0);
+  if (safeAmount === 0) return 2;
+  return Math.min(8, Math.max(2, Math.log10(safeAmount + 1) * 3));
+};
+
+const getRingThickness = (amount = 0) => {
+  const safeAmount = Math.max(0, Number(amount) || 0);
+  if (safeAmount === 0) return 2;
+  return Math.min(8, Math.max(2, Math.log10(safeAmount + 1) * 1.8 + 1));
+};
+
+const buildRingMeta = (amount) => {
+  const safeAmount = Math.max(0, Number(amount) || 0);
+  return {
+    ringColor: getDonationColor(safeAmount),
+    ringThickness: getRingThickness(safeAmount),
+    ringRadiusBoost: getRingRadiusBoost(safeAmount)
+  };
+};
+
 /**
  * Group donor search results by canonical organisation name.
  * Returns items shaped as:
@@ -162,6 +191,8 @@ const PersonProfile = () => {
   // Graph sliders: edge thickness and number of connections to show (0 = all)
   const [edgeScale, setEdgeScale] = useState(1);
   const [connectionCap, setConnectionCap] = useState(0);
+  const [nodeSeparation, setNodeSeparation] = useState(1.5);
+  const [minDonationAmount, setMinDonationAmount] = useState(0);
 
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -835,32 +866,58 @@ const PersonProfile = () => {
     // Organisation-centric graph (when only org is searched and a donor is selected)
     if (viewMode === 'org' && activeDonor && (activeDonor.id != null || (Array.isArray(activeDonor.ids) && activeDonor.ids.length > 0))) {
       const ids = Array.isArray(activeDonor.ids) && activeDonor.ids.length > 0 ? activeDonor.ids : [activeDonor.id];
-      const donorNodeId = `donor:${ids.slice().sort((a,b)=>a-b).join('+')}`;
+      const donorNodeId = `donor:${ids.slice().sort((a, b) => a - b).join('+')}`;
       const donorLabel =
         (activeDonor.org_name && String(activeDonor.org_name).trim() !== '')
           ? activeDonor.org_name
           : [activeDonor.first_name || '', activeDonor.last_name || ''].filter(Boolean).join(' ').trim() || `Donor ${ids[0]}`;
 
-      nodes.push({
-        id: donorNodeId,
-        label: donorLabel,
-        type: 'donor',
-        isOrg: Boolean(activeDonor.org_name && String(activeDonor.org_name).trim() !== '')
-      });
+      let donorNode = nodes.find((n) => n.id === donorNodeId);
+      if (!donorNode) {
+        donorNode = {
+          id: donorNodeId,
+          label: donorLabel,
+          type: 'donor',
+          isOrg: Boolean(activeDonor.org_name && String(activeDonor.org_name).trim() !== '')
+        };
+        nodes.push(donorNode);
+      } else {
+        donorNode.label = donorLabel;
+        donorNode.type = 'donor';
+        donorNode.isOrg = Boolean(activeDonor.org_name && String(activeDonor.org_name).trim() !== '');
+      }
 
       // Build recipients from orgRecipients and totals
       const totalsMap = orgTotalsByPerson || {};
       const recs = Array.isArray(orgRecipients) ? orgRecipients : [];
+      const totalOrgAmount = Object.values(totalsMap).reduce((sum, val) => sum + (Number(val) || 0), 0);
+      const donorDonationCount = Array.isArray(orgDonationRows) ? orgDonationRows.length : 0;
+      donorNode.totalAmount = totalOrgAmount;
+      donorNode.donationCount = donorDonationCount;
+      donorNode.ringMeta = buildRingMeta(totalOrgAmount);
 
       for (const r of recs) {
         const pid = r?.people_id;
         if (!pid) continue;
         const label = [r.first_name || '', r.last_name || ''].filter(Boolean).join(' ').trim() || `Person ${pid}`;
         const personNodeId = `person:${pid}`;
-        if (!nodes.some((n) => n.id === personNodeId)) {
-          nodes.push({ id: personNodeId, label, type: 'person' });
+
+        let personNode = nodes.find((n) => n.id === personNodeId);
+        if (!personNode) {
+          personNode = { id: personNodeId, label, type: 'person', donationCount: 0 };
+          nodes.push(personNode);
+        } else if (label) {
+          personNode.label = label;
         }
+
         const total = Number(totalsMap[String(pid)] || 0);
+        const recipientDonationRows = Array.isArray(orgDonationsByRecipient?.[String(pid)])
+          ? orgDonationsByRecipient[String(pid)]
+          : [];
+        personNode.totalAmount = total;
+        personNode.donationCount = recipientDonationRows.length;
+        personNode.ringMeta = buildRingMeta(total);
+
         const value = Math.max(1, Math.log10(Math.abs(total) + 1));
         links.push({
           source: donorNodeId,
@@ -886,7 +943,8 @@ const PersonProfile = () => {
     nodes.push({
       id: personId,
       label: personLabel,
-      type: 'person'
+      type: 'person',
+      donationCount: donations.length
     });
 
     const partyName = partyGuess || null;
@@ -923,29 +981,49 @@ const PersonProfile = () => {
       const org = any.donor_org_name ? String(any.donor_org_name) : '';
       const label = org || [df, dl].filter(Boolean).join(' ') || `Donor ${did}`;
       const donorNodeId = `donor:${did}`;
+      const peers = Array.isArray(donorPeers[did]) ? donorPeers[did] : [];
 
-      if (!nodes.some((n) => n.id === donorNodeId)) {
-        nodes.push({ id: donorNodeId, label, type: 'donor', isOrg: Boolean(org && org.trim() !== '') });
+      let donorNode = nodes.find((n) => n.id === donorNodeId);
+      if (!donorNode) {
+        donorNode = { id: donorNodeId, label, type: 'donor', isOrg: Boolean(org && org.trim() !== '') };
+        nodes.push(donorNode);
+      } else {
+        donorNode.label = label;
+        donorNode.type = 'donor';
+        donorNode.isOrg = Boolean(org && org.trim() !== '');
       }
+      donorNode.totalAmount = agg.amount;
+      donorNode.donationCount = agg.rows.length + peers.length;
+      donorNode.ringMeta = buildRingMeta(agg.amount);
 
       if (personId) {
+        // Base thickness proportional to donation amount (log scale for better visual differentiation)
+        const baseThickness = Math.max(1, Math.log10(Math.abs(agg.amount) + 1));
         links.push({
           source: personId,
           target: donorNodeId,
           type: 'donation',
-          value: Math.max(1, Math.log10(Math.abs(agg.amount) + 1))
+          value: baseThickness,
+          amount: agg.amount // Store actual amount for reference
         });
       }
 
       // Add other people this donor has funded
-      const peers = donorPeers[did] || [];
       for (const pr of peers) {
         const peerId = Number(pr.people_id);
+        if (!Number.isFinite(peerId)) continue;
         const peerLabel = [pr.first_name || '', pr.last_name || ''].filter(Boolean).join(' ') || `Person ${peerId}`;
         const peerNodeId = `person:${peerId}`;
-        if (!nodes.some((n) => n.id === peerNodeId)) {
-          nodes.push({ id: peerNodeId, label: peerLabel, type: 'person' });
+
+        let personNode = nodes.find((n) => n.id === peerNodeId);
+        if (!personNode) {
+          personNode = { id: peerNodeId, label: peerLabel, type: 'person', donationCount: 0 };
+          nodes.push(personNode);
+        } else if (peerLabel) {
+          personNode.label = peerLabel;
         }
+        personNode.donationCount = (personNode.donationCount || 0) + 1;
+
         links.push({
           source: donorNodeId,
           target: peerNodeId,
@@ -1014,6 +1092,31 @@ const PersonProfile = () => {
       return 0;
     }
   }, [graphData, profileData, activeFirstName, activeLastName, selectedPeopleId]);
+
+  const totalLinkCount = graphData?.links?.length || 0;
+
+  const maxConnections = useMemo(
+    () => Math.max(1, personDegree || totalLinkCount),
+    [personDegree, totalLinkCount]
+  );
+
+  const effectiveConnectionValue = useMemo(() => {
+    if (connectionCap > 0) {
+      return Math.min(connectionCap, maxConnections);
+    }
+    return maxConnections;
+  }, [connectionCap, maxConnections]);
+
+  const connectionProgress = useMemo(() => {
+    if (maxConnections <= 1) return 100;
+    const ratio = (effectiveConnectionValue - 1) / (maxConnections - 1);
+    return Math.min(100, Math.max(0, ratio * 100));
+  }, [effectiveConnectionValue, maxConnections]);
+
+  const edgeProgress = useMemo(() => {
+    const ratio = (edgeScale - 0.5) / (3 - 0.5);
+    return Math.min(100, Math.max(0, ratio * 100));
+  }, [edgeScale]);
 
   const connections = useMemo(() => {
     // Determine current graph center id (person or donor)
@@ -1131,17 +1234,33 @@ const PersonProfile = () => {
       .domain(['person', 'party', 'donor', 'attendee', 'org', 'region'])
       .range(['#1f77b4', '#9467bd', '#2ca02c', '#17becf', '#ff7f0e', '#8c564b']);
 
+    // Color coding for donation amounts
+    const getDonationColor = (amount) => {
+      if (amount >= 10000) return '#FFD700'; // Gold for $10,000+
+      if (amount >= 1000) return '#22C55E';  // Green for $1,000-$9,999
+      if (amount >= 100) return '#3B82F6';   // Blue for $100-$999
+      return '#9CA3AF'; // Gray for $0-$99
+    };
+
     // Edge weighting (always on):
-    // - Donations: weighted by total amount (log-scaled). Higher amount => closer/stronger link.
-    // - Meetings: weighted by meeting frequency (log-scaled). More meetings => closer/stronger link.
+    // - Donations: weighted by total amount. Higher amount => stronger link (keeps nodes closer).
+    // - Meetings: weighted by meeting frequency. More meetings => stronger link.
     const linkStrength = (l) => {
       if (l.type === 'donation') {
-        const v = Math.max(0, l.value || 0); // l.value is log scale of total amount
-        const w = Math.min(1, v / 3);
-        return 0.2 + 0.3 * w;
+        const amount = Math.max(0, l.amount || 0);
+        // Higher amounts get much stronger link strength to maintain distance hierarchy
+        if (amount >= 10000) {
+          return 2.0; // Gold rings - very strong link
+        } else if (amount >= 1000) {
+          return 1.5; // Green rings - strong link
+        } else if (amount >= 100) {
+          return 1.0; // Blue rings - medium link
+        } else {
+          return 0.5; // Gray rings - weaker link
+        }
       }
       if (l.type === 'meeting') {
-        const v = Math.max(0, l.value || 0); // l.value is log scale of meeting count
+        const v = Math.max(0, l.value || 0);
         const w = Math.min(1, v / 2);
         return 0.1 + 0.25 * w;
       }
@@ -1149,16 +1268,31 @@ const PersonProfile = () => {
     };
     const linkDistance = (l) => {
       if (l.type === 'donation') {
-        const v = Math.max(0, l.value || 0);
-        const w = Math.min(1, v / 3);
-        return Math.max(30, 140 - 90 * w);
+        const amount = Math.max(0, l.amount || 0);
+        const baseDistance = 200 * nodeSeparation;
+
+        // Different distances based on donation amount - make green and blue obviously further away
+        let distance;
+        if (amount >= 10000) {
+          distance = 80; // Gold rings - close to center
+        } else if (amount >= 1000) {
+          distance = 500; // Green rings - obviously much further away
+        } else if (amount >= 100) {
+          distance = 700; // Blue rings - obviously even further away
+        } else {
+          distance = 180; // Gray rings - keep as reference point
+        }
+
+        return Math.max(50, distance);
       }
       if (l.type === 'meeting') {
         const v = Math.max(0, l.value || 0);
         const w = Math.min(1, v / 2);
-        return Math.max(30, 160 - 100 * w);
+        const baseDistance = 220 * nodeSeparation;
+        return Math.max(50, baseDistance - 140 * w);
       }
-      return 140;
+      const baseDistance = 200 * nodeSeparation;
+      return baseDistance;
     };
 
     // Clone data to avoid mutating memoized objects and seed initial positions
@@ -1216,6 +1350,22 @@ const PersonProfile = () => {
       if (n.y == null || Number.isNaN(n.y)) n.y = height / 2;
     });
 
+    const donorRadiusByCount = (count) => {
+      const safe = Math.max(1, count || 1);
+      if (safe === 1) return 14;
+      if (safe === 2) return 22;
+      return Math.min(40, 14 + Math.log2(safe) * 10);
+    };
+
+    const personRadiusByCount = (count, isCenter) => {
+      const safe = Math.max(0, count || 0);
+      const base = isCenter ? 12 : 9;
+      if (safe <= 1) return isCenter ? base + 2 : base + 1;
+      const factor = isCenter ? 3.5 : 4.5;
+      const boosted = base + 2 + Math.log2(safe) * factor;
+      return Math.min(isCenter ? 26 : 22, boosted);
+    };
+
     // Compute current center id for click source-detection
     const centerIdForEdges = centerIdLocal;
 
@@ -1228,9 +1378,9 @@ const PersonProfile = () => {
     const simulation = d3
       .forceSimulation(nodesData)
       .force('link', d3.forceLink(linksData).id((d) => d.id).distance(linkDistance).strength(linkStrength))
-      .force('charge', d3.forceManyBody().strength(-250))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(30));
+      .force('charge', d3.forceManyBody().strength(-100)) // Reduced repulsion
+      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.1)) // Much weaker center force
+      .force('collision', d3.forceCollide().radius(30)); // Smaller collision radius
 
     const link = zoomLayer
       .append('g')
@@ -1250,9 +1400,27 @@ const PersonProfile = () => {
       .data(nodesData)
       .join('circle')
       .attr('class', 'graph-node')
-      .attr('r', (d) => (d.type === 'person' ? 15 : 9))
-      .attr('fill', (d) => color(d.type))   // attribute fill for maximum compatibility
-      .style('fill', (d) => color(d.type))  // inline style fill to override any CSS
+      .attr('r', (d) => {
+        if (d.type === 'donor') {
+          const ringBoost = d?.ringMeta ? Math.min(4, d.ringMeta.ringRadiusBoost || 0) : 0;
+          return donorRadiusByCount(d.donationCount) + ringBoost;
+        }
+        if (d.type === 'person') {
+          const isCenter = d.id === centerIdForEdges;
+          const ringBoost = d?.ringMeta ? Math.min(4, d.ringMeta.ringRadiusBoost || 0) : 0;
+          return personRadiusByCount(d.donationCount, isCenter) + ringBoost;
+        }
+        const baseRadius = d.type === 'party' ? 12 : 9;
+        const ringBoost = d?.ringMeta ? Math.min(4, d.ringMeta.ringRadiusBoost || 0) : 0;
+        return baseRadius + ringBoost;
+      })
+      .attr('fill', (d) => (d?.ringMeta ? '#FFFFFF' : color(d.type)))
+      .style('fill', (d) => (d?.ringMeta ? '#FFFFFF' : color(d.type)))
+      .style('opacity', 1) // Ensure immediate visibility
+      .attr('stroke', (d) => (d?.ringMeta ? d.ringMeta.ringColor : '#FFFFFF'))
+      .style('stroke', (d) => (d?.ringMeta ? d.ringMeta.ringColor : '#FFFFFF'))
+      .attr('stroke-width', (d) => (d?.ringMeta ? d.ringMeta.ringThickness : 2))
+      .style('stroke-width', (d) => (d?.ringMeta ? d.ringMeta.ringThickness : 2))
       .style('opacity', 1)
       .call(
         d3
@@ -1884,8 +2052,39 @@ const PersonProfile = () => {
                   </div>
                 )}
 
+                {/* Donation Color Legend */}
+                <div
+                  className="graph-legend"
+                  style={{ marginTop: '0.75rem', marginBottom: '0.75rem', padding: '0.75rem', backgroundColor: '#f9fafb', borderRadius: '0.5rem', border: '1px solid #e5e7eb' }}
+                >
+                  <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', fontWeight: '600', color: '#374151' }}>
+                    Donor Node Color Ring Coding:
+                  </h4>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.8rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#9CA3AF', border: '1px solid #6b7280' }}></div>
+                      <span>$0 - $99</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#3B82F6', border: '1px solid #1d4ed8' }}></div>
+                      <span>$100 - $999</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#22C55E', border: '1px solid #16a34a' }}></div>
+                      <span>$1,000 - $9,999</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                      <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: '#FFD700', border: '1px solid #d97706' }}></div>
+                      <span>$10,000+</span>
+                    </div>
+                  </div>
+                  <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.75rem', color: '#6b7280' }}>
+                    Node ring color and thickness show donation amount • Click nodes to see details • Drag nodes to reposition
+                  </p>
+                </div>
+
                 {/* Graph controls */}
-                <div className="graph-controls" style={{ display: 'grid', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <div className="graph-controls" style={{ display: 'grid', gap: '0.5rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <label style={{ minWidth: 160 }}>Edge thickness</label>
                     <input
@@ -1895,6 +2094,7 @@ const PersonProfile = () => {
                       step="0.1"
                       value={edgeScale}
                       onChange={(e) => setEdgeScale(parseFloat(e.target.value))}
+                      style={{ '--range-progress': `${edgeProgress}%` }}
                     />
                     <span style={{ fontVariantNumeric: 'tabular-nums' }}>{edgeScale.toFixed(1)}x</span>
                   </div>
@@ -1904,13 +2104,14 @@ const PersonProfile = () => {
                     <input
                       type="range"
                       min="1"
-                      max={Math.max(1, personDegree || graphData.links.length)}
+                      max={maxConnections}
                       step="1"
-                      value={Math.min(connectionCap > 0 ? connectionCap : (personDegree || graphData.links.length), (personDegree || graphData.links.length))}
+                      value={effectiveConnectionValue}
                       onChange={(e) => setConnectionCap(parseInt(e.target.value, 10) || 0)}
+                      style={{ '--range-progress': `${connectionProgress}%` }}
                     />
                     <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-                      {Math.min(connectionCap > 0 ? connectionCap : (personDegree || graphData.links.length), (personDegree || graphData.links.length))}/{personDegree || graphData.links.length}
+                      {effectiveConnectionValue}/{maxConnections}
                     </span>
                   </div>
 
@@ -1972,6 +2173,7 @@ const PersonProfile = () => {
                         <thead>
                           <tr>
                             <th>Recipient</th>
+                            <th style={{ textAlign: 'right', width: '80px' }}>Number of Donations</th>
                             <th style={{ textAlign: 'right' }}>Total Amount</th>
                           </tr>
                         </thead>
@@ -1980,25 +2182,29 @@ const PersonProfile = () => {
                             orgRecipients.map((r) => {
                               const name = [r.first_name || '', r.last_name || ''].filter(Boolean).join(' ').trim() || `Person ${r.people_id}`;
                               const total = Number(orgTotalsByPerson?.[String(r.people_id)] || 0);
+                              const donationRows = orgDonationsByRecipient?.[String(r.people_id)] || [];
+                              const donationCount = donationRows.length;
                               return (
                                 <tr key={r.people_id}>
                                   <td>
                                     <button
                                       type="button"
                                       className="search-button"
+                                      style={{ padding: '4px 8px', fontSize: '12px', minHeight: 'auto' }}
                                       onClick={() => handleClickPersonMatch({ id: r.people_id, first_name: r.first_name, last_name: r.last_name })}
                                       title="Open person profile"
                                     >
                                       {name}
                                     </button>
                                   </td>
+                                  <td style={{ textAlign: 'right', width: '80px' }}>{donationCount}</td>
                                   <td style={{ textAlign: 'right' }}>${total.toLocaleString()}</td>
                                 </tr>
                               );
                             })
                           ) : (
                             <tr>
-                              <td colSpan={2} style={{ color: '#6b7280' }}>No recipients found.</td>
+                              <td colSpan={3} style={{ color: '#6b7280' }}>No recipients found.</td>
                             </tr>
                           )}
                         </tbody>
