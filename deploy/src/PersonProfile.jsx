@@ -1269,18 +1269,18 @@ const PersonProfile = () => {
     const linkDistance = (l) => {
       if (l.type === 'donation') {
         const amount = Math.max(0, l.amount || 0);
-        const baseDistance = 200 * nodeSeparation;
+        const scaled = (value) => value * nodeSeparation;
 
-        // Different distances based on donation amount - make green and blue obviously further away
+        // Different distances based on donation amount - push green and blue donors further out
         let distance;
         if (amount >= 10000) {
-          distance = 80; // Gold rings - close to center
+          distance = scaled(80); // Gold rings - close to center
         } else if (amount >= 1000) {
-          distance = 500; // Green rings - obviously much further away
+          distance = scaled(600); // Green rings - significantly further from the center
         } else if (amount >= 100) {
-          distance = 700; // Blue rings - obviously even further away
+          distance = scaled(800); // Blue rings - furthest non-gold donors
         } else {
-          distance = 180; // Gray rings - keep as reference point
+          distance = scaled(120); // Gray rings - baseline distance
         }
 
         return Math.max(50, distance);
