@@ -551,8 +551,29 @@ const PersonProfile = () => {
     if (!svgEl) return;
 
     const rect = svgEl.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+
+    // Tooltip dimensions
+    const tooltipWidth = 250;
+    const tooltipHeight = 140;
+    const padding = 20;
+    const offset = 30; // Distance from click point
+
+    let x, y;
+
+    // Simple left/right positioning based on which side of the graph the click occurred
+    const graphCenterX = rect.width / 2;
+    
+    if (mouseX < graphCenterX) {
+      // Node is on left side - show tooltip on the left
+      x = padding;
+      y = Math.max(padding, Math.min(rect.height - tooltipHeight - padding, mouseY - tooltipHeight / 2));
+    } else {
+      // Node is on right side - show tooltip on the right
+      x = rect.width - tooltipWidth - padding;
+      y = Math.max(padding, Math.min(rect.height - tooltipHeight - padding, mouseY - tooltipHeight / 2));
+    }
 
     const amountValue =
       payload.amount != null && Number.isFinite(Number(payload.amount))
@@ -568,7 +589,8 @@ const PersonProfile = () => {
       amount: amountValue,
       amountLabel: amountValue != null ? formatCurrency(amountValue) : null,
       isNodeClick: payload.isNodeClick || false,
-      isEdgeClick: payload.isEdgeClick || false
+      isEdgeClick: payload.isEdgeClick || false,
+      nodeId: payload.nodeId || null // Add nodeId to track which node was clicked
     });
   }, []);
 
@@ -1551,6 +1573,14 @@ const PersonProfile = () => {
           const nodeType = (d?.type ?? '').toString();
           const sources = [];
           
+          // Check if clicking the same node that currently has a tooltip showing
+          if (graphTooltip && graphTooltip.nodeId === destId) {
+            setGraphTooltip(null);
+            setSelectedConnection(null);
+            setConnectionDetails([]);
+            return;
+          }
+          
           // Build sources array based on connected links
           if (destId && Array.isArray(linksData)) {
             for (const l of linksData) {
@@ -1586,10 +1616,11 @@ const PersonProfile = () => {
             sources: sources,
             amount: nodeAmount,
             amountLabel: nodeAmount != null ? formatCurrency(nodeAmount) : null,
-            isNodeClick: true
+            isNodeClick: true,
+            nodeId: destId // Pass the node ID to track which node was clicked
           });
-        } catch {
-          // ignore click errors
+        } catch (error) {
+          console.log('Node click error:', error, 'destId:', destId, 'graphTooltip:', graphTooltip, 'selectedConnection:', selectedConnection);
         }
       });
 

@@ -403,6 +403,47 @@ text {
   color: #3730a3;
 }
 
+/* Graph Tooltip Styles */
+.graph-tooltip {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.9);
+  color: white;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  pointer-events: none;
+  z-index: 1000;
+  max-width: 250px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  /* Remove transform to prevent positioning issues */
+}
+
+/* Hidden graph elements */
+.graph-node--hidden,
+.graph-link--hidden,
+.graph-label--hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Selected graph elements */
+.graph-node--selected {
+  stroke: #3b82f6 !important;
+  stroke-width: 4 !important;
+}
+
+.graph-link--selected {
+  stroke: #3b82f6 !important;
+  stroke-width: 3 !important;
+  opacity: 1 !important;
+}
+
+.graph-label--selected {
+  font-weight: bold !important;
+  fill: #1f2937 !important;
+}
+
 /* Modal Styles */
 .fixed.inset-0 {
   z-index: 9999;
