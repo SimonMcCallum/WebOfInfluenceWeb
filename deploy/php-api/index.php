@@ -18,9 +18,9 @@ header('Content-Type: application/json; charset=utf-8');
 
 $CONFIG = [
   'DB_HOST' => getenv('DB_HOST') ?: 'localhost',
-  'DB_USER' => getenv('DB_USER') ?: 'ludog319_kng',
-  'DB_PASS' => getenv('DB_PASSWORD') ?: 'WFoSE!',
-  'DB_NAME' => getenv('DB_NAME') ?: 'ludog319_webofinfluence',
+  'DB_USER' => getenv('DB_USER') ?: null,
+  'DB_PASS' => getenv('DB_PASSWORD') ?: null,
+  'DB_NAME' => getenv('DB_NAME') ?: null,
   'API_TOKEN' => getenv('API_TOKEN') ?: null,
   'API_PROTECT_ALL' => (getenv('API_PROTECT_ALL') === '1'),
 ];

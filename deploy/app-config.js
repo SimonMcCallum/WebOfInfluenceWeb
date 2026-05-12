@@ -1,8 +1,6 @@
-/* API-only deployment runtime config.
-   This file is served directly from /webofinfluence and is not used by the backend.
-   It exists so a simple placeholder index.html can link to the API easily.
+/* Runtime config served as a sibling to index.html.
+   API_BASE is a same-origin path; nginx routes /php-api to the PHP container.
 */
-window.__APP_CONFIG__ = { 
-  API_BASE: '/webofinfluence/php-api/index.php'
-  //API_BASE: '/webofinfluence/api/index.php'
+window.__APP_CONFIG__ = {
+  API_BASE: '/php-api/index.php'
 };

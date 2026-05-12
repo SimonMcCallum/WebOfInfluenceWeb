@@ -3,8 +3,8 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  // Set base path for deployment to /webofinfluence/
-  base: '/webofinfluence/',
+  // Served at the root of woi.simonmccallum.org.nz
+  base: '/',
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
@@ -18,14 +18,13 @@ export default defineConfig({
     }
   },
   server: {
-    // Configure dev server to serve static files
     fs: {
       allow: ['..']
     },
     // Proxy API calls during `npm run dev` to the live PHP API
     proxy: {
-      '/webofinfluence/php-api': {
-        target: 'https://www.ludogogy.co.nz',
+      '/php-api': {
+        target: 'https://woi.simonmccallum.org.nz',
         changeOrigin: true,
         secure: true
       }

@@ -1,27 +1,17 @@
 <?php
-// Copy this file to config.php and set your credentials.
-// On cPanel you can also set environment variables instead of editing this file.
-
+// Copy to config.php only if you want to override the env-var-driven defaults
+// in deploy/php-api/index.php. On Docker/Ubuntu, leave config.php returning [].
 return [
-  // Database connection
-  // IMPORTANT: Set DB_NAME to the single database that contains the tables:
-  // people, parties, electorates, candidate_overview, donations, meetings.
-  // If you import Documentation/sql/woi_schema.sql as-is, it will create a database named "woi".
-  // In that case set DB_NAME to "woi".
-  'DB_HOST' => 'localhost',
-  'DB_USER' => 'ludog319_kng',
-  'DB_PASS' => 'WFoSE!',
-  'DB_NAME' => 'ludog319_webofinfluence',
+  // Database
+  // 'DB_HOST' => 'woi-db',
+  // 'DB_USER' => 'woi',
+  // 'DB_PASS' => 'set-via-env',
+  // 'DB_NAME' => 'webofinfluence',
 
-  // Security
-  // Shared secret for admin actions (and optionally all endpoints)
-  'API_TOKEN' => 'changeme-strong-secret',
-  // When set to true, ALL endpoints require the token (except GET / health).
-  // When false, only /admin actions require the token.
-  'API_PROTECT_ALL' => false,
+  // Security — shared secret for admin endpoints (if API_PROTECT_ALL true, also for reads)
+  // 'API_TOKEN' => 'changeme-strong-secret',
+  // 'API_PROTECT_ALL' => false,
 
-  // AI (Gemini) — preferred way to persist the API key on shared hosting
-  // Add this key in config.php so it survives deployments and file manager cleanups.
-  // Alternatively set an environment variable GEMINI_API_KEY in your hosting control panel.
-  'GEMINI_API_KEY' => 'changeme-gemini-key',
+  // AI — preferred to set via env var GEMINI_API_KEY
+  // 'GEMINI_API_KEY' => 'changeme-gemini-key',
 ];

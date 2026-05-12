@@ -1,0 +1,71 @@
+# Web of Influence — additions for /home/simon/docker/docker-compose.yml
+# Splice the contents below into the existing master compose file:
+#   • the `woi-net:` block goes inside the top-level `networks:` map
+#   • the `woi-app:` and `woi-db:` blocks go inside `services:`
+#   • the `woi-db-data:` block goes inside (or creates) the top-level `volumes:` map
+#
+# Required env vars in /home/simon/docker/.env:
+#   WOI_DB_ROOT_PASSWORD=...
+#   WOI_DB_PASSWORD=...
+#   WOI_API_TOKEN=...
+#   WOI_GEMINI_API_KEY=...   # optional
+#
+# After splicing:
+#   cd /home/simon/docker
+#   docker compose up -d woi-db          # first run loads /docker-entrypoint-initdb.d/*.sql
+#   docker compose build woi-app && docker compose up -d woi-app
+
+networks:
+  woi-net:
+    name: woi-net
+    driver: bridge
+
+services:
+  # ─── Web of Influence — PHP + nginx (woi.simonmccallum.org.nz) ─────
+  # Source: /home/simon/git/WebOfInfluenceWeb
+  woi-app:
+    build:
+      context: /home/simon/git/WebOfInfluenceWeb
+      dockerfile: Dockerfile
+    container_name: woi-app
+    restart: unless-stopped
+    environment:
+      DB_HOST: woi-db
+      DB_USER: woi
+      DB_PASSWORD: ${WOI_DB_PASSWORD}
+      DB_NAME: webofinfluence
+      API_TOKEN: ${WOI_API_TOKEN}
+      GEMINI_API_KEY: ${WOI_GEMINI_API_KEY:-}
+    depends_on:
+      woi-db:
+        condition: service_healthy
+    expose:
+      - "80"
+    networks:
+      - proxy-net
+      - woi-net
+
+  # ─── MariaDB for Web of Influence ─────────────────────────────────
+  # Initial schema/data loaded once from web_server/*.sql on first run
+  woi-db:
+    image: mariadb:11
+    container_name: woi-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${WOI_DB_ROOT_PASSWORD}
+      MARIADB_DATABASE: webofinfluence
+      MARIADB_USER: woi
+      MARIADB_PASSWORD: ${WOI_DB_PASSWORD}
+    volumes:
+      - woi-db-data:/var/lib/mysql
+      - /home/simon/git/WebOfInfluenceWeb/web_server:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - woi-net
+
+volumes:
+  woi-db-data:
