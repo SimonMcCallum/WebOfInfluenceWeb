@@ -19,7 +19,7 @@ import ProtectedRoute from './auth/ProtectedRoute';
 // Dashboard redirect component
 const DashboardRedirect = () => {
   React.useEffect(() => {
-    window.location.href = '/webofinfluence/src/dashboard.html';
+    window.location.href = '/src/dashboard.html';
   }, []);
   return null;
 };

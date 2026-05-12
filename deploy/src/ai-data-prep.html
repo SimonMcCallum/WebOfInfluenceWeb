@@ -16,7 +16,7 @@
       <p class="subtitle">Extract people from text/CSV, enrich ministerial diaries, and prepare mapping columns for Admin → Add Data</p>
     </div>
     <div style="text-align: right; margin-bottom: 1rem;">
-      <a href="/webofinfluence/src/dashboard.html" class="back-button">
+      <a href="/src/dashboard.html" class="back-button">
         <span>← Back to Dashboard</span>
       </a>
     </div>
@@ -700,7 +700,7 @@
           resultsContent.innerHTML = '<div style="padding:.5rem 0; color:#6b7280;"><span class="loading"></span>Processing new request...</div>';
         }
 
-        const base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
+        const base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/php-api/index.php';
         const mode = getSelectedMode();
         const endpoint = mode === 'diaries' ? '/ai/extract-names-diaries' : '/ai/extract-names';
 
@@ -1030,7 +1030,7 @@
         if (mappingResults) {
           mappingResults.innerHTML = '<div style="padding:.5rem 0; color:#6b7280;"><span class="loading"></span>Processing new request...</div>';
         }
-        const base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
+        const base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/php-api/index.php';
         const response = await fetch(base + '/ai/prepare-mapping-csv', {
           method: 'POST',
           body: formData
@@ -1173,7 +1173,7 @@
     (function () {
       var statusEl = document.getElementById('api-status');
       try {
-        var base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
+        var base = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/php-api/index.php';
         fetch(base + '/', { cache: 'no-store' })
           .then(function (r) { return r.text(); })
           .then(function (t) {

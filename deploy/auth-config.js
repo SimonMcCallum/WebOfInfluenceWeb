@@ -6,14 +6,14 @@
   // Store the demo token on the window for easy inspection; replace later.
   window.__AUTH_TOKEN__ = window.__AUTH_TOKEN__ || 'changeme-strong-secret';
 
-  var API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
+  var API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/php-api/index.php';
 
   var originalFetch = window.fetch;
   window.fetch = function(resource, init) {
     try {
       var url = typeof resource === 'string' ? resource : (resource && resource.url) || '';
       var shouldAuth =
-        (url && (url.indexOf(API_BASE) === 0 || url.indexOf('/webofinfluence/api') === 0 || url.indexOf('/api') === 0)) ||
+        (url && (url.indexOf(API_BASE) === 0 || url.indexOf('/php-api') === 0 || url.indexOf('/api') === 0)) ||
         (typeof resource !== 'string' && resource instanceof Request && resource.url && (resource.url.indexOf(API_BASE) === 0));
 
       if (shouldAuth) {

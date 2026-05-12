@@ -316,7 +316,7 @@
       <div class="form-row">
         <div class="form-group">
           <label for="api-base-input">API Base URL</label>
-          <input id="api-base-input" type="text" placeholder="https://example.com/webofinfluence/php-api/index.php">
+          <input id="api-base-input" type="text" placeholder="https://example.com/php-api/index.php">
           <div class="help-text">
             Current: <code id="api-base-current"></code><br>
             Tip: If this page is opened via file://, use an absolute URL to your deployed PHP API.
@@ -398,7 +398,7 @@
   <script>
     // Configuration
     const config = window.__APP_CONFIG__ || {};
-    const defaultApiBase = (config.API_BASE || '/webofinfluence/php-api/index.php');
+    const defaultApiBase = (config.API_BASE || '/php-api/index.php');
     let API_BASE = localStorage.getItem('woi_api_base') || defaultApiBase;
     
     let currentPeople = [];

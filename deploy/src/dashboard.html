@@ -16,7 +16,7 @@
     </div>
 
     <div style="text-align: right; margin-bottom: 1rem;">
-      <a href="/webofinfluence/#/settings" class="back-button" onclick="window.location.href='/webofinfluence/#/settings'; return false;">
+      <a href="/#/settings" class="back-button" onclick="window.location.href='/#/settings'; return false;">
         <span>← Back to Settings</span>
       </a>
     </div>
@@ -52,7 +52,7 @@
         </div>
         <div class="button-group">
           <div class="button-item">
-            <a href="/webofinfluence/analytics/analytics.html" class="dashboard-button">
+            <a href="/analytics/analytics.html" class="dashboard-button">
               <span>Open Analytics (D3)</span>
               <span class="button-arrow">→</span>
             </a>
@@ -120,7 +120,7 @@
     (function () {
       var statusEl = document.getElementById('api-status');
       var cfg = (window.__APP_CONFIG__ || {});
-      var base = (cfg.API_BASE || '/webofinfluence/php-api/index.php');
+      var base = (cfg.API_BASE || '/php-api/index.php');
 
       function normalizeHealthUrl(b) {
         try {
@@ -129,7 +129,7 @@
           if (/\.php(\?|$)/i.test(trimmed)) return trimmed;
           return trimmed.replace(/\/+$/, '') + '/';
         } catch (_) {
-          return '/webofinfluence/php-api/index.php';
+          return '/php-api/index.php';
         }
       }
 
@@ -149,7 +149,7 @@
           var idx = parts.indexOf('webofinfluence');
           if (idx >= 0) return '/' + parts.slice(0, idx+1).join('/');
         } catch(_) {}
-        return '/webofinfluence';
+        return '';
       })();
 
       var candidates = [];
@@ -237,7 +237,7 @@
           var idx = parts.indexOf('webofinfluence');
           if (idx >= 0) return '/' + parts.slice(0, idx+1).join('/');
         } catch(_) {}
-        return '/webofinfluence';
+        return '';
       })();
 
       var candidates = [

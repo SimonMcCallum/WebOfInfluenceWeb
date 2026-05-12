@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>API Test — Web Of Influence</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     :root {
       --bg: #0f172a;          /* slate-900 */
@@ -259,9 +259,9 @@
       }
     }
   </style>
-  <script type="module" crossorigin src="/webofinfluence/assets/modulepreload-polyfill-B5Qt9EMX.js"></script>
-  <script type="module" crossorigin src="/webofinfluence/assets/app-config-CSENolPA.js"></script>
-  <script type="module" crossorigin src="/webofinfluence/assets/auth-config-CxUtIded.js"></script>
+  <script type="module" crossorigin src="/assets/modulepreload-polyfill-B5Qt9EMX.js"></script>
+  <script type="module" crossorigin src="/assets/app-config-P7N8DeMX.js"></script>
+  <script type="module" crossorigin src="/assets/auth-config-DlCJ_uEZ.js"></script>
 </head>
 <body>
   <div class="container">
@@ -271,7 +271,7 @@
     </div>
 
     <nav class="nav-buttons">
-      <a href="/webofinfluence/src/dashboard.html" class="nav-btn">
+      <a href="/src/dashboard.html" class="nav-btn">
         <span>← Back to Dashboard</span>
       </a>
     </nav>
@@ -313,7 +313,7 @@
   </div>
 
   <script>
-    var API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/webofinfluence/api';
+    var API_BASE = (window.__APP_CONFIG__ && window.__APP_CONFIG__.API_BASE) || '/php-api/index.php';
     document.getElementById('base').textContent = API_BASE;
     document.getElementById('tok').textContent = (window.__AUTH_TOKEN__ || '(none)') + ' (temporary; stored in public/auth-config.js for demo)';
 
